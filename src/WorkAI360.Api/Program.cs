@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.Endpoints;
+using WorkAI360.Api.OAuth;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -10,6 +11,12 @@ builder.Services.AddDbContext<DenDbContext>(o =>
     o.UseSqlite(builder.Configuration.GetConnectionString("Default") ?? "Data Source=workai360.db"));
 builder.Services.AddScoped<SessionService>();
 builder.Services.AddSingleton<LoginThrottle>();
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddSingleton<SigningKeyStore>();
+builder.Services.AddSingleton<SignedQuery>();
+builder.Services.AddScoped<OAuthUrls>();
+builder.Services.AddScoped<TokenService>();
+builder.Services.AddScoped<McpAuthenticator>();
 
 var app = builder.Build();
 
@@ -20,7 +27,7 @@ if (string.IsNullOrWhiteSpace(secret) || secret.Length < 32)
 using (var scope = app.Services.CreateScope())
 {
     // Development convenience: create the schema on first start. Real deployments will use migrations.
-    scope.ServiceProvider.GetRequiredService<DenDbContext>().Database.EnsureCreated();
+    DevSchema.Ensure(scope.ServiceProvider.GetRequiredService<DenDbContext>());
 }
 
 app.MapMiscEndpoints();
@@ -28,6 +35,8 @@ app.MapAuthEndpoints();
 app.MapDeviceEndpoints();
 app.MapOrgEndpoints();
 app.MapHandoffEndpoints();
+app.MapOAuthEndpoints();
+app.MapMcpEndpoints();
 
 app.Run();
 

@@ -34,6 +34,9 @@ public static class DenProxyExtensions
             Route("desktop-handoff", "/api/auth/desktop-handoff", setPath: "/v1/auth/desktop-handoff", methods: "POST"),
             // Everything else under /api/auth goes to the API's auth routes unchanged.
             Route("auth", "/api/auth/{**rest}", pathPattern: "/api/auth/{**rest}"),
+            // OAuth discovery for the issuer (which lives on the web origin) is answered by the API.
+            Route("wk-oauth-as", "/.well-known/oauth-authorization-server/api/auth", methods: "GET"),
+            Route("wk-openid", "/.well-known/openid-configuration/api/auth", methods: "GET"),
             // Cookie-authenticated JSON calls from the browser: /api/browser/v1/x -> API /v1/x.
             Route("browser-v1", "/api/browser/v1/{**rest}", pathPattern: "/v1/{**rest}"),
         ];

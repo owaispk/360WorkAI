@@ -2,7 +2,7 @@
 //
 //   node parity.mjs                                              # reference: web :3005, api :8790, all sections
 //   W=http://localhost:5081 A=http://localhost:5080 \
-//   SECTIONS=health,auth,orgs,handoff,device,login-options,sign-out node parity.mjs   # .NET rewrite
+//   SECTIONS=health,auth,orgs,handoff,device,login-options,oauth-mcp,sign-out node parity.mjs   # .NET rewrite
 //
 // W is the web origin (serves /api/auth, /api/browser/v1, /.well-known); A is the API origin (serves /v1/*).
 import { createHash, randomBytes } from "node:crypto";

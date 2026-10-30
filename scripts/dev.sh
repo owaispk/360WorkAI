@@ -15,7 +15,7 @@ start_one() { # name project url
   if [[ -f "$RUN_DIR/$name.pid" ]] && kill -0 "$(cat "$RUN_DIR/$name.pid")" 2>/dev/null; then echo "$name already running"; return; fi
   cd "$ROOT/src/$project"
   # Run the built app directly (not `dotnet run`, which forks it) so the PID file names the real process.
-  Den__ApiBaseUrl="$API_URL" setsid nohup "bin/Debug/net10.0/$project" --urls "$url" >"$RUN_DIR/$name.log" 2>&1 &
+  Den__ApiBaseUrl="$API_URL" Auth__WebUrl="$WEB_URL" Auth__ApiPublicUrl="$API_URL" setsid nohup "bin/Debug/net10.0/$project" --urls "$url" >"$RUN_DIR/$name.log" 2>&1 &
   echo $! >"$RUN_DIR/$name.pid"
   cd "$ROOT"
 }

@@ -11,6 +11,12 @@ public sealed class DenDbContext(DbContextOptions<DenDbContext> options) : DbCon
     public DbSet<Member> Members => Set<Member>();
     public DbSet<DesktopHandoffGrant> HandoffGrants => Set<DesktopHandoffGrant>();
     public DbSet<DeviceCode> DeviceCodes => Set<DeviceCode>();
+    public DbSet<OAuthClient> OAuthClients => Set<OAuthClient>();
+    public DbSet<AuthorizationCode> AuthorizationCodes => Set<AuthorizationCode>();
+    public DbSet<OAuthConsent> OAuthConsents => Set<OAuthConsent>();
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+    public DbSet<McpAccessToken> McpAccessTokens => Set<McpAccessToken>();
+    public DbSet<SigningKey> SigningKeys => Set<SigningKey>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -21,5 +27,8 @@ public sealed class DenDbContext(DbContextOptions<DenDbContext> options) : DbCon
         b.Entity<Member>().HasIndex(m => new { m.OrganizationId, m.UserId }).IsUnique();
         b.Entity<DeviceCode>().HasIndex(d => d.DeviceCodeHash).IsUnique();
         b.Entity<DeviceCode>().HasIndex(d => d.UserCode);
+        b.Entity<OAuthConsent>().HasIndex(c => new { c.ClientId, c.UserId, c.OrganizationId }).IsUnique();
+        b.Entity<RefreshToken>().HasIndex(t => t.FamilyId);
+        b.Entity<RefreshToken>().HasIndex(t => t.CodeHash);
     }
 }

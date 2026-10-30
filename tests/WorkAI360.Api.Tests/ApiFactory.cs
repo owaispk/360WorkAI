@@ -16,6 +16,8 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
     {
         builder.UseSetting("Auth:Secret", Secret);
+        builder.UseSetting("Auth:WebUrl", "http://localhost");
+        builder.UseSetting("Auth:ApiPublicUrl", "http://localhost");
         builder.UseSetting("ConnectionStrings:Default", $"Data Source={_dbPath}");
         builder.UseSetting("environment", "Development");
     }

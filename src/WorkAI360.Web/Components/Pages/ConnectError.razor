@@ -1,0 +1,16 @@
+@page "/connect/error"
+@inject NavigationManager Nav
+
+<PageTitle>Could not connect · OpenWork Cloud</PageTitle>
+
+<section class="den-card">
+    <h1>We could not connect that app.</h1>
+    <p class="den-muted">The sign-in request was not valid or has expired. Start again from the app you were connecting.</p>
+    @if (!string.IsNullOrEmpty(_code)) { <p class="den-muted">Reference: <code>@_code</code></p> }
+    <a class="den-button den-secondary" href="/">Back to OpenWork Cloud</a>
+</section>
+
+@code {
+    private string? _code;
+    protected override void OnInitialized() => _code = System.Web.HttpUtility.ParseQueryString(new Uri(Nav.Uri).Query)["error"];
+}

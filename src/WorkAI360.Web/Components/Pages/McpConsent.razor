@@ -1,0 +1,144 @@
+@page "/mcp/consent"
+@page "/mcp/select-organization"
+@using System.Text.Json
+@inject DenClient Den
+@inject NavigationManager Nav
+
+<PageTitle>Connect an app · OpenWork Cloud</PageTitle>
+
+<section class="den-card" data-testid="mcp-consent">
+    @if (_state == State.Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (_state == State.Expired)
+    {
+        <h1>This sign-in link expired.</h1>
+        <p class="den-muted">Start signing in again from your agent.</p>
+    }
+    else if (_state == State.Cancelled)
+    {
+        <h1>Nothing was authorized.</h1>
+        <p class="den-muted">You can close this tab.</p>
+    }
+    else if (_state == State.NoWorkspace)
+    {
+        <h1>Create a workspace to continue.</h1>
+        <p class="den-muted">@ClientName needs a workspace to connect to.</p>
+        <form @onsubmit="CreateWorkspaceAsync">
+            <label for="workspace">Workspace name</label>
+            <input id="workspace" type="text" @bind="_newWorkspace" @bind:event="oninput" />
+            @if (_error is not null) { <p class="den-error" role="alert">@_error</p> }
+            <button type="submit" class="den-button" disabled="@_busy">Create workspace</button>
+        </form>
+    }
+    else
+    {
+        <h1>Allow @ClientName to use @SelectedOrgName?</h1>
+        <p class="den-muted">Signed in as @_email. This app returns to <strong data-testid="mcp-redirect-host">@_redirectHost</strong>. Only continue if you started this sign-in just now.</p>
+        @if (_orgs.Count > 1)
+        {
+            <label for="org">Workspace</label>
+            <select id="org" @bind="_selectedOrgId">
+                @foreach (var org in _orgs) { <option value="@org.Id">@org.Name</option> }
+            </select>
+        }
+        <ul class="den-list" data-testid="mcp-scopes">
+            @foreach (var scope in _scopes) { <li>@Describe(scope)</li> }
+        </ul>
+        @if (_error is not null) { <p class="den-error" role="alert">@_error</p> }
+        <button type="button" class="den-button" disabled="@_busy" @onclick="() => DecideAsync(true)">Allow</button>
+        <button type="button" class="den-button den-secondary" disabled="@_busy" @onclick="() => DecideAsync(false)">Deny</button>
+    }
+</section>
+
+@code {
+    private enum State { Loading, Ready, NoWorkspace, Expired, Cancelled }
+    private sealed record Org(string Id, string Name);
+
+    private State _state = State.Loading;
+    private string _query = "";
+    private string _email = "";
+    private string? _clientName;
+    private string _redirectHost = "";
+    private string[] _scopes = [];
+    private List<Org> _orgs = [];
+    private string _selectedOrgId = "";
+    private string? _activeOrgId;
+    private string _newWorkspace = "";
+    private string? _error;
+    private bool _busy;
+
+    private string ClientName => _clientName is { Length: > 0 } ? _clientName : "This app";
+    private string SelectedOrgName => _orgs.FirstOrDefault(o => o.Id == _selectedOrgId)?.Name ?? "your workspace";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _query = new Uri(Nav.Uri).Query.TrimStart('?');
+        var parameters = System.Web.HttpUtility.ParseQueryString(_query);
+        if (string.IsNullOrEmpty(parameters["client_id"]) || string.IsNullOrEmpty(parameters["sig"])) { _state = State.Expired; StateHasChanged(); return; }
+
+        var me = await Den.RequestAsync("/api/browser/v1/me");
+        if (!me.Ok) { Nav.NavigateTo($"/?{_query}"); return; }
+        _email = me.String("user", "email") ?? "";
+
+        var client = await Den.RequestAsync("/api/auth/oauth2/public-client-prelogin", "POST", new { client_id = parameters["client_id"], oauth_query = _query });
+        if (!client.Ok) { _state = State.Expired; StateHasChanged(); return; }
+        _clientName = client.String("client_name");
+
+        _scopes = (parameters["scope"] ?? "mcp:read mcp:write offline_access").Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        _redirectHost = Uri.TryCreate(parameters["redirect_uri"], UriKind.Absolute, out var redirect) ? (redirect.IsDefaultPort ? redirect.Host : $"{redirect.Host}:{redirect.Port}") : "";
+
+        await LoadOrgsAsync();
+        StateHasChanged();
+    }
+
+    private async Task LoadOrgsAsync()
+    {
+        var orgs = await Den.RequestAsync("/api/browser/v1/me/orgs");
+        _orgs = [];
+        if (orgs.Json is { ValueKind: JsonValueKind.Object } root && root.TryGetProperty("orgs", out var list))
+            _orgs = list.EnumerateArray().Select(o => new Org(o.GetProperty("id").GetString() ?? "", o.GetProperty("name").GetString() ?? "")).ToList();
+        _activeOrgId = orgs.String("activeOrgId");
+        _selectedOrgId = _activeOrgId ?? _orgs.FirstOrDefault()?.Id ?? "";
+        _state = _orgs.Count == 0 ? State.NoWorkspace : State.Ready;
+    }
+
+    private async Task CreateWorkspaceAsync()
+    {
+        _error = null;
+        if (_newWorkspace.Trim().Length < 2) { _error = "Use at least 2 characters."; return; }
+        _busy = true;
+        var created = await Den.RequestAsync("/api/browser/v1/org", "POST", new { name = _newWorkspace.Trim() });
+        _busy = false;
+        if (!created.Ok) { _error = created.Message("Could not create the workspace. Try again."); return; }
+        await LoadOrgsAsync();
+    }
+
+    private async Task DecideAsync(bool allow)
+    {
+        _error = null;
+        _busy = true;
+        if (allow && _selectedOrgId != _activeOrgId)
+        {
+            var active = await Den.RequestAsync("/api/auth/organization/set-active", "POST", new { organizationId = _selectedOrgId });
+            if (!active.Ok) { _busy = false; _error = active.Message("Could not choose this workspace. Try again."); return; }
+            _activeOrgId = _selectedOrgId;
+        }
+        var result = await Den.RequestAsync("/api/auth/oauth2/consent", "POST", new { accept = allow, scope = string.Join(' ', _scopes), oauth_query = _query });
+        _busy = false;
+        var url = result.String("url");
+        if (result.Ok && url is not null) { Nav.NavigateTo(url, forceLoad: true); return; }
+        if (result.String("error") == "invalid_signature") { _state = State.Expired; return; }
+        _error = result.Message("Could not authorize this app. Try again.");
+    }
+
+    private static string Describe(string scope) => scope switch
+    {
+        "mcp:read" => "See what your workspace can do",
+        "mcp:write" => "Make changes in your workspace",
+        "offline_access" => "Stay connected without asking again",
+        _ => scope,
+    };
+}

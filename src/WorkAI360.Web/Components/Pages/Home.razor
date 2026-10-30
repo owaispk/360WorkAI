@@ -93,6 +93,14 @@
 
     private async Task GoAfterSignInAsync()
     {
+        // Signed in because an agent asked to connect: send the person back into that authorization request.
+        var query = new Uri(Nav.Uri).Query.TrimStart('?');
+        if (query.Contains("client_id=") && query.Contains("sig="))
+        {
+            Nav.NavigateTo($"/api/auth/oauth2/authorize?{query}", forceLoad: true);
+            return;
+        }
+
         var orgs = await Den.RequestAsync("/api/browser/v1/me/orgs");
         var hasOrg = orgs.Json is { ValueKind: System.Text.Json.JsonValueKind.Object } root
             && root.TryGetProperty("orgs", out var list) && list.GetArrayLength() > 0;

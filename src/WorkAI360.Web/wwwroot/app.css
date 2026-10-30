@@ -16,3 +16,4 @@ input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .den-list { padding-left: 18px; font-size: 14px; }
 #blazor-error-ui { display:none; position:fixed; bottom:0; left:0; right:0; background:#fef3c7; padding:10px 20px; }
 #blazor-error-ui.blazor-error-boundary, #blazor-error-ui[style*="block"] { display:block; }
+select{width:100%;border:1px solid var(--line);border-radius:12px;padding:11px 14px;font-size:15px;background:#fff}a.den-button{display:block;text-align:center;text-decoration:none}
