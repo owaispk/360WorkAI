@@ -22,9 +22,10 @@
                 <li>@member.Name <span class="den-muted">(@member.Email, @member.Role)</span></li>
             }
         </ul>
-        <a class="den-button" href="/dashboard/members" data-testid="members-link">Manage members</a>
-        <a class="den-button" href="/dashboard/teams" data-testid="teams-link">Teams</a>
-        <a class="den-button" href="/dashboard/permissions" data-testid="permissions-link">Permissions</a>
+        @foreach (var link in DashboardLinks.For(_permissions))
+        {
+            <a class="den-button" href="@link.Href" data-testid="@link.TestId">@link.Label</a>
+        }
         <button type="button" class="den-button den-secondary" @onclick="SignOutAsync">Sign out</button>
     }
 </section>
@@ -36,6 +37,7 @@
     private string _email = "";
     private string _orgName = "";
     private string _role = "";
+    private HashSet<string> _permissions = [];
     private List<MemberRow> _members = [];
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -52,6 +54,7 @@
         {
             _orgName = org.String("organization", "name") ?? "";
             _role = org.String("currentMember", "role") ?? "";
+            _permissions = root.GetProperty("currentMember").GetProperty("permissions").EnumerateArray().Select(p => p.GetString() ?? "").ToHashSet();
             if (root.TryGetProperty("members", out var members))
             {
                 // Invitations that have not been accepted yet are listed on the Members page, not here.

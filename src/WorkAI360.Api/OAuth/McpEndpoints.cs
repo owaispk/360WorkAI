@@ -20,15 +20,6 @@ public static class McpEndpoints
     private static readonly TimeSpan FirstPartyLifetime = TimeSpan.FromDays(7);
     private const int MaxBodyBytes = 1024 * 1024;
 
-    /// <summary>What an agent can do today. Connections to external services are not built yet, so these read from the workspace itself.</summary>
-    private sealed record Capability(string Id, string Description, string RequiredScope, JsonNode InputSchema);
-
-    private static readonly Capability[] Capabilities =
-    [
-        new("openwork.whoami", "Describe the signed-in person, their workspace and role.", OAuthConstants.ReadScope, JsonNode.Parse("""{"type":"object","properties":{},"additionalProperties":false}""")!),
-        new("openwork.workspace.members", "List the members of the workspace with their roles.", OAuthConstants.ReadScope, JsonNode.Parse("""{"type":"object","properties":{},"additionalProperties":false}""")!),
-    ];
-
     public static void MapMcpEndpoints(this WebApplication app)
     {
         app.MapPost("/v1/mcp/token", MintFirstPartyTokenAsync);
@@ -70,7 +61,7 @@ public static class McpEndpoints
         return Results.Json(new { token, appHostToken, expiresAt = Responses.IsoUtc(expiresAt), scopes, organizationId = orgId });
     }
 
-    private static async Task<IResult> HandleAsync(HttpContext ctx, McpAuthenticator authenticator, OAuthUrls urls, DenDbContext db, IOptions<AuthOptions> options)
+    private static async Task<IResult> HandleAsync(HttpContext ctx, McpAuthenticator authenticator, OAuthUrls urls, IOptions<AuthOptions> options)
     {
         // Browsers must not be able to drive this endpoint from an arbitrary site (DNS-rebinding protection from the MCP spec).
         var origin = ctx.Request.Headers.Origin.ToString();
@@ -100,10 +91,10 @@ public static class McpEndpoints
         {
             var replies = new JsonArray();
             foreach (var item in batch)
-                if (await DispatchAsync(item, principal, db) is { } reply) replies.Add(reply);
+                if (await DispatchAsync(item, principal, ctx.RequestServices) is { } reply) replies.Add(reply);
             return replies.Count == 0 ? Results.StatusCode(202) : Results.Json(replies);
         }
-        var single = await DispatchAsync(root, principal, db);
+        var single = await DispatchAsync(root, principal, ctx.RequestServices);
         return single is null ? Results.StatusCode(202) : Results.Json(single);
     }
 
@@ -114,7 +105,7 @@ public static class McpEndpoints
     }
 
     /// <summary>One JSON-RPC message. Notifications (no id) get no reply.</summary>
-    private static async Task<JsonNode?> DispatchAsync(JsonNode? message, McpPrincipal principal, DenDbContext db)
+    private static async Task<JsonNode?> DispatchAsync(JsonNode? message, McpPrincipal principal, IServiceProvider services)
     {
         if (message is not JsonObject obj || obj["method"] is not JsonValue methodValue || !methodValue.TryGetValue<string>(out var method))
             return RpcError(null, -32600, "Invalid Request");
@@ -143,7 +134,7 @@ public static class McpEndpoints
             case "tools/list":
                 return RpcResult(id, new JsonObject { ["tools"] = ToolDefinitions() });
             case "tools/call":
-                return RpcResult(id, await CallToolAsync(parameters, principal, db));
+                return RpcResult(id, await CallToolAsync(parameters, principal, services));
             default:
                 return isNotification ? null : RpcError(id, -32601, $"Method not found: {method}");
         }
@@ -165,10 +156,11 @@ public static class McpEndpoints
         },
     };
 
-    private static async Task<JsonObject> CallToolAsync(JsonObject? parameters, McpPrincipal principal, DenDbContext db)
+    private static async Task<JsonObject> CallToolAsync(JsonObject? parameters, McpPrincipal principal, IServiceProvider services)
     {
         var name = parameters?["name"]?.GetValue<string>();
         var arguments = parameters?["arguments"] as JsonObject ?? new JsonObject();
+        var providers = services.GetServices<ICapabilityProvider>().ToList();
 
         switch (name)
         {
@@ -177,48 +169,29 @@ public static class McpEndpoints
                 if (!principal.Scopes.Contains(OAuthConstants.ReadScope)) return ToolError("insufficient_scope", "This token needs the mcp:read scope.");
                 var query = arguments["query"]?.GetValue<string>() ?? "";
                 var words = query.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                var hits = Capabilities.Where(c => words.All(w => c.Id.Contains(w, StringComparison.OrdinalIgnoreCase) || c.Description.Contains(w, StringComparison.OrdinalIgnoreCase))).ToList();
+                var all = new List<CapabilityInfo>();
+                foreach (var provider in providers) all.AddRange(await provider.ListAsync(principal, services));
+                var hits = all.Where(c => words.All(w => c.Id.Contains(w, StringComparison.OrdinalIgnoreCase) || c.Description.Contains(w, StringComparison.OrdinalIgnoreCase))).ToList();
                 var list = new JsonArray(hits.Select(c => (JsonNode)new JsonObject { ["id"] = c.Id, ["description"] = c.Description, ["requiredScope"] = c.RequiredScope, ["inputSchema"] = c.InputSchema.DeepClone() }).ToArray());
                 return ToolResult(new JsonObject { ["query"] = query, ["capabilities"] = list });
             }
             case "execute_capability":
             {
                 var id = arguments["capability_id"]?.GetValue<string>();
-                var capability = Capabilities.FirstOrDefault(c => c.Id == id);
-                if (capability is null) return ToolError("unknown_capability", $"No capability named '{id}'. Use search_capabilities to list them.");
-                if (!principal.Scopes.Contains(capability.RequiredScope)) return ToolError("insufficient_scope", $"This capability needs the {capability.RequiredScope} scope.");
-                return ToolResult(await RunCapabilityAsync(capability.Id, principal, db));
+                var capabilityArguments = arguments["arguments"] as JsonObject ?? new JsonObject();
+                foreach (var provider in providers)
+                {
+                    var capability = (await provider.ListAsync(principal, services)).FirstOrDefault(c => c.Id == id);
+                    if (capability is null) continue;
+                    if (!principal.Scopes.Contains(capability.RequiredScope)) return ToolError("insufficient_scope", $"This capability needs the {capability.RequiredScope} scope.");
+                    var outcome = await provider.ExecuteAsync(capability.Id, capabilityArguments, principal, services);
+                    return outcome.Result is { } result ? ToolResult(result) : ToolError(outcome.ErrorCode ?? "capability_failed", outcome.ErrorMessage ?? "The capability failed.");
+                }
+                return ToolError("unknown_capability", $"No capability named '{id}'. Use search_capabilities to list them.");
             }
             default:
                 return ToolError("unknown_tool", $"No tool named '{name}'.");
         }
-    }
-
-    private static async Task<JsonObject> RunCapabilityAsync(string id, McpPrincipal principal, DenDbContext db)
-    {
-        var org = await db.Organizations.AsNoTracking().FirstAsync(o => o.Id == principal.OrganizationId);
-        if (id == "openwork.whoami")
-        {
-            var user = await db.Users.AsNoTracking().FirstAsync(u => u.Id == principal.UserId);
-            var role = await db.Members.AsNoTracking().Where(m => m.OrganizationId == org.Id && m.UserId == user.Id).Select(m => m.Role).FirstAsync();
-            return new JsonObject
-            {
-                ["user"] = new JsonObject { ["id"] = user.Id, ["name"] = user.Name, ["email"] = user.Email },
-                ["organization"] = new JsonObject { ["id"] = org.Id, ["name"] = org.Name, ["slug"] = org.Slug },
-                ["role"] = role,
-                ["scopes"] = new JsonArray(principal.Scopes.Select(s => (JsonNode)JsonValue.Create(s)!).ToArray()),
-            };
-        }
-        var members = await (from m in db.Members.AsNoTracking()
-                             join u in db.Users.AsNoTracking() on m.UserId equals u.Id
-                             where m.OrganizationId == org.Id
-                             orderby m.CreatedAt
-                             select new { u.Name, u.Email, m.Role }).ToListAsync();
-        return new JsonObject
-        {
-            ["organization"] = org.Name,
-            ["members"] = new JsonArray(members.Select(m => (JsonNode)new JsonObject { ["name"] = m.Name, ["email"] = m.Email, ["role"] = m.Role }).ToArray()),
-        };
     }
 
     private static JsonObject ToolResult(JsonObject structured) => new()

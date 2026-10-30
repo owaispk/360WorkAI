@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
 using WorkAI360.Api.Email;
 using WorkAI360.Api.Endpoints;
+using WorkAI360.Api.Features;
 using WorkAI360.Api.OAuth;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -42,6 +43,11 @@ builder.Services.AddSingleton<SignedQuery>();
 builder.Services.AddScoped<OAuthUrls>();
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddScoped<McpAuthenticator>();
+builder.Services.AddScoped<ICapabilityProvider, BuiltInCapabilities>();
+
+// Areas that register themselves (see Features/IFeature.cs).
+var features = FeatureRegistry.Discover();
+foreach (var feature in features) feature.AddServices(builder.Services, builder.Configuration);
 
 var app = builder.Build();
 
@@ -94,6 +100,7 @@ app.MapInvitationEndpoints();
 app.MapEmailAuthEndpoints();
 app.MapOAuthEndpoints();
 app.MapMcpEndpoints();
+foreach (var feature in features) feature.MapEndpoints(app);
 
 if (app.Environment.IsDevelopment() && emailProvider == "dev")
 {

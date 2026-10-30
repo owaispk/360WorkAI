@@ -28,6 +28,8 @@ public sealed class DenDbContext(DbContextOptions<DenDbContext> options) : DbCon
 
     protected override void OnModelCreating(ModelBuilder b)
     {
+        // Entities added by feature areas describe themselves with IEntityTypeConfiguration<T>.
+        b.ApplyConfigurationsFromAssembly(typeof(DenDbContext).Assembly);
         b.Entity<User>().HasIndex(u => u.Email).IsUnique();
         b.Entity<Session>().HasIndex(s => s.TokenHash).IsUnique();
         b.Entity<Session>().HasIndex(s => s.UserId);
