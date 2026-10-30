@@ -1,0 +1,67 @@
+@page "/dashboard"
+@using System.Text.Json
+@inject DenClient Den
+@inject NavigationManager Nav
+
+<PageTitle>Dashboard · OpenWork Cloud</PageTitle>
+
+<section class="den-card" data-testid="dashboard">
+    @if (_loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>Dashboard</h1>
+        <p class="den-muted">Signed in as <strong data-testid="user-email">@_email</strong></p>
+        <h2>@_orgName</h2>
+        <p class="den-muted">Your role: @_role</p>
+        <ul class="den-list" data-testid="members">
+            @foreach (var member in _members)
+            {
+                <li>@member.Name <span class="den-muted">(@member.Email, @member.Role)</span></li>
+            }
+        </ul>
+        <button type="button" class="den-button den-secondary" @onclick="SignOutAsync">Sign out</button>
+    }
+</section>
+
+@code {
+    private sealed record MemberRow(string Name, string Email, string Role);
+
+    private bool _loading = true;
+    private string _email = "";
+    private string _orgName = "";
+    private string _role = "";
+    private List<MemberRow> _members = [];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        var me = await Den.RequestAsync("/api/browser/v1/me");
+        if (!me.Ok) { Nav.NavigateTo("/"); return; }
+        _email = me.String("user", "email") ?? "";
+
+        var org = await Den.RequestAsync("/api/browser/v1/org");
+        if (org.Status is 404 or 403) { Nav.NavigateTo("/organization"); return; }
+        if (org.Json is { ValueKind: JsonValueKind.Object } root)
+        {
+            _orgName = org.String("organization", "name") ?? "";
+            _role = org.String("currentMember", "role") ?? "";
+            if (root.TryGetProperty("members", out var members))
+            {
+                _members = members.EnumerateArray().Select(m => new MemberRow(
+                    m.GetProperty("name").GetString() ?? "", m.GetProperty("email").GetString() ?? "", m.GetProperty("role").GetString() ?? "")).ToList();
+            }
+        }
+        _loading = false;
+        StateHasChanged();
+    }
+
+    private async Task SignOutAsync()
+    {
+        await Den.RequestAsync("/api/auth/sign-out", "POST", new { });
+        Nav.NavigateTo("/", forceLoad: true);
+    }
+}

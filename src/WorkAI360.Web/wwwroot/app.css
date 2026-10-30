@@ -1,0 +1,18 @@
+:root { --bg:#fafafa; --card:#fff; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0; --accent:#0f172a; --err:#b91c1c; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+.den-page { max-width: 440px; margin: 0 auto; padding: 64px 20px; }
+.den-brand { font-size: 17px; margin-bottom: 24px; } .den-brand span { color: var(--muted); }
+.den-card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 28px; }
+h1 { font-size: 22px; margin: 0 0 8px; } h2 { font-size: 16px; margin: 16px 0 4px; }
+label { display:block; font-size: 13px; font-weight: 500; margin: 16px 0 6px; }
+input { width:100%; border:1px solid var(--line); border-radius: 12px; padding: 11px 14px; font-size: 15px; }
+input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.den-button { width:100%; margin-top: 20px; padding: 12px; border-radius: 999px; border: 0; background: var(--accent); color:#fff; font-size: 14px; font-weight: 600; cursor: pointer; }
+.den-button[disabled] { opacity: .55; cursor: default; }
+.den-secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); margin-top: 10px; }
+.den-link { background:none; border:0; color: var(--muted); font-size: 13px; margin-top: 14px; cursor: pointer; text-decoration: underline; }
+.den-muted { color: var(--muted); font-size: 14px; } .den-error { color: var(--err); font-size: 13px; margin: 10px 0 0; }
+.den-list { padding-left: 18px; font-size: 14px; }
+#blazor-error-ui { display:none; position:fixed; bottom:0; left:0; right:0; background:#fef3c7; padding:10px 20px; }
+#blazor-error-ui.blazor-error-boundary, #blazor-error-ui[style*="block"] { display:block; }

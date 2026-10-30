@@ -1,0 +1,39 @@
+@page "/organization"
+@inject DenClient Den
+@inject NavigationManager Nav
+
+<PageTitle>Create your workspace · OpenWork Cloud</PageTitle>
+
+<section class="den-card">
+    <h1>Create your workspace.</h1>
+    <p class="den-muted">A workspace is where your team's skills, connections and agents live.</p>
+    <form @onsubmit="CreateAsync">
+        <label for="workspace">Workspace name</label>
+        <input id="workspace" type="text" name="workspace" @bind="_name" @bind:event="oninput" />
+        @if (_error is not null) { <p class="den-error" role="alert">@_error</p> }
+        <button type="submit" class="den-button" disabled="@_busy">Create workspace</button>
+    </form>
+</section>
+
+@code {
+    private string _name = "";
+    private bool _busy;
+    private string? _error;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!(await Den.RequestAsync("/api/browser/v1/me")).Ok) Nav.NavigateTo("/");
+    }
+
+    private async Task CreateAsync()
+    {
+        _error = null;
+        if (_name.Trim().Length < 2) { _error = "Use at least 2 characters."; return; }
+        _busy = true;
+        var created = await Den.RequestAsync("/api/browser/v1/org", "POST", new { name = _name.Trim() });
+        _busy = false;
+        if (!created.Ok) { _error = created.Message("Could not create the workspace. Try again."); return; }
+        Nav.NavigateTo("/dashboard");
+    }
+}

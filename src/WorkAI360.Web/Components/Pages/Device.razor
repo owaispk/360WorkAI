@@ -1,0 +1,74 @@
+@page "/device"
+@inject DenClient Den
+@inject NavigationManager Nav
+
+<PageTitle>Approve a sign-in · OpenWork Cloud</PageTitle>
+
+<section class="den-card" data-testid="device">
+    <h1>Approve a command-line sign-in.</h1>
+    @if (_done is not null)
+    {
+        <p data-testid="device-result">@_done</p>
+    }
+    else if (_clientId is null)
+    {
+        <p class="den-muted">Enter the code shown in your terminal.</p>
+        <form @onsubmit="LookUpAsync">
+            <label for="code">Code</label>
+            <input id="code" type="text" name="code" autocomplete="off" @bind="_code" @bind:event="oninput" />
+            @if (_error is not null) { <p class="den-error" role="alert">@_error</p> }
+            <button type="submit" class="den-button" disabled="@_busy">Continue</button>
+        </form>
+    }
+    else
+    {
+        <p>The app <strong>@_clientId</strong> is asking to sign in as you. Only approve it if you started this just now.</p>
+        @if (_error is not null) { <p class="den-error" role="alert">@_error</p> }
+        <button type="button" class="den-button" disabled="@_busy" @onclick="() => DecideAsync(true)">Approve</button>
+        <button type="button" class="den-button den-secondary" disabled="@_busy" @onclick="() => DecideAsync(false)">Deny</button>
+    }
+</section>
+
+@code {
+    private string _code = "";
+    private string? _clientId;
+    private string? _error;
+    private string? _done;
+    private bool _busy;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!(await Den.RequestAsync("/api/browser/v1/me")).Ok)
+        {
+            Nav.NavigateTo("/");
+            return;
+        }
+        var query = new Uri(Nav.Uri).Query;
+        var prefill = System.Web.HttpUtility.ParseQueryString(query)["user_code"];
+        if (!string.IsNullOrWhiteSpace(prefill)) { _code = prefill; await LookUpAsync(); }
+        else StateHasChanged();
+    }
+
+    private async Task LookUpAsync()
+    {
+        _error = null;
+        _busy = true;
+        var result = await Den.RequestAsync($"/api/browser/v1/auth/device/{Uri.EscapeDataString(_code.Trim())}");
+        _busy = false;
+        if (!result.Ok) _error = result.Message("This code is not valid. Check it against your terminal.");
+        else if (result.String("status") != "pending") _error = "This code was already used.";
+        else _clientId = result.String("clientId");
+        StateHasChanged();
+    }
+
+    private async Task DecideAsync(bool approve)
+    {
+        _error = null;
+        _busy = true;
+        var result = await Den.RequestAsync("/api/browser/v1/auth/device/decision", "POST", new { userCode = _code.Trim(), decision = approve ? "approve" : "deny" });
+        _busy = false;
+        if (result.Ok) _done = approve ? "Approved. You can return to your terminal." : "Denied. Nothing was signed in.";
+        else _error = result.Message("Could not record your decision. Try again.");
+    }
+}

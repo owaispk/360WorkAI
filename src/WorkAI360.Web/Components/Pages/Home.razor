@@ -1,0 +1,103 @@
+@page "/"
+@inject DenClient Den
+@inject NavigationManager Nav
+
+<PageTitle>OpenWork Cloud</PageTitle>
+
+<section class="den-card" data-testid="auth-card">
+    @if (_checking)
+    {
+        <p class="den-muted">Checking your session…</p>
+    }
+    else if (_step == Step.Email)
+    {
+        <h1>Welcome.</h1>
+        <p class="den-muted">Enter your email to sign in or create your OpenWork Cloud account.</p>
+        <form @onsubmit="NextAsync">
+            <label for="email">Email</label>
+            <input id="email" type="email" name="email" autocomplete="username" @bind="_email" @bind:event="oninput" />
+            @if (_error is not null) { <p class="den-error" role="alert">@_error</p> }
+            <button type="submit" class="den-button" disabled="@_busy">Next</button>
+        </form>
+    }
+    else
+    {
+        <h1>@(_step == Step.SignUp ? "Create your account." : "Welcome back.")</h1>
+        <p class="den-muted">@_email</p>
+        <form @onsubmit="SubmitAsync">
+            @if (_step == Step.SignUp)
+            {
+                <label for="name">Name</label>
+                <input id="name" type="text" name="name" autocomplete="name" @bind="_name" @bind:event="oninput" />
+            }
+            <label for="password">Password</label>
+            <input id="password" type="password" name="password" autocomplete="@(_step == Step.SignUp ? "new-password" : "current-password")" @bind="_password" @bind:event="oninput" />
+            @if (_error is not null) { <p class="den-error" role="alert">@_error</p> }
+            <button type="submit" class="den-button" disabled="@_busy">@(_step == Step.SignUp ? "Sign up" : "Sign in")</button>
+            <button type="button" class="den-link" @onclick="Back">Use a different email</button>
+        </form>
+    }
+</section>
+
+@code {
+    private enum Step { Email, SignIn, SignUp }
+
+    private Step _step = Step.Email;
+    private bool _checking = true;
+    private bool _busy;
+    private string _email = "";
+    private string _name = "";
+    private string _password = "";
+    private string? _error;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        // Already signed in: go where the person left off.
+        var me = await Den.RequestAsync("/api/browser/v1/me");
+        if (me.Ok) { await GoAfterSignInAsync(); return; }
+        _checking = false;
+        StateHasChanged();
+    }
+
+    private async Task NextAsync()
+    {
+        _error = null;
+        var email = _email.Trim();
+        if (!email.Contains('@')) { _error = "Enter a valid email address."; return; }
+        _busy = true;
+        var options = await Den.RequestAsync($"/api/auth/login-options?email={Uri.EscapeDataString(email)}");
+        _busy = false;
+        if (!options.Ok) { _error = options.Status == 400 ? "Enter a valid email address." : options.Message("Could not check this email. Try again."); return; }
+        _email = email;
+        _step = options.String("nextStep") == "password" ? Step.SignIn : Step.SignUp;
+    }
+
+    private async Task SubmitAsync()
+    {
+        _error = null;
+        if (_step == Step.SignUp && string.IsNullOrWhiteSpace(_name)) _name = _email.Split('@')[0];
+        _busy = true;
+        var result = _step == Step.SignUp
+            ? await Den.RequestAsync("/api/auth/sign-up/email", "POST", new { name = _name.Trim(), email = _email, password = _password })
+            : await Den.RequestAsync("/api/auth/sign-in/email", "POST", new { email = _email, password = _password });
+        _busy = false;
+        if (!result.Ok)
+        {
+            _error = result.Status == 401 ? "Invalid email or password." : result.Message("Authentication failed. Try again.");
+            return;
+        }
+        _password = "";
+        await GoAfterSignInAsync();
+    }
+
+    private async Task GoAfterSignInAsync()
+    {
+        var orgs = await Den.RequestAsync("/api/browser/v1/me/orgs");
+        var hasOrg = orgs.Json is { ValueKind: System.Text.Json.JsonValueKind.Object } root
+            && root.TryGetProperty("orgs", out var list) && list.GetArrayLength() > 0;
+        Nav.NavigateTo(hasOrg ? "/dashboard" : "/organization");
+    }
+
+    private void Back() { _step = Step.Email; _password = ""; _error = null; }
+}

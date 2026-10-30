@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/WorkAI360.Api/WorkAI360.Api.csproj" />
+    <Project Path="src/WorkAI360.Web/WorkAI360.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/WorkAI360.Api.Tests/WorkAI360.Api.Tests.csproj" />
+  </Folder>
+</Solution>
