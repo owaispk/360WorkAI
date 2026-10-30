@@ -1,5 +1,6 @@
 using System.Net.Mail;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.Domain;
@@ -9,7 +10,6 @@ namespace WorkAI360.Api.Endpoints;
 public sealed record SignUpBody(string? Name, string? Email, string? Password, string? Invite);
 public sealed record SignInBody(string? Email, string? Password);
 public sealed record SetActiveBody(string? OrganizationId, string? OrganizationSlug);
-public sealed record PasswordResetRequestBody(string? Email, string? RedirectTo);
 
 public static class AuthEndpoints
 {
@@ -58,14 +58,14 @@ public static class AuthEndpoints
     {
         var auth = app.MapGroup("/api/auth");
 
-        auth.MapPost("/sign-up/email", async (SignUpBody? body, HttpContext ctx, DenDbContext db, SessionService sessions) =>
+        auth.MapPost("/sign-up/email", async (SignUpBody? body, HttpContext ctx, DenDbContext db, SessionService sessions, RateLimiter limiter, IOptions<AuthOptions> options, EmailVerificationService verification) =>
         {
             if (body is null || string.IsNullOrWhiteSpace(body.Name) || !IsValidEmail(body.Email) || body.Password is null)
                 return Json(400, new { message = "Invalid name, email or password.", code = "VALIDATION_ERROR" });
 
-            var problems = Passwords.Validate(body.Password);
-            if (problems.Count > 0)
-                return Json(400, new { error = "weak_password", message = string.Join(" ", problems), code = "PASSWORD_TOO_WEAK", problems });
+            if (Passwords.Validate(body.Password) is { } violation)
+                return Json(400, new { error = violation.Error, message = violation.Message });
+            if (limiter.Hit(RateLimiter.SignUp, NormalizeEmail(body.Email!), ClientIp(ctx)) is { } wait) return TooManyRequests(ctx, wait);
 
             var email = NormalizeEmail(body.Email!);
             if (await db.Users.AnyAsync(u => u.Email == email))
@@ -84,17 +84,25 @@ public static class AuthEndpoints
             db.Users.Add(user);
             await db.SaveChangesAsync();
 
+            // Verification required: no session until the emailed code is entered (the person signs in afterwards).
+            if (options.Value.RequireEmailVerification)
+            {
+                await verification.SendCodeAsync(user, force: true);
+                return Json(200, new { token = (string?)null, user = Responses.UserJson(user) });
+            }
+
             var (token, session) = await sessions.CreateAsync(user, null, "email", ctx);
             sessions.WriteCookie(ctx, token, session);
             return Json(200, new { token, user = Responses.UserJson(user) });
         });
 
-        auth.MapPost("/sign-in/email", async (SignInBody? body, HttpContext ctx, DenDbContext db, SessionService sessions, LoginThrottle throttle) =>
+        auth.MapPost("/sign-in/email", async (SignInBody? body, HttpContext ctx, DenDbContext db, SessionService sessions, LoginThrottle throttle, RateLimiter limiter, IOptions<AuthOptions> options, EmailVerificationService verification) =>
         {
             if (body is null || !IsValidEmail(body.Email) || string.IsNullOrEmpty(body.Password))
                 return Json(400, new { message = "Invalid email or password.", code = "VALIDATION_ERROR" });
 
             var email = NormalizeEmail(body.Email!);
+            if (limiter.Hit(RateLimiter.SignIn, email, ClientIp(ctx)) is { } limited) return TooManyRequests(ctx, limited);
             if (throttle.LockedFor(email) is { } wait)
             {
                 ctx.Response.Headers.RetryAfter = ((int)Math.Ceiling(wait.TotalSeconds)).ToString();
@@ -108,6 +116,13 @@ public static class AuthEndpoints
             {
                 throttle.RecordFailure(email);
                 return Json(401, new { message = "Invalid email or password", code = "INVALID_EMAIL_OR_PASSWORD" });
+            }
+
+            if (options.Value.RequireEmailVerification && !user.EmailVerified)
+            {
+                // The password was right, so it is safe to say why sign-in stops here. A fresh code is sent so the person can finish.
+                await verification.SendCodeAsync(user, force: false);
+                return Responses.AuthError(403, "Email not verified", "EMAIL_NOT_VERIFIED");
             }
 
             throttle.Reset(email);
@@ -146,12 +161,6 @@ public static class AuthEndpoints
             return Json(200, Responses.OrganizationJson(org));
         });
 
-        // Sent whether or not the address exists, so the response never reveals which accounts exist.
-        auth.MapPost("/request-password-reset", (PasswordResetRequestBody? body) =>
-            IsValidEmail(body?.Email) ? Json(200, new { status = true }) : Json(400, new { message = "Invalid email.", code = "VALIDATION_ERROR" }));
-
-        auth.MapPost("/reset-password", () => Json(400, new { message = "Invalid token", code = "INVALID_TOKEN" }));
-
         // Everything else under /api/auth: the refused mutations answer 403, the rest 404.
         auth.Map("/{**rest}", (string rest, HttpRequest request) =>
         {
@@ -163,6 +172,14 @@ public static class AuthEndpoints
     }
 
     private static readonly string DummyHash = Passwords.Hash("dummy-password-for-timing-only");
+
+    public static string ClientIp(HttpContext ctx) => ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+    public static IResult TooManyRequests(HttpContext ctx, TimeSpan wait)
+    {
+        ctx.Response.Headers.RetryAfter = ((int)Math.Ceiling(wait.TotalSeconds)).ToString();
+        return Results.Json(new { error = "rate_limited", message = "Too many attempts. Try again later." }, statusCode: 429);
+    }
 
     private static IResult Json(int status, object body) => Results.Json(body, statusCode: status);
 }

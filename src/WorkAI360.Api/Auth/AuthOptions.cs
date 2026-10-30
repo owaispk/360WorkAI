@@ -21,6 +21,30 @@ public sealed class AuthOptions
     /// </summary>
     public string? WebUrl { get; set; }
 
+    /// <summary>
+    /// When true, a new account must prove its email with an emailed code before it can sign in: sign-up returns no session,
+    /// and sign-in answers 403 EMAIL_NOT_VERIFIED until then. Off by default (private deployments, local development).
+    /// </summary>
+    public bool RequireEmailVerification { get; set; }
+
+    /// <summary>Extra origins a reset link may return to, besides the web origin.</summary>
+    public string[] TrustedOrigins { get; set; } = [];
+
+    /// <summary>
+    /// Addresses of the proxies whose X-Forwarded-* headers are believed (the web host in front of the API). Everyone else's are
+    /// ignored, so a caller cannot choose the origin in deep links or the address a rate limit sees. When empty, loopback is
+    /// trusted (web host and API on one machine). Set it in any deployment where the web host is elsewhere: until it is, the API
+    /// sees every visitor as the web host and the per-address rate limits share one bucket.
+    /// (The default lives in code, not here: the configuration binder appends to an array's default instead of replacing it.)
+    /// </summary>
+    public string[] TrustedProxies { get; set; } = [];
+
+    public const string LoopbackV4 = "127.0.0.1";
+    public const string LoopbackV6 = "::1";
+
+    /// <summary>Rate limits on the email endpoints. Off in Development unless set explicitly.</summary>
+    public bool? RateLimitsEnabled { get; set; }
+
     /// <summary>The public API origin that serves /mcp/agent. Falls back to the request's origin.</summary>
     public string? ApiPublicUrl { get; set; }
 

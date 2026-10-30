@@ -2,7 +2,9 @@
 //
 //   node parity.mjs                                              # reference: web :3005, api :8790, all sections
 //   W=http://localhost:5081 A=http://localhost:5080 \
-//   SECTIONS=health,auth,orgs,handoff,device,login-options,oauth-mcp,sign-out node parity.mjs   # .NET rewrite
+//   SECTIONS=health,auth,orgs,handoff,device,login-options,oauth-mcp,passwords,email,sign-out node parity.mjs   # .NET rewrite
+//   (add email-verification when the server requires it: DEN_REQUIRE_EMAIL_VERIFICATION=true / Auth__RequireEmailVerification=true;
+//    then leave out auth, orgs, handoff, device, oauth-mcp, which sign up and expect a session straight away)
 //
 // W is the web origin (serves /api/auth, /api/browser/v1, /.well-known); A is the API origin (serves /v1/*).
 import { createHash, randomBytes } from "node:crypto";
@@ -231,6 +233,66 @@ await t("consent deny -> redirect url with error=access_denied", async () => {
   return (r.status === 200 && /error=access_denied/.test(r.json?.url ?? "")) || `${r.status} ${r.text.slice(0, 200)}`;
 });
 await t("/v1/mcp/token first-party mint", async () => { const r = await call(A, "/v1/mcp/token", { method: "POST", bearer: token2, headers: { "x-openwork-org-id": orgId }, body: { scopes: ["mcp:read", "mcp:write"] } }); return (r.status === 200 && r.json?.token?.startsWith("ow_mcp_at_")) || `${r.status} ${r.text.slice(0, 150)}`; });
+
+// ---------- 7b. Password rules, verification codes and password reset (same shapes on both implementations) ----------
+section = "passwords";
+const sendPlain = (path, body) => call(W, path, { method: "POST", body });
+const policy = async (password) => { const r = await sendPlain("/api/auth/sign-up/email", { name: "P", email: email("pw"), password }); return { status: r.status, error: r.json?.error, message: r.json?.message }; };
+await t("password rules: too short", async () => { const r = await policy("Aa1!"); return (r.status === 400 && r.error === "password_too_short" && r.message === "Password must be at least 8 characters.") || JSON.stringify(r); });
+await t("password rules: no uppercase", async () => { const r = await policy("abc12345!"); return (r.status === 400 && r.error === "password_missing_uppercase" && r.message === "Password must include at least one uppercase letter.") || JSON.stringify(r); });
+await t("password rules: no lowercase", async () => { const r = await policy("ABC12345!"); return (r.status === 400 && r.error === "password_missing_lowercase" && r.message === "Password must include at least one lowercase letter.") || JSON.stringify(r); });
+await t("password rules: no special character", async () => { const r = await policy("Abcdefg12345"); return (r.status === 400 && r.error === "password_missing_special_character" && r.message === "Password must include at least one special character.") || JSON.stringify(r); });
+await t("password rules: no digit", async () => { const r = await policy("Abcdefgh!!!!"); return (r.status === 400 && r.error === "password_missing_digit" && r.message === "Password must include at least one digit.") || JSON.stringify(r); });
+
+section = "email";
+const known = email("known"); await sendPlain("/api/auth/sign-up/email", { name: "Known", email: known, password: PW });
+await t("send-verification-otp: same answer for a real and an unknown address", async () => {
+  const a = await sendPlain("/api/auth/email-otp/send-verification-otp", { email: known, type: "email-verification" });
+  const b = await sendPlain("/api/auth/email-otp/send-verification-otp", { email: email("ghost"), type: "email-verification" });
+  return (a.status === 200 && a.text === '{"success":true}' && b.status === 200 && b.text === a.text) || `${a.status} ${a.text} / ${b.status} ${b.text}`;
+});
+await t("send-verification-otp: invalid type -> 400 VALIDATION_ERROR with the reference message", async () => {
+  const r = await sendPlain("/api/auth/email-otp/send-verification-otp", { email: known, type: "nope" });
+  return (r.status === 400 && r.json?.code === "VALIDATION_ERROR" && r.json?.message === '[body.type] Invalid option: expected one of "email-verification"|"sign-in"|"forget-password"|"change-email"') || `${r.status} ${r.text}`;
+});
+await t("send-verification-otp: invalid email -> 400 INVALID_EMAIL", async () => { const r = await sendPlain("/api/auth/email-otp/send-verification-otp", { email: "nope", type: "email-verification" }); return (r.status === 400 && r.json?.message === "Invalid email" && r.json?.code === "INVALID_EMAIL") || `${r.status} ${r.text}`; });
+await t("verify-email: invalid email -> 400 INVALID_EMAIL", async () => { const r = await sendPlain("/api/auth/email-otp/verify-email", { email: "nope", otp: "123456" }); return (r.status === 400 && r.json?.message === "Invalid email" && r.json?.code === "INVALID_EMAIL") || `${r.status} ${r.text}`; });
+await t("verify-email: missing otp message", async () => { const r = await sendPlain("/api/auth/email-otp/verify-email", { email: known }); return (r.status === 400 && r.json?.message === "[body.otp] Invalid input: expected string, received undefined" && r.json?.code === "VALIDATION_ERROR") || `${r.status} ${r.text}`; });
+await t("verify-email: a code that was never issued -> 400 INVALID_OTP", async () => { const r = await sendPlain("/api/auth/email-otp/verify-email", { email: email("ghost"), otp: "123456" }); return (r.status === 400 && r.json?.code === "INVALID_OTP" && r.json?.message === "Invalid OTP") || `${r.status} ${r.text}`; });
+
+await t("request-password-reset: identical answer for a real and an unknown address", async () => {
+  const a = await sendPlain("/api/auth/request-password-reset", { email: known, redirectTo: `${W}/reset-password` });
+  const b = await sendPlain("/api/auth/request-password-reset", { email: email("ghost"), redirectTo: `${W}/reset-password` });
+  const expected = '{"status":true,"message":"If this email exists in our system, check your email for the reset link"}';
+  return (a.status === 200 && a.text === expected && b.text === expected) || `${a.status} ${a.text} / ${b.text}`;
+});
+await t("request-password-reset: a redirect to another site is refused", async () => { const r = await sendPlain("/api/auth/request-password-reset", { email: known, redirectTo: "https://evil.example/reset" }); return (r.status === 403 && r.json?.code === "INVALID_REDIRECT_URL" && r.json?.message === "Invalid redirectURL") || `${r.status} ${r.text}`; });
+await t("request-password-reset: no redirectTo is fine", async () => (await sendPlain("/api/auth/request-password-reset", { email: known })).status === 200);
+await t("request-password-reset: invalid email message", async () => { const r = await sendPlain("/api/auth/request-password-reset", { email: "nope" }); return (r.status === 400 && r.json?.message === "[body.email] Invalid email address") || `${r.status} ${r.text}`; });
+await t("reset-password: unknown token -> 400 INVALID_TOKEN", async () => { const r = await sendPlain("/api/auth/reset-password", { newPassword: PW, token: "bogus" }); return (r.status === 400 && r.json?.code === "INVALID_TOKEN" && r.json?.message === "Invalid token") || `${r.status} ${r.text}`; });
+await t("reset-password: missing token -> 400 INVALID_TOKEN", async () => (await sendPlain("/api/auth/reset-password", { newPassword: PW })).json?.code === "INVALID_TOKEN");
+await t("reset-password: the password rules are checked before the token", async () => { const r = await sendPlain("/api/auth/reset-password", { newPassword: "abc12345!", token: "bogus" }); return (r.status === 400 && r.json?.error === "password_missing_uppercase") || `${r.status} ${r.text}`; });
+await t("reset link with an unknown token redirects to the reset page with an error", async () => {
+  const r = await call(W, `/api/auth/reset-password/bogus?callbackURL=${encodeURIComponent(W + "/reset-password")}`);
+  return (r.status === 302 && r.headers.get("location") === `${W}/reset-password?error=INVALID_TOKEN`) || `${r.status} ${r.headers.get("location")}`;
+});
+await t("reset link naming another site is refused", async () => { const r = await call(W, `/api/auth/reset-password/bogus?callbackURL=${encodeURIComponent("https://evil.example/x")}`); return (r.status === 403 && r.json?.code === "INVALID_CALLBACK_URL" && r.json?.message === "Invalid callbackURL") || `${r.status} ${r.text}`; });
+
+// Only meaningful when the server requires email verification (DEN_REQUIRE_EMAIL_VERIFICATION=true / Auth__RequireEmailVerification=true).
+section = "email-verification";
+const unverified = email("unverified");
+await t("sign-up needs verification: 200, no session, user not verified", async () => {
+  const jarV = new Jar(); const r = await call(W, "/api/auth/sign-up/email", { method: "POST", jar: jarV, body: { name: "U", email: unverified, password: PW } });
+  return (r.status === 200 && r.json && r.json.token === null && r.json.user?.emailVerified === false && jarV.c.size === 0) || `${r.status} ${r.text.slice(0, 160)} cookies=${jarV.c.size}`;
+});
+await t("sign-in before verifying -> 403 EMAIL_NOT_VERIFIED", async () => { const r = await sendPlain("/api/auth/sign-in/email", { email: unverified, password: PW }); return (r.status === 403 && r.json?.code === "EMAIL_NOT_VERIFIED" && r.json?.message === "Email not verified") || `${r.status} ${r.text}`; });
+await t("a wrong password is still 401 (the account state is not revealed)", async () => { const r = await sendPlain("/api/auth/sign-in/email", { email: unverified, password: "Wrong!Passw0rd#999" }); return (r.status === 401 && r.json?.code === "INVALID_EMAIL_OR_PASSWORD") || `${r.status} ${r.text}`; });
+await t("five wrong codes are 400, the sixth is 403 TOO_MANY_ATTEMPTS, then the code is gone", async () => {
+  const results = [];
+  for (let i = 0; i < 7; i++) { const r = await sendPlain("/api/auth/email-otp/verify-email", { email: unverified, otp: "000000" }); results.push(`${r.status}:${r.json?.code}`); }
+  const expected = ["400:INVALID_OTP", "400:INVALID_OTP", "400:INVALID_OTP", "400:INVALID_OTP", "400:INVALID_OTP", "403:TOO_MANY_ATTEMPTS", "400:INVALID_OTP"];
+  return JSON.stringify(results) === JSON.stringify(expected) || results.join(" ");
+});
 
 // ---------- 8. SSO / SCIM surfaces ----------
 section = "sso-scim";

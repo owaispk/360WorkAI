@@ -26,18 +26,25 @@ public static class Passwords
         return CryptographicOperations.FixedTimeEquals(actual, expected);
     }
 
-    /// <summary>Returns the human-readable problems with a proposed password (empty when it is acceptable).</summary>
-    public static IReadOnlyList<string> Validate(string password)
+    public const int MinLength = 8;
+    public const int MaxLength = 128;
+    private const string Specials = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
+
+    public sealed record Violation(string Error, string Message);
+
+    /// <summary>
+    /// The first rule a proposed password breaks, or null. Codes, messages and order match the reference so existing clients can
+    /// show them. One deliberate difference: the reference caps passwords at 32 characters; here the cap is 128, so passphrases work.
+    /// Not built yet: the reference's strength score and breached-password screening.
+    /// </summary>
+    public static Violation? Validate(string password)
     {
-        var problems = new List<string>();
-        if (password.Length < 10) problems.Add("Use at least 10 characters.");
-        if (password.Length > 128) problems.Add("Use at most 128 characters.");
-        var classes = 0;
-        if (password.Any(char.IsLower)) classes++;
-        if (password.Any(char.IsUpper)) classes++;
-        if (password.Any(char.IsDigit)) classes++;
-        if (password.Any(c => !char.IsLetterOrDigit(c))) classes++;
-        if (classes < 3) problems.Add("Mix at least three of: lowercase, uppercase, numbers and symbols.");
-        return problems;
+        if (password.Length < MinLength) return new("password_too_short", $"Password must be at least {MinLength} characters.");
+        if (password.Length > MaxLength) return new("password_too_long", $"Password must be at most {MaxLength} characters.");
+        if (!password.Any(c => c is >= 'A' and <= 'Z')) return new("password_missing_uppercase", "Password must include at least one uppercase letter.");
+        if (!password.Any(c => c is >= 'a' and <= 'z')) return new("password_missing_lowercase", "Password must include at least one lowercase letter.");
+        if (!password.Any(c => Specials.Contains(c))) return new("password_missing_special_character", "Password must include at least one special character.");
+        if (!password.Any(c => c is >= '0' and <= '9')) return new("password_missing_digit", "Password must include at least one digit.");
+        return null;
     }
 }

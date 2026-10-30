@@ -38,7 +38,7 @@ public sealed class AuthTests : IClassFixture<ApiFactory>
 
         var weak = await client.PostAsJsonAsync("/api/auth/sign-up/email", new { name = "A", email = NewEmail(), password = "abc12345" });
         Assert.Equal(HttpStatusCode.BadRequest, weak.StatusCode);
-        Assert.Equal("weak_password", (await ReadJsonAsync(weak)).GetProperty("error").GetString());
+        Assert.Equal("password_missing_uppercase", (await ReadJsonAsync(weak)).GetProperty("error").GetString());
 
         var badEmail = await client.PostAsJsonAsync("/api/auth/sign-up/email", new { name = "A", email = "not-an-email", password = Password });
         Assert.Equal(HttpStatusCode.BadRequest, badEmail.StatusCode);
@@ -164,13 +164,23 @@ public sealed class AuthTests : IClassFixture<ApiFactory>
     }
 
     [Theory]
-    [InlineData("abc12345", false)]
-    [InlineData("alllowercaseletters", false)]
-    [InlineData("Short1!", false)]
-    [InlineData("Str0ng!Passw0rd#2026x", true)]
-    [InlineData("correct horse battery staple 9", true)]
-    public void Password_policy(string password, bool acceptable) =>
-        Assert.Equal(acceptable, Passwords.Validate(password).Count == 0);
+    [InlineData("Short1!", "password_too_short")]
+    [InlineData("abc12345", "password_missing_uppercase")]
+    [InlineData("alllowercaseletters", "password_missing_uppercase")]
+    [InlineData("UPPERCASE123!", "password_missing_lowercase")]
+    [InlineData("Password1234", "password_missing_special_character")]
+    [InlineData("Password!!!!", "password_missing_digit")]
+    [InlineData("Str0ng!Passw0rd#2026x", null)]
+    [InlineData("Correct-horse-battery-staple-9", null)]
+    public void Password_policy_reports_the_first_rule_broken_with_the_reference_codes(string password, string? expectedError) =>
+        Assert.Equal(expectedError, Passwords.Validate(password)?.Error);
+
+    [Fact]
+    public void Password_policy_has_a_maximum_but_a_roomier_one_than_the_reference()
+    {
+        Assert.Null(Passwords.Validate("Aa1!" + new string('x', 60)));
+        Assert.Equal("password_too_long", Passwords.Validate("Aa1!" + new string('x', 125))?.Error);
+    }
 
     [Fact]
     public void Password_hashes_verify_and_are_salted()

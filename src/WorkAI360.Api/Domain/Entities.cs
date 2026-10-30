@@ -157,3 +157,28 @@ public sealed class SigningKey
     public DateTime CreatedAt { get; set; }
     public DateTime? RetiredAt { get; set; }
 }
+
+// ---- Email verification and password reset ----
+
+/// <summary>A six-digit code emailed to prove inbox control. Only a keyed hash of the code is stored.</summary>
+public sealed class EmailOtp
+{
+    public required string Id { get; set; }
+    public required string Email { get; set; }
+    public required string Type { get; set; }          // email-verification
+    public required string CodeHash { get; set; }
+    public int Attempts { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime ExpiresAt { get; set; }
+}
+
+/// <summary>A single-use password reset link; the primary key is the SHA-256 of the token in the link.</summary>
+public sealed class PasswordResetToken
+{
+    public required string Id { get; set; }
+    public required string UserId { get; set; }
+    public string? RedirectTo { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime ExpiresAt { get; set; }
+    public DateTime? ConsumedAt { get; set; }
+}

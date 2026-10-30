@@ -36,6 +36,9 @@ public static class Responses
     public static IResult Error(int status, string error, string message) =>
         Results.Json(new { error, message }, statusCode: status);
 
+    /// <summary>Better Auth's error shape: { message, code }.</summary>
+    public static IResult AuthError(int status, string message, string code) => Results.Json(new { message, code }, statusCode: status);
+
     public static IResult Unauthorized() => Results.Json(new { error = "unauthorized" }, statusCode: StatusCodes.Status401Unauthorized);
 
     public static string IsoUtc(DateTime value) => Iso(value);

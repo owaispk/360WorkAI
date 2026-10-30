@@ -110,7 +110,7 @@ async function signInThroughForm(page, email) {
   await page.waitForSelector('[data-testid="mcp-consent"] button', { timeout: 30000 });
   await page.getByRole('button', { name: 'Allow', exact: true }).click();
   await Promise.race([cb3.hit, new Promise(r => setTimeout(r, 30000))]);
-  await page.waitForURL(/127\.0\.0\.1/, { timeout: 30000 });
+  await page.waitForURL(url => url.hostname === '127.0.0.1', { timeout: 30000 }); // not a regex: the consent page's own query string contains 127.0.0.1
   await page.goto(W + '/dashboard', { waitUntil: 'networkidle' });
   const again = await page.evaluate(async (u) => { const r = await fetch(u, { redirect: 'manual' }); return { type: r.type, status: r.status }; }, authorizeUrl(client3, redirect3, pkce().challenge, 'state-4'));
   check('a repeat authorization for an allowed app skips the consent screen (redirects straight out)', again.type === 'opaqueredirect', JSON.stringify(again));

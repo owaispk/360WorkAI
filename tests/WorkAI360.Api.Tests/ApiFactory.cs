@@ -7,7 +7,7 @@ using WorkAI360.Api.Data;
 namespace WorkAI360.Api.Tests;
 
 /// <summary>A fresh API instance with its own SQLite file per test class.</summary>
-public sealed class ApiFactory : WebApplicationFactory<Program>
+public class ApiFactory : WebApplicationFactory<Program>
 {
     private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"workai360-test-{Guid.NewGuid():N}.db");
     public const string Secret = "test-secret-0123456789-abcdefghijklmnop";
@@ -17,10 +17,16 @@ public sealed class ApiFactory : WebApplicationFactory<Program>
     {
         builder.UseSetting("Auth:Secret", Secret);
         builder.UseSetting("Auth:WebUrl", "http://localhost");
+        foreach (var (key, value) in Settings) builder.UseSetting(key, value);
         builder.UseSetting("Auth:ApiPublicUrl", "http://localhost");
         builder.UseSetting("ConnectionStrings:Default", $"Data Source={_dbPath}");
         builder.UseSetting("environment", "Development");
     }
+
+    /// <summary>Extra configuration for a fixture (for example, requiring email verification).</summary>
+    protected virtual IEnumerable<KeyValuePair<string, string>> Settings => [];
+
+    public WorkAI360.Api.Email.DevOutbox Outbox => Services.GetRequiredService<WorkAI360.Api.Email.DevOutbox>();
 
     public HttpClient Browser() => CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = true, AllowAutoRedirect = false });
     public HttpClient Plain() => CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false, AllowAutoRedirect = false });

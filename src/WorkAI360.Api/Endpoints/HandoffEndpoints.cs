@@ -88,12 +88,13 @@ public static class HandoffEndpoints
 
     private static string Base64Url(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
-    /// <summary>Origin the client used to reach this service, honouring the web host's forwarding headers.</summary>
+    /// <summary>
+    /// The origin people reach this service at. An explicit PublicUrl wins; otherwise it is the request's own origin, which the
+    /// forwarded-headers middleware has already adjusted, but only for the configured trusted proxies. Raw X-Forwarded-* headers
+    /// are never read here, so a caller cannot choose the origin that ends up in deep links.
+    /// </summary>
     public static string PublicOrigin(HttpRequest request, AuthOptions options)
     {
-        var host = request.Headers["X-Forwarded-Host"].ToString().Split(',')[0].Trim();
-        var proto = request.Headers["X-Forwarded-Proto"].ToString().Split(',')[0].Trim();
-        if (host.Length > 0 && (proto == "http" || proto == "https")) return $"{proto}://{host}";
         if (!string.IsNullOrWhiteSpace(options.PublicUrl)) return options.PublicUrl.TrimEnd('/');
         return $"{request.Scheme}://{request.Host}";
     }

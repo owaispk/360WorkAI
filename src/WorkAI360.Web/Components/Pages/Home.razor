@@ -20,7 +20,7 @@
             <button type="submit" class="den-button" disabled="@_busy">Next</button>
         </form>
     }
-    else
+    else if (_step is Step.SignIn or Step.SignUp)
     {
         <h1>@(_step == Step.SignUp ? "Create your account." : "Welcome back.")</h1>
         <p class="den-muted">@_email</p>
@@ -34,13 +34,46 @@
             <input id="password" type="password" name="password" autocomplete="@(_step == Step.SignUp ? "new-password" : "current-password")" @bind="_password" @bind:event="oninput" />
             @if (_error is not null) { <p class="den-error" role="alert">@_error</p> }
             <button type="submit" class="den-button" disabled="@_busy">@(_step == Step.SignUp ? "Sign up" : "Sign in")</button>
+            @if (_step == Step.SignIn)
+            {
+                <button type="button" class="den-link" @onclick="() => GoTo(Step.Forgot)">Forgot your password?</button>
+            }
             <button type="button" class="den-link" @onclick="Back">Use a different email</button>
         </form>
+    }
+    else if (_step == Step.Verify)
+    {
+        <h1>Verify your email.</h1>
+        <p class="den-muted" data-testid="verify-info">@_info</p>
+        <form @onsubmit="VerifyAsync">
+            <label for="code">6-digit code</label>
+            <input id="code" type="text" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" @bind="_code" @bind:event="oninput" />
+            @if (_error is not null) { <p class="den-error" role="alert">@_error</p> }
+            <button type="submit" class="den-button" disabled="@_busy">Verify email</button>
+            <button type="button" class="den-link" disabled="@_busy" @onclick="ResendAsync">Send a new code</button>
+            <button type="button" class="den-link" @onclick="Back">Use a different email</button>
+        </form>
+    }
+    else if (_step == Step.Forgot)
+    {
+        <h1>Reset your password.</h1>
+        <p class="den-muted">We will email a link to <strong>@_email</strong> that lets you choose a new password.</p>
+        <form @onsubmit="SendResetAsync">
+            @if (_error is not null) { <p class="den-error" role="alert">@_error</p> }
+            <button type="submit" class="den-button" disabled="@_busy">Send reset link</button>
+            <button type="button" class="den-link" @onclick="() => GoTo(Step.SignIn)">Back to sign in</button>
+        </form>
+    }
+    else if (_step == Step.ForgotSent)
+    {
+        <h1>Check your email.</h1>
+        <p data-testid="reset-sent">If an account exists for @_email, we sent a reset link. It expires in 1 hour.</p>
+        <button type="button" class="den-button den-secondary" @onclick="() => GoTo(Step.SignIn)">Back to sign in</button>
     }
 </section>
 
 @code {
-    private enum Step { Email, SignIn, SignUp }
+    private enum Step { Email, SignIn, SignUp, Verify, Forgot, ForgotSent }
 
     private Step _step = Step.Email;
     private bool _checking = true;
@@ -48,7 +81,9 @@
     private string _email = "";
     private string _name = "";
     private string _password = "";
+    private string _code = "";
     private string? _error;
+    private string? _info;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -82,13 +117,82 @@
             ? await Den.RequestAsync("/api/auth/sign-up/email", "POST", new { name = _name.Trim(), email = _email, password = _password })
             : await Den.RequestAsync("/api/auth/sign-in/email", "POST", new { email = _email, password = _password });
         _busy = false;
+
+        if (result.Status == 403 && result.String("code") == "EMAIL_NOT_VERIFIED")
+        {
+            OpenVerify($"Your email is not verified yet. We sent a new 6-digit code to {_email}.");
+            return;
+        }
         if (!result.Ok)
         {
-            _error = result.Status == 401 ? "Invalid email or password." : result.Message("Authentication failed. Try again.");
+            _error = result.Status == 401 ? "Invalid email or password."
+                : result.Status == 429 ? "Too many attempts. Try again later."
+                : result.Message("Authentication failed. Try again.");
+            return;
+        }
+        // Verification required: the account exists but there is no session yet.
+        if (_step == Step.SignUp && result.Json is { ValueKind: System.Text.Json.JsonValueKind.Object } root
+            && root.TryGetProperty("token", out var token) && token.ValueKind == System.Text.Json.JsonValueKind.Null)
+        {
+            OpenVerify($"We emailed a 6-digit verification code to {_email}. Enter it below to finish creating your account.");
             return;
         }
         _password = "";
         await GoAfterSignInAsync();
+    }
+
+    private void OpenVerify(string info) { _info = info; _code = ""; _error = null; _step = Step.Verify; }
+
+    private async Task VerifyAsync()
+    {
+        _error = null;
+        if (_code.Trim().Length != 6) { _error = "Enter the 6-digit code from your email."; return; }
+        _busy = true;
+        var verified = await Den.RequestAsync("/api/auth/email-otp/verify-email", "POST", new { email = _email, otp = _code.Trim() });
+        if (!verified.Ok)
+        {
+            _busy = false;
+            _error = verified.String("code") switch
+            {
+                "INVALID_OTP" => "That code is not right. Check it and try again.",
+                "OTP_EXPIRED" => "That code has expired. Send a new code.",
+                "TOO_MANY_ATTEMPTS" => "Too many wrong attempts. Send a new code.",
+                _ => verified.Status == 429 ? "Too many attempts. Try again later." : verified.Message("Verification failed. Try again."),
+            };
+            return;
+        }
+        // Verifying proves the inbox; it does not sign anyone in, so use the password they just typed.
+        var signedIn = await Den.RequestAsync("/api/auth/sign-in/email", "POST", new { email = _email, password = _password });
+        _busy = false;
+        if (!signedIn.Ok)
+        {
+            _password = "";
+            _step = Step.SignIn;
+            _error = "Email verified. Sign in to continue.";
+            return;
+        }
+        _password = "";
+        await GoAfterSignInAsync();
+    }
+
+    private async Task ResendAsync()
+    {
+        _error = null;
+        _busy = true;
+        var sent = await Den.RequestAsync("/api/auth/email-otp/send-verification-otp", "POST", new { email = _email, type = "email-verification" });
+        _busy = false;
+        if (sent.Ok) _info = $"We sent a fresh code to {_email}.";
+        else _error = sent.Status == 429 ? "Too many requests. Try again later." : sent.Message("Could not send a code. Try again.");
+    }
+
+    private async Task SendResetAsync()
+    {
+        _error = null;
+        _busy = true;
+        var result = await Den.RequestAsync("/api/auth/request-password-reset", "POST", new { email = _email, redirectTo = $"{Nav.BaseUri}reset-password" });
+        _busy = false;
+        if (result.Ok) _step = Step.ForgotSent;
+        else _error = result.Status == 429 ? "Too many requests. Try again later." : result.Message("Could not send the reset link. Try again.");
     }
 
     private async Task GoAfterSignInAsync()
@@ -100,12 +204,12 @@
             Nav.NavigateTo($"/api/auth/oauth2/authorize?{query}", forceLoad: true);
             return;
         }
-
         var orgs = await Den.RequestAsync("/api/browser/v1/me/orgs");
         var hasOrg = orgs.Json is { ValueKind: System.Text.Json.JsonValueKind.Object } root
             && root.TryGetProperty("orgs", out var list) && list.GetArrayLength() > 0;
         Nav.NavigateTo(hasOrg ? "/dashboard" : "/organization");
     }
 
-    private void Back() { _step = Step.Email; _password = ""; _error = null; }
+    private void GoTo(Step step) { _step = step; _error = null; }
+    private void Back() { _step = Step.Email; _password = ""; _code = ""; _error = null; }
 }
