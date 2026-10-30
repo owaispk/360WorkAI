@@ -27,6 +27,9 @@ public sealed class AuthOptions
     /// </summary>
     public bool RequireEmailVerification { get; set; }
 
+    /// <summary>How recent a sign-in must be for sensitive workspace actions (changing roles, removing people, inviting). Default 120.</summary>
+    public int PrivilegedSessionMinutes { get; set; } = 120;
+
     /// <summary>Extra origins a reset link may return to, besides the web origin.</summary>
     public string[] TrustedOrigins { get; set; } = [];
 

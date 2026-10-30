@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using WorkAI360.Api.Domain;
 using WorkAI360.Api.Data;
 
 namespace WorkAI360.Api.Endpoints;
@@ -15,12 +16,15 @@ public static class MiscEndpoints
             if (!AuthEndpoints.IsValidEmail(email)) return Results.Json(new { error = "invalid_request" }, statusCode: 400);
             var normalized = AuthEndpoints.NormalizeEmail(email!);
             var exists = await db.Users.AnyAsync(u => u.Email == normalized);
+            var now = DateTime.UtcNow;
+            var invited = !string.IsNullOrWhiteSpace(invite)
+                && await db.Invitations.AnyAsync(i => (i.Id == invite || i.InviteToken == invite) && i.Email == normalized && i.Status == InvitationStatus.Pending && i.ExpiresAt > now);
             return Results.Json(new
             {
                 email = normalized,
                 nextStep = exists ? "password" : "new_account",
                 allowPublicSignup = true,
-                allowInvitationSignup = false,
+                allowInvitationSignup = invited,
             });
         });
 

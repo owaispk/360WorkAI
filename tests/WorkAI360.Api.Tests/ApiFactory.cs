@@ -45,7 +45,18 @@ public class ApiFactory : WebApplicationFactory<Program>
         var response = await client.PostAsJsonAsync("/api/auth/sign-up/email", new { name, email, password = Password });
         response.EnsureSuccessStatusCode();
         using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        return (email, doc.RootElement.GetProperty("token").GetString()!, doc.RootElement.GetProperty("user").GetProperty("id").GetString()!);
+        var userId = doc.RootElement.GetProperty("user").GetProperty("id").GetString()!;
+        var token = doc.RootElement.GetProperty("token").GetString();
+        if (token is null)
+        {
+            // This fixture requires verification: use the emailed code, then sign in, as a person would.
+            var verified = await client.PostAsJsonAsync("/api/auth/email-otp/verify-email", new { email, otp = Mail.LastCode(Outbox, email) });
+            verified.EnsureSuccessStatusCode();
+            var signIn = await client.PostAsJsonAsync("/api/auth/sign-in/email", new { email, password = Password });
+            signIn.EnsureSuccessStatusCode();
+            token = (await ReadJsonAsync(signIn)).GetProperty("token").GetString();
+        }
+        return (email, token!, userId);
     }
 
     public override ValueTask DisposeAsync()

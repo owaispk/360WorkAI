@@ -22,6 +22,7 @@
                 <li>@member.Name <span class="den-muted">(@member.Email, @member.Role)</span></li>
             }
         </ul>
+        <a class="den-button" href="/dashboard/members" data-testid="members-link">Manage members</a>
         <button type="button" class="den-button den-secondary" @onclick="SignOutAsync">Sign out</button>
     }
 </section>
@@ -51,8 +52,12 @@
             _role = org.String("currentMember", "role") ?? "";
             if (root.TryGetProperty("members", out var members))
             {
-                _members = members.EnumerateArray().Select(m => new MemberRow(
-                    m.GetProperty("name").GetString() ?? "", m.GetProperty("email").GetString() ?? "", m.GetProperty("role").GetString() ?? "")).ToList();
+                // Invitations that have not been accepted yet are listed on the Members page, not here.
+                _members = members.EnumerateArray().Where(m => m.GetProperty("userId").ValueKind != JsonValueKind.Null).Select(m =>
+                {
+                    var user = m.GetProperty("user");
+                    return new MemberRow(user.GetProperty("name").GetString() ?? "", user.GetProperty("email").GetString() ?? "", m.GetProperty("role").GetString() ?? "");
+                }).ToList();
             }
         }
         _loading = false;

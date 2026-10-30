@@ -100,3 +100,24 @@ public sealed class SmtpEmailSender(IOptions<EmailOptions> options, ILogger<Smtp
         logger.LogInformation("Sent an email to {Domain}", message.To[(message.To.IndexOf('@') + 1)..]);
     }
 }
+
+public static class InvitationEmail
+{
+    public static EmailMessage Create(string to, string inviteLink, string invitedByName, string invitedByEmail, string organizationName, string role)
+    {
+        var who = string.IsNullOrWhiteSpace(invitedByEmail) || invitedByEmail == invitedByName ? invitedByName : $"{invitedByName} ({invitedByEmail})";
+        var subject = $"{invitedByName} invited you to join {organizationName} on OpenWork";
+        var text = $"{who} invited you to join {organizationName} on OpenWork as {(role == "admin" ? "an admin" : "a member")}.\n\nAccept the invitation:\n\n{inviteLink}\n\nSign in or create an account with {to} to join. If you were not expecting this, you can ignore this email.\n";
+        var html = $"""
+            <!doctype html><html><body style="margin:0;background:#f6f4ef;color:#171412;font-family:Arial,sans-serif">
+            <div style="max-width:520px;margin:40px auto;background:#fffdf8;border:1px solid #e8dfd0;border-radius:20px;padding:32px">
+            <p style="color:#8a5a28;font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin:0 0 12px">OpenWork</p>
+            <h1 style="font-size:26px;margin:0 0 16px">Join {WebUtility.HtmlEncode(organizationName)}</h1>
+            <p style="font-size:16px;line-height:24px;color:#4d4640">{WebUtility.HtmlEncode(who)} invited you to join <strong>{WebUtility.HtmlEncode(organizationName)}</strong> on OpenWork as {(role == "admin" ? "an admin" : "a member")}.</p>
+            <p><a href="{WebUtility.HtmlEncode(inviteLink)}" style="display:inline-block;background:#171412;color:#fff;text-decoration:none;border-radius:999px;padding:12px 24px;font-weight:600">Accept invitation</a></p>
+            <p style="font-size:13px;color:#6b645c">Sign in or create an account with {WebUtility.HtmlEncode(to)} to join. If you were not expecting this, you can ignore this email.</p>
+            </div></body></html>
+            """;
+        return new EmailMessage(to, subject, text, html);
+    }
+}

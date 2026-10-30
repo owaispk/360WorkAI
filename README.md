@@ -4,8 +4,8 @@ A rewrite of the OpenWork Den API (`ee/apps/den-api`, TypeScript, Hono + Better 
 (`ee/apps/den-web`, Next.js) as ASP.NET Core 10 and Blazor. It keeps the **wire contract** the existing clients
 depend on (routes, JSON shapes, cookie name, bearer = session token) and replaces the internals.
 
-Status: **early**. Sign-in, sessions, **email verification and password reset**, organizations, desktop handoff,
-device login and the **OAuth provider for MCP clients** (with a working `/mcp/agent`) are built and tested. Most of Den is not built yet (see
+Status: **early**. Sign-in, sessions, **email verification and password reset**, organizations, **members, roles and
+invitations**, desktop handoff, device login and the **OAuth provider for MCP clients** (with a working `/mcp/agent`) are built and tested. Most of Den is not built yet (see
 [Not built yet](#not-built-yet)). The route list this follows comes from the S6 spike (which `/api/auth/*` routes real
 clients call).
 
@@ -35,15 +35,16 @@ Open `http://localhost:5081`. The API needs `Auth__Secret` (32+ characters). Dev
 ## Test
 
 ```bash
-dotnet test                                                    # 80 in-process API tests (~20 s)
+dotnet test                                                    # 133 in-process API tests (~20 s)
 
 # Contract tests against the running rewrite (web is W, API is A):
 W=http://localhost:5081 A=http://localhost:5080 \
-SECTIONS=health,auth,orgs,handoff,device,login-options,oauth-mcp,passwords,email,sign-out node tests/parity/parity.mjs
+SECTIONS=health,auth,orgs,handoff,device,login-options,oauth-mcp,passwords,email,members,sign-out node tests/parity/parity.mjs
 
 # Real-browser flows (need Playwright):
 W=http://localhost:5081 node tests/parity/ui-flows.js                       # sign-in, workspace, device approval
 W=http://localhost:5081 A=http://localhost:5080 node tests/parity/ui-mcp.js  # an agent connecting, end to end
+W=http://localhost:5081 A=http://localhost:5080 node tests/parity/ui-members.js  # invite, join, change role, remove
 
 # Email verification and reset (start the rewrite with the setting below; it reads the dev outbox):
 Auth__RequireEmailVerification=true scripts/dev.sh restart
@@ -64,7 +65,9 @@ It is the yardstick for "does the rewrite behave like Den": a route is done when
 | Password reset | `POST /api/auth/request-password-reset`, `GET /api/auth/reset-password/{token}` (the emailed link; redirects to the reset page), `POST /api/auth/reset-password` |
 | Sessions | signed cookie `openwork-den.session_token` (HttpOnly, SameSite=Lax) **or** `Authorization: Bearer <token>`; cookie checked first |
 | Current user | `GET /v1/me`, `GET /v1/me/orgs`, `POST /v1/me/active-organization`, `POST /api/auth/organization/set-active` |
-| Organizations | `POST /v1/org`, `GET /v1/org` (the caller becomes `owner`; roles beyond that are not built) |
+| Organizations | `POST /v1/org` (the caller becomes `owner`), `GET /v1/org` (organization, `currentMember` with its permissions, members, invitations) |
+| Members and roles | `POST /v1/members/{id}/role`, `POST /v1/members/{id}/transfer-ownership`, `DELETE /v1/members/{id}`. Roles are `owner`, `admin` and `member`; each action needs a permission from the catalog (59 keys, generated from `packages/types/src/den/permissions.ts` by `scripts/gen-permissions.py`; owner has all, admin 43, member none) |
+| Invitations | `POST /v1/invitations` (create or resend), `GET /v1/invitations/{id}/link`, `POST /v1/invitations/{id}/cancel`, `GET /v1/orgs/invitations/preview`, `POST /v1/orgs/invitations/accept`; sign-up accepts `?invite=TOKEN`, which proves the address and skips the code |
 | Desktop handoff | `POST /v1/auth/desktop-handoff`, `/status`, `/exchange` |
 | Device login (RFC 8628) | `POST /api/auth/device/code`, `/device/token`, `GET /v1/auth/device/{code}`, `POST /v1/auth/device/decision` |
 | OAuth discovery | `/.well-known/oauth-authorization-server[/api/auth]`, `/.well-known/openid-configuration[/api/auth]`, `/api/auth/.well-known/*`, `/.well-known/oauth-protected-resource[/mcp[/agent]]`, `/api/auth/jwks` |
@@ -73,7 +76,7 @@ It is the yardstick for "does the rewrite behave like Den": a route is done when
 | Sign-in form helpers | `GET /v1/auth/login-options`, `GET /v1/orgs/sso/resolve` (always "not SSO"), bootstrap status/verify (report "unavailable") |
 | Refusals | the 28 Better Auth mutations the reference refuses answer `403`; every other unknown `/api/auth/*` path is `404` |
 | Web host | `/api/auth/*`, `/api/browser/v1/*` (same-origin guard, cookie filter) proxied to the API; the aliases `login-options`, `sso-resolve`, `desktop-handoff`; `/api/health`, `/api/ready`, `/api/runtime-config`, `/api/auth/clear-session-cookie` |
-| Blazor pages | `/` (email-first sign-in or sign-up; resumes an agent's authorization afterwards), `/organization`, `/dashboard`, `/device`, `/mcp/consent` and `/mcp/select-organization` (allow or deny an agent, choose or create a workspace), `/connect/error`, `/reset-password` (and the verify-code and forgot-password steps on `/`) |
+| Blazor pages | `/` (email-first sign-in or sign-up; resumes an agent's authorization afterwards), `/organization`, `/dashboard`, `/dashboard/members` (list, invite, change role, remove, make owner, copy or cancel an invitation), `/join-org` (open an invitation link), `/device`, `/mcp/consent` and `/mcp/select-organization` (allow or deny an agent, choose or create a workspace), `/connect/error`, `/reset-password` (and the verify-code and forgot-password steps on `/`) |
 
 ## Configuration
 
@@ -86,6 +89,7 @@ Set with environment variables (`Auth__Secret`) or `appsettings`.
 | `Auth__RequireEmailVerification` | `true` to require an emailed code before sign-in (default `false`). |
 | `Auth__TrustedProxies__0`, `__1`… | Addresses of proxies whose `X-Forwarded-*` headers are believed. Empty means loopback only. **Set this whenever the web host runs somewhere else**: until you do, the API sees every visitor as the web host, so the per-address rate limits share one bucket. |
 | `Auth__TrustedOrigins__0`… | Extra origins a password-reset link may return to, besides the web origin. |
+| `Auth__PrivilegedSessionMinutes` | How recently the person must have signed in to change members, roles or invitations (default 120). Older sessions get `403 {error: "reauth"}` and the Members page asks for the password. |
 | `Auth__RateLimitsEnabled` | Rate limits on the email endpoints. Default: off in Development, on everywhere else. |
 | `Email__Provider` | `dev` keeps messages in memory and exposes them at `GET /dev/outbox` (**Development only; refused anywhere else**). `smtp` sends real mail. |
 | `Email__From`, `Email__Smtp__Host`, `__Port`, `__User`, `__Password`, `__Security` | SMTP settings. `Security` is `auto` (default), `starttls`, `ssl` or `none` (local test servers only). |
@@ -109,14 +113,20 @@ Set with environment variables (`Auth__Secret`) or `appsettings`.
 - **`execute_capability` runs two built-in read-only capabilities today** (`openwork.whoami`, `openwork.workspace.members`), so the whole path is real and testable. Connections to external services are not built yet.
 - **Sign-in lockout**: 5 failures per address in 15 minutes returns `429 login_locked` with `Retry-After`. The email endpoints also have the reference's per-address and per-source limits (for example 5 reset requests per address per hour). All limits are in memory, per instance.
 
+- **Members who have not accepted yet are listed as placeholder members** (no user id, `inviteId` set), as in the reference, so one list shows everyone. Removing a placeholder **cancels the invitation**; the reference leaves it pending.
+- **Removing, demoting or transferring revokes access immediately**: every session, refresh token, consent, MCP token and authorization code the person holds for that workspace is deleted, so an agent they connected stops working at once. Transferring ownership signs out **both** people, as in the reference.
+- **Ownership changes are atomic.** The demotion and promotion are conditional updates inside one transaction, so two concurrent transfers cannot leave two owners (found by a test, fixed). Concurrent accepts of one invitation are idempotent for the same person.
+- **A role list such as `admin,member` collapses to one role** (the highest), and unknown names are refused; `Super Admin` normalizes to `admin`, matching the reference.
+- **Members are deleted, not soft-deleted**, and there are no editable permission sets, teams or plan limits yet: permissions come from the role.
+
 ## Not built yet
 
 Roughly in the order to build them:
 
 1. **OAuth follow-ups**: Client ID Metadata Documents (clients that skip registration), a rate limit on registration and on failed token requests, signing-key rotation, ID tokens and `userinfo` (the OpenID document is served but no ID tokens are issued), and Workbot's fixed client id. Testing against real clients (Claude Code, Cursor) has not been done: the flows are exercised with a scripted client and a real browser.
 2. **MCP connections**: the capabilities behind `execute_capability` (Google Workspace, Microsoft 365 and other MCP servers), plus streaming responses.
-3. **More email**: invitations, a Resend provider (SMTP only today), the other code types (`sign-in`, `forget-password`, `change-email`), and a shared rate-limit store for more than one instance.
-4. **Members, invitations, roles, teams, API keys**: only `owner` exists today.
+3. **More email**: a Resend provider (SMTP only today), the other code types (`sign-in`, `forget-password`, `change-email`), and a shared rate-limit store for more than one instance.
+4. **Members follow-ups**: per-member permissions (`/v1/members/{id}/permissions`), teams, API keys, invitation limits, a leave-workspace action, and a re-sign-in dialog that retries in place (the Members page does ask for the password, but other pages do not).
 5. **Social sign-in** (Google, GitHub), **SSO** (OIDC/SAML) and **SCIM**.
 6. The rest of `/v1/*` (about 550 route registrations in the reference) and the other ~120 web pages.
 7. **Passwords**: the reference's strength score and breached-password screening.

@@ -40,7 +40,9 @@ public sealed class OrgTests : IClassFixture<ApiFactory>
 
         var read = Bearer(HttpMethod.Get, "/v1/org", outsiderToken);
         read.Headers.Add("x-openwork-org-id", orgId);
-        Assert.Equal(HttpStatusCode.Forbidden, (await client.SendAsync(read)).StatusCode);
+        var notFound = await client.SendAsync(read);
+        Assert.Equal(HttpStatusCode.NotFound, notFound.StatusCode);           // a workspace you are not in does not exist for you
+        Assert.Equal("organization_not_found", (await ReadJsonAsync(notFound)).GetProperty("error").GetString());
 
         var activate = await client.SendAsync(Bearer(HttpMethod.Post, "/v1/me/active-organization", outsiderToken, new { organizationId = orgId }));
         Assert.Equal(HttpStatusCode.Forbidden, activate.StatusCode);

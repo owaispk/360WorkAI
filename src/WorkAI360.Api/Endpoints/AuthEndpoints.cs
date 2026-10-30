@@ -71,12 +71,18 @@ public static class AuthEndpoints
             if (await db.Users.AnyAsync(u => u.Email == email))
                 return Json(422, new { message = "User already exists. Use another email.", code = "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL" });
 
+            // Signing up from an invitation link proves the inbox: only the emailed token counts (the id is visible to every member).
+            var inviteToken = ctx.Request.Query["invite"].ToString().Trim();
+            if (inviteToken.Length == 0 && !string.IsNullOrWhiteSpace(body.Invite)) inviteToken = body.Invite.Trim();
             var now = DateTime.UtcNow;
+            var verifiedByInvite = inviteToken.Length > 0
+                && await db.Invitations.AnyAsync(i => i.InviteToken == inviteToken && i.Email == email && i.Status == InvitationStatus.Pending && i.ExpiresAt > now);
             var user = new User
             {
                 Id = Ids.New("usr"),
                 Email = email,
                 Name = body.Name!.Trim(),
+                EmailVerified = verifiedByInvite,
                 PasswordHash = Passwords.Hash(body.Password),
                 CreatedAt = now,
                 UpdatedAt = now,
@@ -87,6 +93,7 @@ public static class AuthEndpoints
             // Verification required: no session until the emailed code is entered (the person signs in afterwards).
             if (options.Value.RequireEmailVerification)
             {
+                // The invitation already verified the address, so no code is needed; the person signs in next (as in the reference).
                 await verification.SendCodeAsync(user, force: true);
                 return Json(200, new { token = (string?)null, user = Responses.UserJson(user) });
             }

@@ -1,0 +1,239 @@
+@page "/dashboard/members"
+@using System.Text.Json
+@inject DenClient Den
+@inject NavigationManager Nav
+
+<PageTitle>Members · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="members-page">
+    @if (_loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>Members</h1>
+        <p class="den-muted">@_orgName · you are @(_myRole == "owner" ? "the owner" : $"an {_myRole}")</p>
+
+        @if (_notice is not null) { <p class="den-notice" role="status" data-testid="notice">@_notice</p> }
+        @if (_error is not null) { <p class="den-error" role="alert" data-testid="error">@_error</p> }
+
+        @if (_needsReauth)
+        {
+            <form class="den-reauth" @onsubmit="ConfirmItsYouAsync" data-testid="reauth">
+                <p>For security, confirm it's you before changing workspace settings.</p>
+                <label for="reauth-password">Password</label>
+                <input id="reauth-password" type="password" autocomplete="current-password" @bind="_reauthPassword" @bind:event="oninput" />
+                <button type="submit" class="den-button" disabled="@_busy">Confirm</button>
+                <button type="button" class="den-link" @onclick="CancelReauth">Cancel</button>
+            </form>
+        }
+
+        <ul class="den-members" data-testid="member-list">
+            @foreach (var m in _members)
+            {
+                <li data-testid="member-row" data-email="@m.Email" data-role="@m.Role" data-pending="@(m.Pending ? "true" : "false")">
+                    <div class="den-member-main">
+                        <strong>@m.Name</strong>
+                        <span class="den-muted">@m.Email</span>
+                        <span class="den-badge den-badge-@(m.Pending ? "pending" : m.Role)">@(m.Pending ? "Pending" : Label(m.Role))</span>
+                    </div>
+                    <div class="den-member-actions">
+                        @if (m.Pending)
+                        {
+                            @if (Can("invitations.manage"))
+                            {
+                                <button type="button" class="den-link" @onclick="() => CopyLinkAsync(m)">Copy link</button>
+                                <button type="button" class="den-link" @onclick="() => CancelInviteAsync(m)">Cancel invitation</button>
+                            }
+                        }
+                        else if (m.Role != "owner" && !m.IsMe)
+                        {
+                            @if (Can("members.update"))
+                            {
+                                <select aria-label="Role for @m.Email" value="@m.Role" @onchange="e => ChangeRoleAsync(m, e.Value?.ToString() ?? m.Role)">
+                                    <option value="member">Member</option>
+                                    <option value="admin">Admin</option>
+                                </select>
+                            }
+                            @if (_myRole == "owner" && m.Role == "admin")
+                            {
+                                @if (_confirm == "owner:" + m.Id)
+                                {
+                                    <button type="button" class="den-link den-danger" @onclick="() => TransferAsync(m)">Confirm: make @m.Name the owner</button>
+                                    <button type="button" class="den-link" @onclick="() => _confirm = null">Cancel</button>
+                                }
+                                else { <button type="button" class="den-link" @onclick='() => _confirm = "owner:" + m.Id'>Make owner</button> }
+                            }
+                            @if (Can("members.delete"))
+                            {
+                                @if (_confirm == "remove:" + m.Id)
+                                {
+                                    <button type="button" class="den-link den-danger" @onclick="() => RemoveAsync(m)">Confirm remove</button>
+                                    <button type="button" class="den-link" @onclick="() => _confirm = null">Cancel</button>
+                                }
+                                else { <button type="button" class="den-link" @onclick='() => _confirm = "remove:" + m.Id'>Remove</button> }
+                            }
+                        }
+                    </div>
+                </li>
+            }
+        </ul>
+
+        @if (_inviteLink is not null)
+        {
+            <p class="den-muted">Invitation link: <input class="den-link-input" readonly value="@_inviteLink" data-testid="invite-link" @onfocus="SelectAll" /></p>
+        }
+
+        @if (Can("invitations.manage"))
+        {
+            <h2>Invite someone</h2>
+            <form @onsubmit="InviteAsync" novalidate data-testid="invite-form">
+                <label for="invite-email">Email</label>
+                <input id="invite-email" type="email" autocomplete="off" @bind="_inviteEmail" @bind:event="oninput" />
+                <label for="invite-role">Role</label>
+                <select id="invite-role" @bind="_inviteRole">
+                    <option value="member">Member</option>
+                    @if (Can("members.update")) { <option value="admin">Admin</option> }
+                </select>
+                <button type="submit" class="den-button" disabled="@_busy">Send invitation</button>
+            </form>
+        }
+        <a class="den-link" href="/dashboard">Back to dashboard</a>
+    }
+</section>
+
+@code {
+    private sealed record Row(string Id, string Name, string Email, string Role, bool Pending, bool IsMe, string? InviteId);
+
+    private bool _loading = true;
+    private bool _busy;
+    private string _orgName = "";
+    private string _myRole = "";
+    private HashSet<string> _permissions = [];
+    private List<Row> _members = [];
+    private string? _error, _notice, _confirm, _inviteLink;
+    private string _inviteEmail = "";
+    private string _inviteRole = "member";
+    private bool _needsReauth;
+    private string _reauthPassword = "";
+    private string _myEmail = "";
+    private Func<Task>? _retry;
+
+    private bool Can(string permission) => _permissions.Contains(permission);
+    private static string Label(string role) => role switch { "owner" => "Owner", "admin" => "Admin", _ => "Member" };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var me = await Den.RequestAsync("/api/browser/v1/me");
+        if (!me.Ok) { Nav.NavigateTo("/"); return; }
+        _myEmail = me.String("user", "email") ?? "";
+        if (!await LoadAsync()) return;
+        _loading = false;
+        StateHasChanged();
+    }
+
+    private async Task<bool> LoadAsync()
+    {
+        var org = await Den.RequestAsync("/api/browser/v1/org");
+        if (org.Status is 404 or 403) { Nav.NavigateTo("/organization"); return false; }
+        if (org.Json is not { ValueKind: JsonValueKind.Object } root) return false;
+        _orgName = org.String("organization", "name") ?? "";
+        var current = root.GetProperty("currentMember");
+        _myRole = current.GetProperty("role").GetString() ?? "member";
+        var myId = current.GetProperty("id").GetString();
+        _permissions = current.GetProperty("permissions").EnumerateArray().Select(p => p.GetString() ?? "").ToHashSet();
+        _members = root.GetProperty("members").EnumerateArray().Select(m =>
+        {
+            var user = m.GetProperty("user");
+            var pending = m.GetProperty("userId").ValueKind == JsonValueKind.Null;
+            return new Row(m.GetProperty("id").GetString() ?? "", user.GetProperty("name").GetString() ?? "", user.GetProperty("email").GetString() ?? "",
+                m.GetProperty("role").GetString() ?? "member", pending, m.GetProperty("id").GetString() == myId, m.GetProperty("inviteId").GetString());
+        }).OrderBy(r => r.Pending).ToList();
+        return true;
+    }
+
+    /// <summary>Runs a change, and if the server asks for a recent sign-in, asks for the password and retries once.</summary>
+    private async Task RunAsync(Func<Task<DenResponse>> action, string success)
+    {
+        _error = _notice = null; _confirm = null; _busy = true;
+        var result = await action();
+        _busy = false;
+        if (result.String("error") == "reauth")
+        {
+            _needsReauth = true; _retry = () => RunAsync(action, success);
+            return;
+        }
+        if (result.Ok) { _notice = success; await LoadAsync(); }
+        else _error = result.Message("That did not work. Try again.");
+    }
+
+    private async Task ConfirmItsYouAsync()
+    {
+        _busy = true; _error = null;
+        var signIn = await Den.RequestAsync("/api/auth/sign-in/email", "POST", new { email = _myEmail, password = _reauthPassword });
+        _busy = false;
+        _reauthPassword = "";
+        if (!signIn.Ok) { _error = "That password is not right."; return; }
+        _needsReauth = false;
+        var retry = _retry; _retry = null;
+        if (retry is not null) await retry();
+    }
+
+    private void CancelReauth() { _needsReauth = false; _retry = null; _reauthPassword = ""; }
+
+    private Task ChangeRoleAsync(Row m, string role) =>
+        RunAsync(() => Den.RequestAsync($"/api/browser/v1/members/{m.Id}/role", "POST", new { role }), $"{m.Name} is now {(role == "admin" ? "an admin" : "a member")}.");
+
+    private Task RemoveAsync(Row m) =>
+        RunAsync(() => Den.RequestAsync($"/api/browser/v1/members/{m.Id}", "DELETE"), $"{m.Name} was removed.");
+
+    private async Task TransferAsync(Row m)
+    {
+        _error = _notice = null; _confirm = null; _busy = true;
+        var result = await Den.RequestAsync($"/api/browser/v1/members/{m.Id}/transfer-ownership", "POST", new { });
+        _busy = false;
+        if (result.String("error") == "reauth") { _needsReauth = true; _retry = () => TransferAsync(m); return; }
+        // Everyone's sessions change when ownership moves, so start over from the sign-in page.
+        if (result.Ok) { Nav.NavigateTo("/", forceLoad: true); return; }
+        _error = result.Message("That did not work. Try again.");
+    }
+
+    private Task CancelInviteAsync(Row m) =>
+        RunAsync(() => Den.RequestAsync($"/api/browser/v1/invitations/{m.InviteId}/cancel", "POST", new { }), $"The invitation for {m.Email} was canceled.");
+
+    private async Task CopyLinkAsync(Row m)
+    {
+        _error = _notice = null;
+        var link = await Den.RequestAsync($"/api/browser/v1/invitations/{m.InviteId}/link");
+        if (link.String("error") == "reauth") { _needsReauth = true; _retry = () => CopyLinkAsync(m); return; }
+        if (!link.Ok) { _error = link.Message("Could not get the link."); return; }
+        _inviteLink = link.String("inviteLink");
+        _notice = _inviteLink is not null && await Den.CopyAsync(_inviteLink) ? "Invitation link copied." : "Copy the invitation link below.";
+    }
+
+    private async Task InviteAsync()
+    {
+        _error = _notice = _inviteLink = null;
+        if (!_inviteEmail.Contains('@')) { _error = "Enter the person's email address."; return; }
+        _busy = true;
+        var result = await Den.RequestAsync("/api/browser/v1/invitations", "POST", new { email = _inviteEmail.Trim(), role = _inviteRole });
+        _busy = false;
+        if (result.String("error") == "reauth") { _needsReauth = true; _retry = InviteAsync; return; }
+        if (result.Ok)
+        {
+            _notice = result.Status == 201 ? $"Invitation sent to {_inviteEmail.Trim()}." : $"Invitation sent again to {_inviteEmail.Trim()}.";
+            _inviteEmail = "";
+            await LoadAsync();
+        }
+        else if (result.String("error") == "invitation_email_failed")
+        {
+            _error = "The invitation was saved but the email could not be sent. Use Copy link to share it yourself.";
+            await LoadAsync();
+        }
+        else _error = result.Message("Could not send the invitation.");
+    }
+
+    private void SelectAll() { }
+}

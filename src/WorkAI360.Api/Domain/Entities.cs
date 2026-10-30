@@ -42,6 +42,38 @@ public sealed class Member
     public required string UserId { get; set; }
     public required string Role { get; set; }
     public DateTime CreatedAt { get; set; }
+    public DateTime? JoinedAt { get; set; }
+    /// <summary>The invitation this person joined through, if any.</summary>
+    public string? InviteId { get; set; }
+}
+
+public static class InvitationStatus
+{
+    public const string Pending = "pending";
+    public const string Accepted = "accepted";
+    public const string Canceled = "canceled";
+    /// <summary>Not stored: a pending invitation past its expiry is reported as expired.</summary>
+    public const string Expired = "expired";
+}
+
+/// <summary>An invitation to join a workspace. The token in the emailed link proves the person received it.</summary>
+public sealed class Invitation
+{
+    public required string Id { get; set; }
+    public required string OrganizationId { get; set; }
+    public required string Email { get; set; }
+    public required string Role { get; set; }
+    public required string Status { get; set; }
+    public required string InviteToken { get; set; }
+    public required string InvitedByUserId { get; set; }
+    /// <summary>The id the members list shows for this pending person (the reference lists invitations as placeholder members).</summary>
+    public required string PlaceholderMemberId { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime ExpiresAt { get; set; }
+    public DateTime? AcceptedAt { get; set; }
+    public string? AcceptedByUserId { get; set; }
+
+    public string EffectiveStatus(DateTime now) => Status == InvitationStatus.Pending && ExpiresAt <= now ? InvitationStatus.Expired : Status;
 }
 
 /// <summary>One-time grant that hands a signed-in web session to the desktop app.</summary>

@@ -94,39 +94,16 @@ public static class OrgEndpoints
             var id = Ids.New("org");
             var org = new Organization { Id = id, Name = name, Slug = id, CreatedAt = now };
             db.Organizations.Add(org);
-            db.Members.Add(new Member { Id = Ids.New("mem"), OrganizationId = id, UserId = current.User.Id, Role = "owner", CreatedAt = now });
+            db.Members.Add(new Member { Id = Ids.New("om"), OrganizationId = id, UserId = current.User.Id, Role = "owner", CreatedAt = now, JoinedAt = now });
             await db.SaveChangesAsync();
             await SetActiveAsync(db, current.Session, id);
             return Results.Json(new { organization = Responses.OrganizationJson(org) }, statusCode: StatusCodes.Status201Created);
         });
 
-        v1.MapGet("/org", async (HttpContext ctx, SessionService sessions, DenDbContext db) =>
+        v1.MapGet("/org", async (HttpContext ctx, OrgAccess access, DenDbContext db) =>
         {
-            var current = await sessions.ResolveAsync(ctx);
-            if (current is null) return Responses.Unauthorized();
-
-            var requested = ctx.Request.Headers[OrgHeader].ToString();
-            var orgId = string.IsNullOrWhiteSpace(requested) ? current.Session.ActiveOrganizationId : requested.Trim();
-            if (orgId is null) return Responses.Error(404, "not_found", "No active organization.");
-
-            var member = await db.Members.FirstOrDefaultAsync(m => m.OrganizationId == orgId && m.UserId == current.User.Id);
-            if (member is null) return Responses.Error(403, "forbidden", "You are not a member of this organization.");
-            var org = await db.Organizations.FirstAsync(o => o.Id == orgId);
-
-            var members = await (from m in db.Members
-                                 join u in db.Users on m.UserId equals u.Id
-                                 where m.OrganizationId == orgId
-                                 orderby m.CreatedAt
-                                 select new { id = m.Id, userId = u.Id, role = m.Role, name = u.Name, email = u.Email }).ToListAsync();
-            return Results.Json(new
-            {
-                organization = Responses.OrganizationJson(org),
-                currentMember = new { id = member.Id, userId = member.UserId, role = member.Role },
-                members,
-                invitations = Array.Empty<object>(),
-                teams = Array.Empty<object>(),
-                plan = "free",
-            });
+            var (context, failure) = await access.ResolveAsync(ctx);
+            return failure ?? Results.Json(await OrgPayload.BuildAsync(db, context!));
         });
     }
 

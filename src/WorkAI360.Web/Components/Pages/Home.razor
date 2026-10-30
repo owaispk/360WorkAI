@@ -84,14 +84,24 @@
     private string _code = "";
     private string? _error;
     private string? _info;
+    private string? _invite;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender) return;
+        var query = System.Web.HttpUtility.ParseQueryString(new Uri(Nav.Uri).Query);
+        _invite = string.IsNullOrWhiteSpace(query["invite"]) ? null : query["invite"];
         // Already signed in: go where the person left off.
         var me = await Den.RequestAsync("/api/browser/v1/me");
         if (me.Ok) { await GoAfterSignInAsync(); return; }
         _checking = false;
+        // Arriving from an invitation link: the invited address is already known.
+        if (_invite is not null && !string.IsNullOrWhiteSpace(query["email"]))
+        {
+            _email = query["email"]!;
+            StateHasChanged();
+            await NextAsync();
+        }
         StateHasChanged();
     }
 
@@ -101,7 +111,7 @@
         var email = _email.Trim();
         if (!email.Contains('@')) { _error = "Enter a valid email address."; return; }
         _busy = true;
-        var options = await Den.RequestAsync($"/api/auth/login-options?email={Uri.EscapeDataString(email)}");
+        var options = await Den.RequestAsync($"/api/auth/login-options?email={Uri.EscapeDataString(email)}{(_invite is null ? "" : $"&invite={Uri.EscapeDataString(_invite)}")}");
         _busy = false;
         if (!options.Ok) { _error = options.Status == 400 ? "Enter a valid email address." : options.Message("Could not check this email. Try again."); return; }
         _email = email;
@@ -114,7 +124,7 @@
         if (_step == Step.SignUp && string.IsNullOrWhiteSpace(_name)) _name = _email.Split('@')[0];
         _busy = true;
         var result = _step == Step.SignUp
-            ? await Den.RequestAsync("/api/auth/sign-up/email", "POST", new { name = _name.Trim(), email = _email, password = _password })
+            ? await Den.RequestAsync(_invite is null ? "/api/auth/sign-up/email" : $"/api/auth/sign-up/email?invite={Uri.EscapeDataString(_invite)}", "POST", new { name = _name.Trim(), email = _email, password = _password })
             : await Den.RequestAsync("/api/auth/sign-in/email", "POST", new { email = _email, password = _password });
         _busy = false;
 
@@ -134,6 +144,12 @@
         if (_step == Step.SignUp && result.Json is { ValueKind: System.Text.Json.JsonValueKind.Object } root
             && root.TryGetProperty("token", out var token) && token.ValueKind == System.Text.Json.JsonValueKind.Null)
         {
+            // An invitation link already proved the address: no code is needed, just sign in.
+            if (root.TryGetProperty("user", out var created) && created.TryGetProperty("emailVerified", out var verified) && verified.ValueKind == System.Text.Json.JsonValueKind.True)
+            {
+                var signedIn = await Den.RequestAsync("/api/auth/sign-in/email", "POST", new { email = _email, password = _password });
+                if (signedIn.Ok) { _password = ""; await GoAfterSignInAsync(); return; }
+            }
             OpenVerify($"We emailed a 6-digit verification code to {_email}. Enter it below to finish creating your account.");
             return;
         }
@@ -204,6 +220,7 @@
             Nav.NavigateTo($"/api/auth/oauth2/authorize?{query}", forceLoad: true);
             return;
         }
+        if (_invite is not null) { Nav.NavigateTo($"/join-org?invite={Uri.EscapeDataString(_invite)}"); return; }
         var orgs = await Den.RequestAsync("/api/browser/v1/me/orgs");
         var hasOrg = orgs.Json is { ValueKind: System.Text.Json.JsonValueKind.Object } root
             && root.TryGetProperty("orgs", out var list) && list.GetArrayLength() > 0;

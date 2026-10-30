@@ -48,6 +48,12 @@ public sealed class DenClient(IJSRuntime js) : IAsyncDisposable
         return new DenResponse(raw.Status, raw.Text);
     }
 
+    public async Task<bool> CopyAsync(string text)
+    {
+        _module ??= await js.InvokeAsync<IJSObjectReference>("import", "./js/den.js");
+        return await _module.InvokeAsync<bool>("copyText", text);
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_module is not null)

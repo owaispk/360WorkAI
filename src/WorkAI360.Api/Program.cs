@@ -18,6 +18,8 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection(EmailOptions.Section));
 builder.Services.AddSingleton<RateLimiter>();
 builder.Services.AddScoped<EmailVerificationService>();
+builder.Services.AddScoped<OrgAccess>();
+builder.Services.AddScoped<CredentialRevocation>();
 builder.Services.AddScoped<TrustedUrls>();
 var emailProvider = builder.Configuration["Email:Provider"] ?? "dev";
 if (emailProvider == "smtp")
@@ -83,6 +85,8 @@ app.MapAuthEndpoints();
 app.MapDeviceEndpoints();
 app.MapOrgEndpoints();
 app.MapHandoffEndpoints();
+app.MapMemberEndpoints();
+app.MapInvitationEndpoints();
 app.MapEmailAuthEndpoints();
 app.MapOAuthEndpoints();
 app.MapMcpEndpoints();

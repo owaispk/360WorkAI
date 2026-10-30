@@ -18,3 +18,17 @@ input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 #blazor-error-ui.blazor-error-boundary, #blazor-error-ui[style*="block"] { display:block; }
 select{width:100%;border:1px solid var(--line);border-radius:12px;padding:11px 14px;font-size:15px;background:#fff}a.den-button{display:block;text-align:center;text-decoration:none}
 h1:focus{outline:none}
+.den-wide { max-width: 720px; margin-left: -140px; margin-right: -140px; }
+@media (max-width: 760px) { .den-wide { margin-left: 0; margin-right: 0; } }
+.den-members { list-style: none; padding: 0; margin: 16px 0; border-top: 1px solid var(--line); }
+.den-members li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.den-member-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.den-member-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.den-member-actions select { width: auto; padding: 6px 10px; border-radius: 10px; font-size: 13px; }
+.den-badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: #eef2f6; width: fit-content; }
+.den-badge-owner { background: #fef3c7; } .den-badge-admin { background: #e0e7ff; } .den-badge-pending { background: #f1f5f9; color: var(--muted); }
+.den-danger { color: var(--err); }
+.den-notice { color: #166534; font-size: 13px; margin: 10px 0 0; }
+.den-reauth { background: #f8fafc; border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin: 12px 0; }
+.den-link-input { width: 100%; font-size: 12px; margin-top: 6px; }
+.den-card h2 { margin-top: 24px; }

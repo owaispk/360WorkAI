@@ -12,3 +12,8 @@ export async function request(path, method, bodyJson) {
     return { status: 0, text: JSON.stringify({ message: 'Could not reach the server. Check your connection and try again.' }) };
   }
 }
+
+// Puts text on the clipboard (the invitation link). Returns false when the browser refuses.
+export async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch { return false; }
+}

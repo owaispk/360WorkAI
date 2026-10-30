@@ -1,0 +1,100 @@
+@page "/join-org"
+@inject DenClient Den
+@inject NavigationManager Nav
+
+<PageTitle>Join a workspace · OpenWork Cloud</PageTitle>
+
+<section class="den-card" data-testid="join-org">
+    @if (_state == State.Loading)
+    {
+        <p class="den-muted">Loading the invitation…</p>
+    }
+    else if (_state == State.Missing)
+    {
+        <h1>This invitation was not found.</h1>
+        <p class="den-muted" data-testid="join-missing">Check the link in your email, or ask the person who invited you to send it again.</p>
+    }
+    else if (_state == State.Unusable)
+    {
+        <h1>This invitation can't be used.</h1>
+        <p class="den-muted" data-testid="join-unusable">It was @_status. Ask the person who invited you to send a new one.</p>
+    }
+    else if (_state == State.WrongAccount)
+    {
+        <h1>This invitation is for someone else.</h1>
+        <p class="den-muted" data-testid="join-wrong-account">It was sent to <strong>@_invitedEmail</strong>, but you are signed in as <strong>@_signedInAs</strong>.</p>
+        <button type="button" class="den-button den-secondary" @onclick="SignOutAsync">Sign out and continue</button>
+    }
+    else
+    {
+        <h1>Join @_orgName.</h1>
+        <p class="den-muted">You were invited as <strong>@RoleLabel</strong> with <strong data-testid="join-email">@_invitedEmail</strong>.</p>
+        @if (_error is not null) { <p class="den-error" role="alert">@_error</p> }
+        @if (_signedIn)
+        {
+            <button type="button" class="den-button" disabled="@_busy" @onclick="AcceptAsync">Join @_orgName</button>
+        }
+        else
+        {
+            <button type="button" class="den-button" @onclick="ContinueAsync">Continue with @_invitedEmail</button>
+            <p class="den-muted">Sign in or create an account with this address to join.</p>
+        }
+    }
+</section>
+
+@code {
+    private enum State { Loading, Ready, Missing, Unusable, WrongAccount }
+
+    private State _state = State.Loading;
+    private string _token = "";
+    private string _orgName = "";
+    private string _invitedEmail = "";
+    private string _role = "";
+    private string _status = "";
+    private string _signedInAs = "";
+    private bool _signedIn;
+    private bool _busy;
+    private string? _error;
+
+    private string RoleLabel => _role == "admin" ? "an admin" : "a member";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _token = System.Web.HttpUtility.ParseQueryString(new Uri(Nav.Uri).Query)["invite"] ?? "";
+        if (_token.Length == 0) { _state = State.Missing; StateHasChanged(); return; }
+
+        // Anyone holding the link can see what it is for; accepting needs the invited address.
+        var preview = await Den.RequestAsync($"/api/browser/v1/orgs/invitations/preview?id={Uri.EscapeDataString(_token)}");
+        if (!preview.Ok) { _state = State.Missing; StateHasChanged(); return; }
+        _invitedEmail = preview.String("invitation", "email") ?? "";
+        _role = preview.String("invitation", "role") ?? "member";
+        _status = preview.String("invitation", "status") ?? "";
+        _orgName = preview.String("organization", "name") ?? "the workspace";
+        if (_status != "pending") { _state = State.Unusable; StateHasChanged(); return; }
+
+        var me = await Den.RequestAsync("/api/browser/v1/me");
+        _signedIn = me.Ok;
+        _signedInAs = me.String("user", "email") ?? "";
+        _state = _signedIn && !string.Equals(_signedInAs, _invitedEmail, StringComparison.OrdinalIgnoreCase) ? State.WrongAccount : State.Ready;
+        StateHasChanged();
+    }
+
+    private void ContinueAsync() => Nav.NavigateTo($"/?invite={Uri.EscapeDataString(_token)}&email={Uri.EscapeDataString(_invitedEmail)}");
+
+    private async Task AcceptAsync()
+    {
+        _error = null;
+        _busy = true;
+        var result = await Den.RequestAsync("/api/browser/v1/orgs/invitations/accept", "POST", new { id = _token });
+        _busy = false;
+        if (result.Ok) { Nav.NavigateTo("/dashboard"); return; }
+        _error = result.Status == 404 ? "This invitation is no longer available." : result.Message("Could not join. Try again.");
+    }
+
+    private async Task SignOutAsync()
+    {
+        await Den.RequestAsync("/api/auth/sign-out", "POST", new { });
+        Nav.NavigateTo(Nav.Uri, forceLoad: true);
+    }
+}

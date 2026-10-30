@@ -17,6 +17,7 @@ public sealed class DenDbContext(DbContextOptions<DenDbContext> options) : DbCon
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
     public DbSet<McpAccessToken> McpAccessTokens => Set<McpAccessToken>();
     public DbSet<SigningKey> SigningKeys => Set<SigningKey>();
+    public DbSet<Invitation> Invitations => Set<Invitation>();
     public DbSet<EmailOtp> EmailOtps => Set<EmailOtp>();
     public DbSet<PasswordResetToken> PasswordResetTokens => Set<PasswordResetToken>();
 
@@ -33,6 +34,9 @@ public sealed class DenDbContext(DbContextOptions<DenDbContext> options) : DbCon
         b.Entity<RefreshToken>().HasIndex(t => t.FamilyId);
         b.Entity<RefreshToken>().HasIndex(t => t.CodeHash);
         b.Entity<EmailOtp>().HasIndex(o => new { o.Email, o.Type });
+        b.Entity<Invitation>().HasIndex(i => new { i.OrganizationId, i.Email });
+        b.Entity<Invitation>().HasIndex(i => i.InviteToken).IsUnique();
+        b.Entity<Invitation>().HasIndex(i => i.PlaceholderMemberId).IsUnique();
         b.Entity<PasswordResetToken>().HasIndex(t => t.UserId);
     }
 }
