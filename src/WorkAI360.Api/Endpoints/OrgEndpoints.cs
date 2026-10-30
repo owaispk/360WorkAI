@@ -83,7 +83,7 @@ public static class OrgEndpoints
             return Results.Json(new { ok = true, organizationId = org.Id, organizationSlug = org.Slug });
         });
 
-        v1.MapPost("/org", async (CreateOrgBody? body, HttpContext ctx, SessionService sessions, DenDbContext db) =>
+        v1.MapPost("/org", async (CreateOrgBody? body, HttpContext ctx, SessionService sessions, DenDbContext db, PermissionService permissions) =>
         {
             var current = await sessions.ResolveAsync(ctx);
             if (current is null) return Responses.Unauthorized();
@@ -96,6 +96,7 @@ public static class OrgEndpoints
             db.Organizations.Add(org);
             db.Members.Add(new Member { Id = Ids.New("om"), OrganizationId = id, UserId = current.User.Id, Role = "owner", CreatedAt = now, JoinedAt = now });
             await db.SaveChangesAsync();
+            await permissions.EnsureDefaultSetsAsync(id);
             await SetActiveAsync(db, current.Session, id);
             return Results.Json(new { organization = Responses.OrganizationJson(org) }, statusCode: StatusCodes.Status201Created);
         });

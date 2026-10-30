@@ -5,7 +5,7 @@ A rewrite of the OpenWork Den API (`ee/apps/den-api`, TypeScript, Hono + Better 
 depend on (routes, JSON shapes, cookie name, bearer = session token) and replaces the internals.
 
 Status: **early**. Sign-in, sessions, **email verification and password reset**, organizations, **members, roles and
-invitations**, desktop handoff, device login and the **OAuth provider for MCP clients** (with a working `/mcp/agent`) are built and tested. Most of Den is not built yet (see
+invitations**, **teams and permissions**, desktop handoff, device login and the **OAuth provider for MCP clients** (with a working `/mcp/agent`) are built and tested. Most of Den is not built yet (see
 [Not built yet](#not-built-yet)). The route list this follows comes from the S6 spike (which `/api/auth/*` routes real
 clients call).
 
@@ -35,16 +35,17 @@ Open `http://localhost:5081`. The API needs `Auth__Secret` (32+ characters). Dev
 ## Test
 
 ```bash
-dotnet test                                                    # 133 in-process API tests (~20 s)
+dotnet test                                                    # 166 in-process API tests (~20 s)
 
 # Contract tests against the running rewrite (web is W, API is A):
 W=http://localhost:5081 A=http://localhost:5080 \
-SECTIONS=health,auth,orgs,handoff,device,login-options,oauth-mcp,passwords,email,members,sign-out node tests/parity/parity.mjs
+SECTIONS=health,auth,orgs,handoff,device,login-options,oauth-mcp,passwords,email,members,teams,sign-out node tests/parity/parity.mjs
 
 # Real-browser flows (need Playwright):
 W=http://localhost:5081 node tests/parity/ui-flows.js                       # sign-in, workspace, device approval
 W=http://localhost:5081 A=http://localhost:5080 node tests/parity/ui-mcp.js  # an agent connecting, end to end
 W=http://localhost:5081 A=http://localhost:5080 node tests/parity/ui-members.js  # invite, join, change role, remove
+W=http://localhost:5081 A=http://localhost:5080 node tests/parity/ui-teams.js    # teams, Admin teams, roles and permissions
 
 # Email verification and reset (start the rewrite with the setting below; it reads the dev outbox):
 Auth__RequireEmailVerification=true scripts/dev.sh restart
@@ -67,6 +68,8 @@ It is the yardstick for "does the rewrite behave like Den": a route is done when
 | Current user | `GET /v1/me`, `GET /v1/me/orgs`, `POST /v1/me/active-organization`, `POST /api/auth/organization/set-active` |
 | Organizations | `POST /v1/org` (the caller becomes `owner`), `GET /v1/org` (organization, `currentMember` with its permissions, members, invitations) |
 | Members and roles | `POST /v1/members/{id}/role`, `POST /v1/members/{id}/transfer-ownership`, `DELETE /v1/members/{id}`. Roles are `owner`, `admin` and `member`; each action needs a permission from the catalog (59 keys, generated from `packages/types/src/den/permissions.ts` by `scripts/gen-permissions.py`; owner has all, admin 43, member none) |
+| Teams | `POST /v1/teams`, `GET`, `PATCH`, `DELETE /v1/teams/{id}`. A team has people and may be an **Admin team** (`grantsOrganizationAdmin`): everyone in it is an effective admin. `GET /v1/org` lists all teams to everyone, and the caller's own as `currentMemberTeams` |
+| Permissions | `GET /v1/permissions/catalog`, `GET`/`POST /v1/permissions/sets`, `GET`/`PATCH`/`DELETE /v1/permissions/sets/{id}`, `PUT /v1/permissions/sets/{id}/permissions`, `GET /v1/permissions/sets/{id}/history`, `PUT /v1/teams/{id}/permission-set`, `GET /v1/members/{id}/permissions`. Every workspace has a **Member** set (applies to everyone, nothing on) and an **Admin** set (43 keys); a team can have one role, and a role can be shared by several teams. A person holds the union of the Member set, the Admin set (if an admin), and their teams' roles; each permission is explained by its sources |
 | Invitations | `POST /v1/invitations` (create or resend), `GET /v1/invitations/{id}/link`, `POST /v1/invitations/{id}/cancel`, `GET /v1/orgs/invitations/preview`, `POST /v1/orgs/invitations/accept`; sign-up accepts `?invite=TOKEN`, which proves the address and skips the code |
 | Desktop handoff | `POST /v1/auth/desktop-handoff`, `/status`, `/exchange` |
 | Device login (RFC 8628) | `POST /api/auth/device/code`, `/device/token`, `GET /v1/auth/device/{code}`, `POST /v1/auth/device/decision` |
@@ -76,7 +79,7 @@ It is the yardstick for "does the rewrite behave like Den": a route is done when
 | Sign-in form helpers | `GET /v1/auth/login-options`, `GET /v1/orgs/sso/resolve` (always "not SSO"), bootstrap status/verify (report "unavailable") |
 | Refusals | the 28 Better Auth mutations the reference refuses answer `403`; every other unknown `/api/auth/*` path is `404` |
 | Web host | `/api/auth/*`, `/api/browser/v1/*` (same-origin guard, cookie filter) proxied to the API; the aliases `login-options`, `sso-resolve`, `desktop-handoff`; `/api/health`, `/api/ready`, `/api/runtime-config`, `/api/auth/clear-session-cookie` |
-| Blazor pages | `/` (email-first sign-in or sign-up; resumes an agent's authorization afterwards), `/organization`, `/dashboard`, `/dashboard/members` (list, invite, change role, remove, make owner, copy or cancel an invitation), `/join-org` (open an invitation link), `/device`, `/mcp/consent` and `/mcp/select-organization` (allow or deny an agent, choose or create a workspace), `/connect/error`, `/reset-password` (and the verify-code and forgot-password steps on `/`) |
+| Blazor pages | `/` (email-first sign-in or sign-up; resumes an agent's authorization afterwards), `/organization`, `/dashboard`, `/dashboard/members` (list, invite, change role, remove, make owner, copy or cancel an invitation), `/dashboard/teams` (create, rename, delete, choose people, Admin teams), `/dashboard/permissions` (roles by area, shared roles, give to teams, history), `/join-org` (open an invitation link), `/device`, `/mcp/consent` and `/mcp/select-organization` (allow or deny an agent, choose or create a workspace), `/connect/error`, `/reset-password` (and the verify-code and forgot-password steps on `/`) |
 
 ## Configuration
 
@@ -119,6 +122,12 @@ Set with environment variables (`Auth__Secret`) or `appsettings`.
 - **A role list such as `admin,member` collapses to one role** (the highest), and unknown names are refused; `Super Admin` normalizes to `admin`, matching the reference.
 - **Members are deleted, not soft-deleted**, and there are no editable permission sets, teams or plan limits yet: permissions come from the role.
 
+- **Safety rules ported from the reference**: you cannot turn on, or give a team, a permission you do not hold yourself; only an owner or admin may make or unmake an Admin team, add or remove its people, change who is an admin, or edit the Admin set; making someone an admin needs an admin who holds the whole Admin set; nobody changes their own role; a `members.delete` holder cannot remove an admin (by role or through an Admin team). Denying a key is always allowed, and restoring a key a default set shipped with needs nothing.
+- **Permission history is append-only.** A change is a new row; the newest row per key applies, and a key with no row is denied. Saying what a key already is records nothing. Deleting a role archives it (the history stays readable) and it stops applying; a deleted team's role is kept, unattached.
+- **A team has at most one active role, enforced by the database** (a unique index on active links), so concurrent requests cannot give it two. Team names are unique per workspace ignoring case, as with the reference's MySQL collation.
+- **`GET /v1/teams/{id}` carries a `memberCount` that is always 0**, as the reference's does (a stored column nothing updates); it is kept so clients see the same shape.
+- **Not carried over**: the reference's default-set reconciliation when a new permission is added to the catalog (a new key simply starts off in both sets until someone turns it on), SCIM-managed teams, stable external keys on teams, inviting people straight into a team, and audit events.
+
 ## Not built yet
 
 Roughly in the order to build them:
@@ -126,7 +135,7 @@ Roughly in the order to build them:
 1. **OAuth follow-ups**: Client ID Metadata Documents (clients that skip registration), a rate limit on registration and on failed token requests, signing-key rotation, ID tokens and `userinfo` (the OpenID document is served but no ID tokens are issued), and Workbot's fixed client id. Testing against real clients (Claude Code, Cursor) has not been done: the flows are exercised with a scripted client and a real browser.
 2. **MCP connections**: the capabilities behind `execute_capability` (Google Workspace, Microsoft 365 and other MCP servers), plus streaming responses.
 3. **More email**: a Resend provider (SMTP only today), the other code types (`sign-in`, `forget-password`, `change-email`), and a shared rate-limit store for more than one instance.
-4. **Members follow-ups**: per-member permissions (`/v1/members/{id}/permissions`), teams, API keys, invitation limits, a leave-workspace action, and a re-sign-in dialog that retries in place (the Members page does ask for the password, but other pages do not).
+4. **Members and teams follow-ups**: API keys, invitation limits, invite-into-a-team, declarative `PUT /v1/teams/by-key/{key}`, a leave-workspace action, and a re-sign-in dialog that retries in place (the Members page does ask for the password, but other pages do not).
 5. **Social sign-in** (Google, GitHub), **SSO** (OIDC/SAML) and **SCIM**.
 6. The rest of `/v1/*` (about 550 route registrations in the reference) and the other ~120 web pages.
 7. **Passwords**: the reference's strength score and breached-password screening.

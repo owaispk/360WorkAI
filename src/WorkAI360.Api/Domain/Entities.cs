@@ -214,3 +214,65 @@ public sealed class PasswordResetToken
     public DateTime ExpiresAt { get; set; }
     public DateTime? ConsumedAt { get; set; }
 }
+
+/// <summary>A named group of members. An "Admin team" makes everyone in it an effective admin.</summary>
+public sealed class Team
+{
+    public required string Id { get; set; }
+    public required string OrganizationId { get; set; }
+    public required string Name { get; set; }
+    public bool GrantsOrganizationAdmin { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}
+
+public sealed class TeamMember
+{
+    public required string Id { get; set; }
+    public required string TeamId { get; set; }
+    public required string MemberId { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>
+/// A set of permissions. Every workspace has a Member set (applies to everyone) and an Admin set (applies to admins);
+/// any other set is a team's role, applying to the people in the teams it is linked to.
+/// </summary>
+public sealed class PermissionSet
+{
+    public required string Id { get; set; }
+    public required string OrganizationId { get; set; }
+    /// <summary>"member" or "admin" for the two built-in sets, null for a team role.</summary>
+    public string? DefaultKey { get; set; }
+    public required string Name { get; set; }
+    public string? CreatedByMemberId { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime? ArchivedAt { get; set; }
+}
+
+/// <summary>
+/// One recorded decision about one key in one set. Rows are only ever added, so the history is kept; the newest row for a key is what
+/// applies, and a key with no row is denied.
+/// </summary>
+public sealed class PermissionSetPermission
+{
+    public required string Id { get; set; }
+    public required string PermissionSetId { get; set; }
+    public required string PermissionKey { get; set; }
+    /// <summary>"allow" or "deny".</summary>
+    public required string Status { get; set; }
+    /// <summary>"user" or "seed".</summary>
+    public required string Source { get; set; }
+    public string? ChangedByMemberId { get; set; }
+    public DateTime CreatedAt { get; set; }
+}
+
+/// <summary>Links a role to a team. A team has at most one active role; unlinking keeps the row so history shows where it applied.</summary>
+public sealed class PermissionSetTeam
+{
+    public required string Id { get; set; }
+    public required string PermissionSetId { get; set; }
+    public required string TeamId { get; set; }
+    public DateTime CreatedAt { get; set; }
+    public DateTime? RemovedAt { get; set; }
+}

@@ -19,6 +19,11 @@ public static class OrgPayload
                           select new { Member = m, User = u }).ToListAsync();
         var invitations = await db.Invitations.AsNoTracking().Where(i => i.OrganizationId == org.Id).OrderBy(i => i.CreatedAt).ThenBy(i => i.Id).ToListAsync();
         var owner = rows.FirstOrDefault(r => r.Member.Role == Roles.Owner);
+        var teams = await db.Teams.AsNoTracking().Where(t => t.OrganizationId == org.Id).OrderBy(t => t.CreatedAt).ThenBy(t => t.Id).ToListAsync();
+        var teamIds = teams.Select(t => t.Id).ToList();
+        var links = await db.TeamMembers.AsNoTracking().Where(tm => teamIds.Contains(tm.TeamId)).OrderBy(tm => tm.CreatedAt).ThenBy(tm => tm.Id).ToListAsync();
+        var adminTeamsOf = (string memberId) => teams.Where(t => t.GrantsOrganizationAdmin && links.Any(l => l.TeamId == t.Id && l.MemberId == memberId))
+            .Select(t => (object)new { id = t.Id, name = t.Name }).ToList();
 
         var members = rows.Select(r => (object)new Dictionary<string, object?>
         {
@@ -30,8 +35,8 @@ public static class OrgPayload
             ["joinedAt"] = r.Member.JoinedAt is { } j ? Responses.IsoUtc(j) : Responses.IsoUtc(r.Member.CreatedAt),
             ["isOwner"] = r.Member.Role == Roles.Owner,
             ["user"] = new { id = r.User.Id, email = r.User.Email, name = r.User.Name, image = r.User.Image },
-            ["adminTeams"] = Array.Empty<object>(),
-            ["effectiveRole"] = r.Member.Role,
+            ["adminTeams"] = adminTeamsOf(r.Member.Id),
+            ["effectiveRole"] = EffectiveRole(r.Member.Role, adminTeamsOf(r.Member.Id).Count > 0),
         }).ToList();
 
         // A pending invitation is listed as a placeholder member so it can be seen, and removed, like one.
@@ -70,19 +75,25 @@ public static class OrgPayload
             {
                 id = context.Member.Id,
                 userId = context.Member.UserId,
-                role = context.Member.Role,
+                role = EffectiveRole(context.Member.Role, context.Permissions.AdminTeams.Count > 0),
                 directRole = context.Member.Role,
-                adminTeams = Array.Empty<object>(),
+                adminTeams = context.Permissions.AdminTeams.Select(t => new { id = t.Id, name = t.Name }).ToList(),
                 createdAt = Responses.IsoUtc(context.Member.CreatedAt),
                 joinedAt = Responses.IsoUtc(context.Member.JoinedAt ?? context.Member.CreatedAt),
                 isOwner = context.IsOwner,
-                permissions = Permissions.For(context.Member.Role),
+                permissions = context.Permissions.Keys.Order(StringComparer.Ordinal).ToList(),
             },
             members,
             invitations = invitations.Select(i => new { id = i.Id, email = i.Email, role = i.Role, status = i.EffectiveStatus(now) == InvitationStatus.Expired ? InvitationStatus.Pending : i.Status, expiresAt = Responses.IsoUtc(i.ExpiresAt), createdAt = Responses.IsoUtc(i.CreatedAt) })
                 .Where(i => i.status == InvitationStatus.Pending).ToList(),
-            teams = Array.Empty<object>(),
+            teams = teams.Select(t => TeamBody.Summary(t, links.Where(l => l.TeamId == t.Id).Select(l => l.MemberId).ToList())).ToList(),
+            currentMemberTeams = teams.Where(t => links.Any(l => l.TeamId == t.Id && l.MemberId == context.Member.Id))
+                .Select(t => new { id = t.Id, name = t.Name, organizationId = t.OrganizationId, createdAt = Responses.IsoUtc(t.CreatedAt), updatedAt = Responses.IsoUtc(t.UpdatedAt) }).ToList(),
             plan = "free",
         };
     }
+
+    /// <summary>"member,admin" for someone who is an admin only through an Admin team, so clients can tell it apart from the admin role.</summary>
+    public static string EffectiveRole(string directRole, bool adminViaTeam) =>
+        adminViaTeam && directRole is not (Roles.Owner or Roles.Admin) ? $"{directRole},{Roles.Admin}" : directRole;
 }

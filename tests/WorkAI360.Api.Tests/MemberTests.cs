@@ -86,18 +86,19 @@ public sealed class Workspace
 public sealed class RolesAndPermissionsTests
 {
     [Fact]
-    public void Each_role_holds_the_same_permissions_as_the_reference()
+    public void The_built_in_sets_start_with_the_same_permissions_as_the_reference()
     {
-        Assert.Equal(59, Permissions.For(Roles.Owner).Count);
-        Assert.Equal(43, Permissions.For(Roles.Admin).Count);
-        Assert.Empty(Permissions.For(Roles.Member));
-        Assert.Equal(Permissions.For(Roles.Owner).Order(StringComparer.Ordinal), Permissions.For(Roles.Owner));   // sorted, as the reference returns them
-        Assert.Contains("invitations.manage", Permissions.For(Roles.Admin));
-        Assert.Contains("members.delete", Permissions.For(Roles.Admin));
-        Assert.DoesNotContain("members.update", Permissions.For(Roles.Admin));        // only the owner changes roles
-        Assert.DoesNotContain("organization.update", Permissions.For(Roles.Admin));
-        Assert.True(Permissions.Has(Roles.Owner, "members.update"));
-        Assert.False(Permissions.Has(Roles.Member, "invitations.manage"));
+        bool AdminDefault(string key) => PermissionCatalog.All.Single(p => p.Key == key).AdminDefault;
+        Assert.Equal(59, PermissionCatalog.All.Count);
+        Assert.Equal(43, PermissionCatalog.All.Count(p => p.AdminDefault));
+        Assert.DoesNotContain(PermissionCatalog.All, p => p.MemberDefault);
+        Assert.True(AdminDefault("invitations.manage"));
+        Assert.True(AdminDefault("members.delete"));
+        Assert.False(AdminDefault("members.update"));        // only the owner changes roles by default
+        Assert.False(AdminDefault("organization.update"));
+        Assert.False(AdminDefault("teams.manage_admin"));
+        Assert.False(AdminDefault("permissions.manage"));
+        Assert.Equal(12, PermissionCatalog.Areas.Count);
     }
 
     [Theory]

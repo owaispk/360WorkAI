@@ -18,7 +18,7 @@ public static class InvitationEndpoints
 
     public static void MapInvitationEndpoints(this WebApplication app)
     {
-        app.MapPost("/v1/invitations", async (HttpContext ctx, OrgAccess access, DenDbContext db, IEmailSender sender, OAuthUrls urls, ILoggerFactory logs) =>
+        app.MapPost("/v1/invitations", async (HttpContext ctx, OrgAccess access, DenDbContext db, IEmailSender sender, OAuthUrls urls, ILoggerFactory logs, TeamRules rules) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -44,6 +44,7 @@ public static class InvitationEndpoints
             if (invalid) return Results.Json(new { error = "invalid_role", message = "Choose Member or Admin." }, statusCode: 400);
             // Making someone an admin is a role change, so it needs the permission to change roles.
             if (role == Roles.Admin && access.Require(context!, "members.update") is { } adminDenied) return adminDenied;
+            if (role == Roles.Admin && await rules.AdminRoleGrantDenialAsync(context!) is { } cannotGrant) return cannotGrant;
 
             var normalized = AuthEndpoints.NormalizeEmail(email);
             var org = context!.Organization;

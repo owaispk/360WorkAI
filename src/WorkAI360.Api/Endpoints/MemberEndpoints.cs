@@ -45,7 +45,7 @@ public static partial class MemberEndpoints
 
     public static void MapMemberEndpoints(this WebApplication app)
     {
-        app.MapPost("/v1/members/{memberId}/role", async (string memberId, HttpContext ctx, OrgAccess access, DenDbContext db, CredentialRevocation revocation) =>
+        app.MapPost("/v1/members/{memberId}/role", async (string memberId, HttpContext ctx, OrgAccess access, DenDbContext db, CredentialRevocation revocation, TeamRules rules) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -75,6 +75,11 @@ public static partial class MemberEndpoints
             if (Roles.IsPrivileged(target.Role) && !Roles.IsPrivileged(next) && !members.Any(m => m.Id != target.Id && Roles.IsPrivileged(m.Role)))
                 return Results.Json(new { error = "last_privileged_member", message = "Add another workspace owner or admin before changing this member's role." }, statusCode: 400);
 
+            // Nobody changes their own role. Making an admin needs an admin who holds everything admins hold, and so does demoting one.
+            if (target.Id == context!.Member.Id && !context.IsOwner) return access.Forbidden(TeamRules.OwnRoleChange);
+            if (next == Roles.Admin && target.Role != Roles.Admin && await rules.AdminRoleGrantDenialAsync(context) is { } cannotGrant) return cannotGrant;
+            if (next != Roles.Admin && target.Role == Roles.Admin && !context.IsOwner && !context.IsAdmin) return access.Forbidden(TeamRules.AdminRoleChangeRequiresAdmin);
+
             if (target.Role == next) return Results.Json(new { success = true });
             var previous = target.Role;
             target.Role = next;
@@ -82,7 +87,7 @@ public static partial class MemberEndpoints
             await tx.CommitAsync();
 
             // Losing access must not leave a live session or agent token behind. A promotion takes nothing away.
-            if (Roles.RevokesCredentials(previous, next)) await revocation.RevokeAsync(target.UserId, context!.Organization.Id);
+            if (Roles.RevokesCredentials(previous, next)) await revocation.RevokeAsync(target.UserId, context.Organization.Id);
             return Results.Json(new { success = true });
         });
 
@@ -138,9 +143,12 @@ public static partial class MemberEndpoints
             var target = await db.Members.FirstOrDefaultAsync(m => m.Id == memberId && m.OrganizationId == context!.Organization.Id);
             if (target is null) return Results.Json(new { error = "member_not_found", message = NotFoundMessage }, statusCode: 404);
             if (target.Role == Roles.Owner) return Results.Json(new { error = "owner_role_locked", message = "The organization owner cannot be removed." }, statusCode: 400);
-            if (target.Role == Roles.Admin && !context!.IsOwner && !context.IsAdmin)
+            // Admins (by role, or through an Admin team) can only be removed by the owner or another admin, even by someone holding members.delete.
+            var adminViaTeam = await (from tm in db.TeamMembers join t in db.Teams on tm.TeamId equals t.Id where tm.MemberId == target.Id && t.GrantsOrganizationAdmin select tm.Id).AnyAsync();
+            if ((target.Role == Roles.Admin || adminViaTeam) && !context!.IsOwner && !context.IsAdmin)
                 return Results.Json(new { error = "forbidden", message = "Only the owner or an admin can remove an admin from the organization." }, statusCode: 403);
 
+            db.TeamMembers.RemoveRange(await db.TeamMembers.Where(tm => tm.MemberId == target.Id).ToListAsync());
             db.Members.Remove(target);
             await db.SaveChangesAsync();
             await tx.CommitAsync();

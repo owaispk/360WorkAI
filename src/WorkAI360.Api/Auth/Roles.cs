@@ -37,18 +37,10 @@ public static class Roles
     }
 }
 
-/// <summary>Which permission keys each role holds. The catalog is generated from the reference (scripts/gen-permissions.py).</summary>
+/// <summary>The permission catalog, generated from the reference (scripts/gen-permissions.py). What a person holds is decided by PermissionService.</summary>
 public static class Permissions
 {
     private static readonly Dictionary<string, PermissionDefinition> ByKey = PermissionCatalog.All.ToDictionary(p => p.Key);
-    private static readonly string[] OwnerKeys = PermissionCatalog.All.Select(p => p.Key).Order(StringComparer.Ordinal).ToArray();
-    private static readonly string[] AdminKeys = PermissionCatalog.All.Where(p => p.AdminDefault).Select(p => p.Key).Order(StringComparer.Ordinal).ToArray();
-    private static readonly string[] MemberKeys = PermissionCatalog.All.Where(p => p.MemberDefault).Select(p => p.Key).Order(StringComparer.Ordinal).ToArray();
-
-    /// <summary>The owner holds every key; admins and members hold their default sets. Sorted, as the reference returns them.</summary>
-    public static IReadOnlyList<string> For(string role) => role switch { Roles.Owner => OwnerKeys, Roles.Admin => AdminKeys, _ => MemberKeys };
-
-    public static bool Has(string role, string key) => role == Roles.Owner || For(role).Contains(key);
 
     public static PermissionDefinition Definition(string key) => ByKey.TryGetValue(key, out var d) ? d : throw new ArgumentException($"Unknown permission {key}", nameof(key));
 }

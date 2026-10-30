@@ -20,6 +20,11 @@ public sealed class DenDbContext(DbContextOptions<DenDbContext> options) : DbCon
     public DbSet<Invitation> Invitations => Set<Invitation>();
     public DbSet<EmailOtp> EmailOtps => Set<EmailOtp>();
     public DbSet<PasswordResetToken> PasswordResetTokens => Set<PasswordResetToken>();
+    public DbSet<Team> Teams => Set<Team>();
+    public DbSet<TeamMember> TeamMembers => Set<TeamMember>();
+    public DbSet<PermissionSet> PermissionSets => Set<PermissionSet>();
+    public DbSet<PermissionSetPermission> PermissionSetPermissions => Set<PermissionSetPermission>();
+    public DbSet<PermissionSetTeam> PermissionSetTeams => Set<PermissionSetTeam>();
 
     protected override void OnModelCreating(ModelBuilder b)
     {
@@ -38,5 +43,17 @@ public sealed class DenDbContext(DbContextOptions<DenDbContext> options) : DbCon
         b.Entity<Invitation>().HasIndex(i => i.InviteToken).IsUnique();
         b.Entity<Invitation>().HasIndex(i => i.PlaceholderMemberId).IsUnique();
         b.Entity<PasswordResetToken>().HasIndex(t => t.UserId);
+        // Team names are unique per workspace regardless of case, as with the reference's default MySQL collation.
+        b.Entity<Team>().Property(t => t.Name).UseCollation("NOCASE");
+        b.Entity<Team>().HasIndex(t => new { t.OrganizationId, t.Name }).IsUnique();
+        b.Entity<TeamMember>().HasIndex(t => new { t.TeamId, t.MemberId }).IsUnique();
+        b.Entity<TeamMember>().HasIndex(t => t.MemberId);
+        b.Entity<PermissionSet>().HasIndex(p => p.OrganizationId);
+        // One Member set and one Admin set per workspace, even if two requests try to create them at once.
+        b.Entity<PermissionSet>().HasIndex(p => new { p.OrganizationId, p.DefaultKey }).IsUnique().HasFilter("\"DefaultKey\" IS NOT NULL");
+        b.Entity<PermissionSetPermission>().HasIndex(p => new { p.PermissionSetId, p.PermissionKey });
+        // A team has at most one active role, even if two requests give it one at the same moment.
+        b.Entity<PermissionSetTeam>().HasIndex(p => p.TeamId).IsUnique().HasFilter("\"RemovedAt\" IS NULL");
+        b.Entity<PermissionSetTeam>().HasIndex(p => p.PermissionSetId);
     }
 }

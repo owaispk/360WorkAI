@@ -1,0 +1,215 @@
+@page "/dashboard/teams"
+@inherits ActionPage
+@using System.Text.Json
+
+<PageTitle>Teams · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="teams-page">
+    @if (_loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>Teams</h1>
+        <p class="den-muted">@_orgName · groups of people who share access.</p>
+
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @if (NeedsReauth)
+        {
+            <ReauthForm @bind-Password="ReauthPassword" Busy="Busy" OnConfirm="ConfirmItsYouAsync" OnCancel="CancelReauth" />
+        }
+
+        @if (_teams.Count == 0)
+        {
+            <p class="den-muted" data-testid="no-teams">There are no teams yet.</p>
+        }
+        <ul class="den-members" data-testid="team-list">
+            @foreach (var team in _teams)
+            {
+                <li data-testid="team-row" data-name="@team.Name" data-admin="@(team.IsAdminTeam ? "true" : "false")">
+                    <div class="den-member-main">
+                        @if (_renaming == team.Id)
+                        {
+                            <form class="den-inline" @onsubmit="() => RenameAsync(team)">
+                                <input aria-label="Team name" value="@_renameValue" @oninput="e => _renameValue = e.Value?.ToString() ?? string.Empty" data-testid="rename-input" />
+                                <button type="submit" class="den-link" disabled="@Busy">Save</button>
+                                <button type="button" class="den-link" @onclick="() => _renaming = null">Cancel</button>
+                            </form>
+                        }
+                        else
+                        {
+                            <strong>@team.Name @if (team.IsAdminTeam) { <span class="den-badge den-badge-admin">Admin team</span> }</strong>
+                        }
+                        <span class="den-muted" data-testid="team-people">@PeopleLabel(team)</span>
+                        @if (_roles.TryGetValue(team.Id, out var role))
+                        {
+                            <span class="den-muted" data-testid="team-role">@role</span>
+                        }
+                    </div>
+                    <div class="den-member-actions">
+                        @if (Can("teams.manage"))
+                        {
+                            <button type="button" class="den-link" @onclick="() => StartEditPeople(team)">@(_editing == team.Id ? "Close" : "Edit people")</button>
+                            <button type="button" class="den-link" @onclick="() => StartRename(team)">Rename</button>
+                            @if (_confirmDelete == team.Id)
+                            {
+                                <button type="button" class="den-link den-danger" @onclick="() => DeleteAsync(team)">Confirm delete</button>
+                                <button type="button" class="den-link" @onclick="() => _confirmDelete = null">Cancel</button>
+                            }
+                            else { <button type="button" class="den-link" @onclick="() => _confirmDelete = team.Id">Delete</button> }
+                        }
+                        @if (Can("permissions.view"))
+                        {
+                            <a class="den-link" href="/dashboard/permissions?team=@team.Id">Permissions</a>
+                        }
+                    </div>
+                    @if (_editing == team.Id)
+                    {
+                        <div class="den-panel" data-testid="people-panel">
+                            @foreach (var person in _people)
+                            {
+                                <label class="den-check">
+                                    <input type="checkbox" checked="@_selected.Contains(person.Id)" @onchange="e => TogglePerson(person.Id, e.Value is true)" data-email="@person.Email" />
+                                    <span>@person.Name <span class="den-muted">@person.Email</span></span>
+                                </label>
+                            }
+                            <button type="button" class="den-button" disabled="@Busy" @onclick="() => SavePeopleAsync(team)">Save people</button>
+                        </div>
+                    }
+                </li>
+            }
+        </ul>
+
+        @if (Can("teams.manage"))
+        {
+            <h2>New team</h2>
+            <form @onsubmit="CreateAsync" novalidate data-testid="team-form">
+                <label for="team-name">Name</label>
+                <input id="team-name" autocomplete="off" @bind="_newName" @bind:event="oninput" />
+                @if (Can("teams.manage_admin"))
+                {
+                    <label class="den-check"><input id="team-admin" type="checkbox" checked="@_newAdmin" @onchange="e => _newAdmin = e.Value is true" /> <span>Admin team: everyone in it becomes an admin</span></label>
+                }
+                <button type="submit" class="den-button" disabled="@Busy">Create team</button>
+            </form>
+        }
+        <a class="den-link" href="/dashboard">Back to dashboard</a>
+    }
+</section>
+
+@code {
+    private sealed record Team(string Id, string Name, bool IsAdminTeam, List<string> MemberIds);
+    private sealed record Person(string Id, string Name, string Email);
+
+    private bool _loading = true;
+    private string _orgName = "";
+    private HashSet<string> _permissions = [];
+    private List<Team> _teams = [];
+    private List<Person> _people = [];
+    private Dictionary<string, string> _roles = [];
+    private string? _editing, _renaming, _confirmDelete;
+    private string _renameValue = "", _newName = "";
+    private bool _newAdmin;
+    private HashSet<string> _selected = [];
+
+    private bool Can(string permission) => _permissions.Contains(permission);
+
+    private string PeopleLabel(Team team)
+    {
+        var names = team.MemberIds.Select(id => _people.FirstOrDefault(p => p.Id == id)?.Name).Where(n => n is not null).ToList();
+        return names.Count == 0 ? "No one yet" : string.Join(", ", names);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var me = await Den.RequestAsync("/api/browser/v1/me");
+        if (!me.Ok) { Nav.NavigateTo("/"); return; }
+        MyEmail = me.String("user", "email") ?? "";
+        if (!await LoadAsync()) return;
+        _loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync() => await LoadAsync();
+
+    private async Task<bool> LoadAsync()
+    {
+        var org = await Den.RequestAsync("/api/browser/v1/org");
+        if (org.Status is 404 or 403) { Nav.NavigateTo("/organization"); return false; }
+        if (org.Json is not { ValueKind: JsonValueKind.Object } root) return false;
+        _orgName = org.String("organization", "name") ?? "";
+        _permissions = root.GetProperty("currentMember").GetProperty("permissions").EnumerateArray().Select(p => p.GetString() ?? "").ToHashSet();
+        _people = root.GetProperty("members").EnumerateArray().Where(m => m.GetProperty("userId").ValueKind != JsonValueKind.Null)
+            .Select(m => new Person(m.GetProperty("id").GetString() ?? "", m.GetProperty("user").GetProperty("name").GetString() ?? "", m.GetProperty("user").GetProperty("email").GetString() ?? "")).ToList();
+        _teams = root.GetProperty("teams").EnumerateArray()
+            .Select(t => new Team(t.GetProperty("id").GetString() ?? "", t.GetProperty("name").GetString() ?? "", t.GetProperty("grantsOrganizationAdmin").GetBoolean(),
+                t.GetProperty("memberIds").EnumerateArray().Select(i => i.GetString() ?? "").ToList())).ToList();
+
+        // Which role each team has, for those allowed to see roles.
+        _roles = [];
+        if (Can("permissions.view"))
+        {
+            var sets = await Den.RequestAsync("/api/browser/v1/permissions/sets");
+            if (sets.Ok && sets.Json is { ValueKind: JsonValueKind.Object } body)
+            {
+                foreach (var set in body.GetProperty("sets").EnumerateArray().Where(s => s.GetProperty("kind").GetString() == "team"))
+                {
+                    var label = $"{set.GetProperty("name").GetString()}: {set.GetProperty("allowedCount").GetInt32()} allowed";
+                    foreach (var team in set.GetProperty("teams").EnumerateArray()) _roles[team.GetProperty("id").GetString() ?? ""] = label;
+                }
+            }
+        }
+        return true;
+    }
+
+    private void StartEditPeople(Team team)
+    {
+        if (_editing == team.Id) { _editing = null; return; }
+        _editing = team.Id;
+        _selected = [.. team.MemberIds];
+    }
+
+    private void TogglePerson(string id, bool on)
+    {
+        if (on) _selected.Add(id); else _selected.Remove(id);
+    }
+
+    private void StartRename(Team team)
+    {
+        _renaming = team.Id;
+        _renameValue = team.Name;
+    }
+
+    private async Task SavePeopleAsync(Team team)
+    {
+        var ids = _selected.ToArray();
+        _editing = null;
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/teams/{team.Id}", "PATCH", new { memberIds = ids }), $"People in {team.Name} saved.");
+    }
+
+    private async Task RenameAsync(Team team)
+    {
+        var name = _renameValue.Trim();
+        if (name.Length == 0) { Error = "Give the team a name."; return; }
+        _renaming = null;
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/teams/{team.Id}", "PATCH", new { name }), $"Renamed to {name}.");
+    }
+
+    private async Task DeleteAsync(Team team)
+    {
+        _confirmDelete = null;
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/teams/{team.Id}", "DELETE"), $"{team.Name} was deleted.");
+    }
+
+    private async Task CreateAsync()
+    {
+        var name = _newName.Trim();
+        if (name.Length == 0) { Error = "Give the team a name."; Notice = null; return; }
+        var admin = _newAdmin;
+        await RunAsync(() => Den.RequestAsync("/api/browser/v1/teams", "POST", admin ? new { name, grantsOrganizationAdmin = true } : new { name }), $"{name} was created.");
+        if (Error is null && !NeedsReauth) { _newName = ""; _newAdmin = false; }
+    }
+}

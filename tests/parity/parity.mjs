@@ -340,7 +340,7 @@ await t("members: the invitee accepts (200, documented shape) and accepting agai
   const b = await call(A, "/v1/orgs/invitations/accept", { method: "POST", bearer: invitee.json.token, body: { id: inv.inviteToken } });
   return (a.status === 200 && a.json?.accepted === true && a.json?.organizationId === M.org && typeof a.json?.organizationSlug === "string" && a.json?.invitationId === inv.invitationId && b.status === 200) || `${a.status} ${a.text} / ${b.status}`;
 });
-admin = await join("m-admin", "admin"); member = await join("m-member", "member"); member2 = await join("m-member2", "member");
+if (M) { admin = await join("m-admin", "admin"); member = await join("m-member", "member"); member2 = await join("m-member2", "member"); }
 await t("members: GET /v1/org describes the workspace, the caller and everyone", async () => {
   const r = await mcall(member, "GET", "/v1/org"); const j = r.json; if (r.status !== 200) return `${r.status} ${r.text.slice(0, 120)}`;
   const m0 = j.members.find((x) => x.userId === M.owner.id); const cm = j.currentMember;
@@ -432,6 +432,233 @@ await t("members: ownership transfer swaps the roles and signs the previous owne
   const j = (await mcall(admin, "GET", "/v1/org")).json; const roles = Object.fromEntries(j.members.filter((m) => m.userId).map((m) => [m.userId, m.role]));
   return (t1.status === 200 && t1.json?.success === true && oldGone.status === 401 && stale.status === 401 && roles[admin.id] === "owner" && roles[M.owner.id] === "admin" && j.organization.owner.userId === admin.id && j.currentMember.permissions.length === 59) || JSON.stringify([t1.status, oldGone.status, roles, ownerMid]);
 });
+
+// ---------- 7d. Teams and permissions (same behavior on both implementations) ----------
+// Needs a server where sign-up returns a session (email verification off).
+section = "teams";
+let T = null;
+const tperson = async (name) => { const e = email(name); const r = await call(W, "/api/auth/sign-up/email", { method: "POST", body: { name, email: e, password: PW } }); return { email: e, token: r.json?.token, id: r.json?.user?.id }; };
+const tcall = (u, method, path, body) => call(A, path, { method, bearer: u.token, headers: { "x-openwork-org-id": T?.org ?? "" }, body });
+const tmid = async (u) => ((await tcall(T.owner, "GET", "/v1/org")).json.members.find((m) => m.userId === u.id) ?? {}).id;
+const tjoin = async (name, role) => { const u = await tperson(name); const inv = await tcall(T.owner, "POST", "/v1/invitations", { email: u.email, role }); await call(A, "/v1/orgs/invitations/accept", { method: "POST", bearer: u.token, body: { id: inv.json.invitationId } }); u.mid = await tmid(u); return u; };
+const keysOf = (o) => Object.keys(o ?? {}).sort().join(",");
+const denied = (r, key) => r.status === 403 && r.json?.error === "forbidden" && r.json?.code === "requires_admin" && r.json?.requiredPermission === key;
+let tmia, tadam, tbob, tcat, team1, setSupport, setSupportId;
+await t("teams: set up a workspace with an owner, an admin and three members", async () => {
+  const owner = await tperson("t-owner"); if (!owner.token) return "sign-up returned no session (is email verification on?)";
+  const org = await call(A, "/v1/org", { method: "POST", bearer: owner.token, body: { name: "Teams Probe" } });
+  T = { owner, org: org.json?.organization?.id }; if (!T.org) return org.text;
+  tmia = await tjoin("t-mia", "member"); tadam = await tjoin("t-adam", "admin"); tbob = await tjoin("t-bob", "member"); tcat = await tjoin("t-cat", "member");
+  return !!(tmia.mid && tadam.mid && tbob.mid && tcat.mid);
+});
+await t("teams: the permission catalog lists 12 areas and 59 permissions, with the documented fields", async () => {
+  const r = await tcall(tmia, "GET", "/v1/permissions/catalog");
+  const first = r.json?.permissions?.[0]; const web = r.json?.permissions?.find((p) => p.key === "web_origins.view");
+  return (r.status === 200 && r.json.areas.length === 12 && r.json.permissions.length === 59 && keysOf(first) === "area,defaultOn,description,key,label,lockedOn,sensitive"
+    && first.key === "organization.update" && first.sensitive === true && first.defaultOn.length === 0 && web.description === null && web.defaultOn.join() === "admin") || `${r.status} ${r.text.slice(0, 200)}`;
+});
+await t("teams: the catalog needs a session (401)", async () => (await call(A, "/v1/permissions/catalog")).status === 401);
+await t("teams: a workspace starts with a Member set (nothing on) and an Admin set (43 keys)", async () => {
+  const r = await tcall(T.owner, "GET", "/v1/permissions/sets"); const [m, a] = r.json?.sets ?? [];
+  return (r.status === 200 && r.json.sets.length === 2 && m.kind === "member_default" && m.name === "Member permissions" && m.allowedCount === 0 && m.appliesTo.kind === "everyone" && m.appliesTo.memberCount === 5
+    && a.kind === "admin_default" && a.name === "Admin permissions" && a.allowedCount === 43 && a.appliesTo.kind === "admins" && a.appliesTo.directAdminCount === 1 && a.appliesTo.adminTeams.length === 0 && m.team === null && m.teams.length === 0) || `${r.status} ${r.text.slice(0, 300)}`;
+});
+await t("teams: a plain member cannot list permission sets (403 permissions.view)", async () => denied(await tcall(tbob, "GET", "/v1/permissions/sets"), "permissions.view") || "not denied");
+await t("teams: creating a team returns 201 with members, no admin flag and no SCIM management", async () => {
+  const r = await tcall(T.owner, "POST", "/v1/teams", { name: "Support", memberIds: [tmia.mid, tmia.mid] }); team1 = r.json?.team;
+  return (r.status === 201 && keysOf(team1) === "createdAt,externalKey,grantsOrganizationAdmin,id,managedByScim,memberIds,name,organizationId,updatedAt" && /^tem_/.test(team1.id) && team1.name === "Support"
+    && team1.memberIds.length === 1 && team1.memberIds[0] === tmia.mid && team1.grantsOrganizationAdmin === false && team1.externalKey === null && team1.managedByScim === false && team1.organizationId === T.org) || `${r.status} ${r.text}`;
+});
+await t("teams: GET /v1/org lists the team to everyone and the caller's own teams separately", async () => {
+  const a = await tcall(tbob, "GET", "/v1/org"); const b = await tcall(tmia, "GET", "/v1/org");
+  const listed = a.json.teams.find((x) => x.id === team1.id);
+  return (keysOf(listed) === "createdAt,grantsOrganizationAdmin,id,managedByScim,memberIds,name,updatedAt" && listed.memberIds.join() === tmia.mid && a.json.currentMemberTeams.length === 0
+    && b.json.currentMemberTeams.length === 1 && keysOf(b.json.currentMemberTeams[0]) === "createdAt,id,name,organizationId,updatedAt") || `${a.text.slice(0, 200)}`;
+});
+await t("teams: reading one team (teams.view)", async () => {
+  const r = await tcall(T.owner, "GET", `/v1/teams/${team1.id}`); const no = await tcall(tbob, "GET", `/v1/teams/${team1.id}`);
+  return (r.status === 200 && r.json.team.id === team1.id && r.json.team.memberIds.join() === tmia.mid && r.json.team.memberCount === 0 && r.json.team.externalKey === null && denied(no, "teams.view")) || `${r.status} ${r.text} / ${no.status}`;
+});
+await t("teams: a duplicate name is 409 team_exists, ignoring case", async () => {
+  const a = await tcall(T.owner, "POST", "/v1/teams", { name: "Support" }); const b = await tcall(T.owner, "POST", "/v1/teams", { name: "support" });
+  return (a.status === 409 && a.json?.error === "team_exists" && a.json?.message === "That team already exists in this organization." && b.status === 409) || `${a.status} ${b.status}`;
+});
+await t("teams: bad input is invalid_request naming the field", async () => {
+  const a = await tcall(T.owner, "POST", "/v1/teams", { name: "   " }); const b = await tcall(T.owner, "POST", "/v1/teams", {}); const c = await tcall(T.owner, "PATCH", `/v1/teams/${team1.id}`, {});
+  return (a.status === 400 && a.json?.error === "invalid_request" && a.json?.message === "name: Too small: expected string to have >=1 characters"
+    && b.status === 400 && b.json?.message === "name: Invalid input: expected string, received undefined" && c.status === 400 && c.json?.message === "name: Provide at least one field to update.") || `${a.text} / ${b.text} / ${c.text}`;
+});
+await t("teams: an unknown member is 404 member_not_found; a malformed id is 400", async () => {
+  const a = await tcall(T.owner, "POST", "/v1/teams", { name: "Ghosts", memberIds: ["om_01h2xcejqtf2nbrexx3vqjhp41"] }); const b = await tcall(T.owner, "GET", "/v1/teams/nope");
+  return (a.status === 404 && a.json?.error === "member_not_found" && b.status === 400 && b.json?.error === "invalid_request") || `${a.status} ${a.text} / ${b.status}`;
+});
+await t("teams: an unknown team is 404 team_not_found", async () => { const r = await tcall(T.owner, "GET", "/v1/teams/tem_01h2xcejqtf2nbrexx3vqjhp41"); return (r.status === 404 && r.json?.error === "team_not_found") || `${r.status} ${r.text}`; });
+await t("teams: a plain member cannot create teams (403 teams.manage); an admin can", async () => {
+  const no = await tcall(tbob, "POST", "/v1/teams", { name: "Nope" }); const yes = await tcall(tadam, "POST", "/v1/teams", { name: "Made by admin" });
+  return (denied(no, "teams.manage") && /manage teams/.test(no.json.message) && yes.status === 201) || `${no.status} ${no.text} / ${yes.status}`;
+});
+await t("teams: renaming and replacing members works, and leaves the team's id", async () => {
+  const r = await tcall(T.owner, "PATCH", `/v1/teams/${team1.id}`, { name: "Support Team", memberIds: [tmia.mid, tcat.mid] });
+  return (r.status === 200 && r.json.team.id === team1.id && r.json.team.name === "Support Team" && r.json.team.memberIds.length === 2 && r.json.team.memberIds.includes(tcat.mid) && Date.parse(r.json.team.updatedAt) >= Date.parse(r.json.team.createdAt)) || `${r.status} ${r.text}`;
+});
+await t("teams: renaming onto another team's name is 409", async () => { const r = await tcall(T.owner, "PATCH", `/v1/teams/${team1.id}`, { name: "Made by admin" }); return (r.status === 409 && r.json?.error === "team_exists") || `${r.status} ${r.text}`; });
+await t("teams: team permissions are created by the owner as '<team> Permissions' with the chosen keys", async () => {
+  const r = await tcall(T.owner, "POST", "/v1/permissions/sets", { teamId: team1.id, permissions: [{ key: "teams.view", status: "allow" }, { key: "prompts.view", status: "allow" }, { key: "billing.view", status: "deny" }] });
+  setSupport = r.json?.set; setSupportId = setSupport?.id; const view = setSupport?.permissions?.find((p) => p.key === "teams.view"); const other = setSupport?.permissions?.find((p) => p.key === "billing.view");
+  return (r.status === 201 && /^pms_/.test(setSupportId) && setSupport.name === "Support Team Permissions" && setSupport.kind === "team" && setSupport.team.id === team1.id && setSupport.teams.length === 1 && setSupport.allowedCount === 2
+    && setSupport.permissions.length === 59 && view.status === "allow" && view.locked === false && view.lastChangeSource === "user" && keysOf(view.lastChangedBy) === "email,memberId,name" && other.status === "deny" && other.lastChangedAt === null && other.lastChangedBy === null
+    && setSupport.archivedAt === null && setSupport.appliesTo.kind === "team" && setSupport.appliesTo.memberCount === 2 && setSupport.appliesTo.members.length === 2) || `${r.status} ${r.text.slice(0, 300)}`;
+});
+await t("teams: a team can have only one active permission set (409 with the existing id)", async () => {
+  const r = await tcall(T.owner, "POST", "/v1/permissions/sets", { teamId: team1.id, permissions: [] });
+  return (r.status === 409 && r.json?.error === "team_permission_set_exists" && r.json?.permissionSetId === setSupportId && r.json?.message === "This team already has permissions. Edit them instead.") || `${r.status} ${r.text}`;
+});
+await t("teams: unknown and repeated permission names are refused with the keys listed", async () => {
+  const a = await tcall(T.owner, "PUT", `/v1/permissions/sets/${setSupportId}/permissions`, { changes: [{ key: "nope.x", status: "allow" }] });
+  const b = await tcall(T.owner, "PUT", `/v1/permissions/sets/${setSupportId}/permissions`, { changes: [{ key: "teams.view", status: "allow" }, { key: "teams.view", status: "deny" }] });
+  const c = await tcall(T.owner, "PUT", `/v1/permissions/sets/${setSupportId}/permissions`, { changes: [] });
+  return (a.status === 400 && a.json?.error === "unknown_permission" && a.json?.message === "These permissions don't exist: nope.x." && a.json?.keys?.join() === "nope.x"
+    && b.status === 400 && b.json?.error === "duplicate_permission" && b.json?.message === "Each permission can appear only once. Listed more than once: teams.view." && c.status === 400 && c.json?.error === "invalid_request") || `${a.text} / ${b.text} / ${c.status} ${c.text}`;
+});
+await t("teams: a member of the team holds exactly the team's permissions, with the source explained", async () => {
+  const r = await tcall(tmia, "GET", `/v1/members/${tmia.mid}/permissions`);
+  const keys = r.json?.permissions?.map((p) => p.key).join(); const src = r.json?.permissions?.[0]?.sources?.[0];
+  return (r.status === 200 && keys === "prompts.view,teams.view" && r.json.isOwner === false && r.json.isAdmin === false && r.json.featureEnabled === true && src.kind === "team" && src.setId === setSupportId && src.teamId === team1.id
+    && src.label === "Support Team Permissions (via Support Team team)" && r.json.permissions[1].label === "View any team") || `${r.status} ${r.text.slice(0, 400)}`;
+});
+await t("teams: the permissions apply at once (the member can now read teams; GET /v1/org lists them)", async () => {
+  const r = await tcall(tmia, "GET", `/v1/teams/${team1.id}`); const org = await tcall(tmia, "GET", "/v1/org");
+  return (r.status === 200 && org.json.currentMember.permissions.join() === "prompts.view,teams.view") || `${r.status} ${org.text.slice(0, 200)}`;
+});
+await t("teams: changing permissions records only real changes, newest first in the history", async () => {
+  const same = await tcall(T.owner, "PUT", `/v1/permissions/sets/${setSupportId}/permissions`, { changes: [{ key: "teams.view", status: "allow" }] });
+  const r = await tcall(T.owner, "PUT", `/v1/permissions/sets/${setSupportId}/permissions`, { changes: [{ key: "teams.view", status: "deny" }, { key: "billing.view", status: "allow" }] });
+  const h = await tcall(T.owner, "GET", `/v1/permissions/sets/${setSupportId}/history`);
+  const top = h.json?.items?.slice(0, 2).map((i) => `${i.key}:${i.status}`).sort().join();
+  return (same.status === 200 && same.json.set.allowedCount === 2 && r.status === 200 && r.json.set.allowedCount === 2 && h.status === 200 && h.json.items.length === 4 && top === "billing.view:allow,teams.view:deny" && h.json.nextCursor === null
+    && keysOf(h.json.items[0]) === "changedBy,createdAt,id,key,label,source,status" && h.json.items[0].label !== null && h.json.items[0].source === "user") || `${same.status} ${r.status} ${h.status} ${top} ${h.text.slice(0, 200)}`;
+});
+await t("teams: the member loses a permission the moment it is turned off", async () => {
+  const r = await tcall(tmia, "GET", `/v1/teams/${team1.id}`);
+  const p = await tcall(tmia, "GET", `/v1/members/${tmia.mid}/permissions`);
+  return (denied(r, "teams.view") && p.json.permissions.map((x) => x.key).join() === "billing.view,prompts.view") || `${r.status} ${p.text.slice(0, 200)}`;
+});
+await t("teams: history pages with a cursor", async () => {
+  const a = await tcall(T.owner, "GET", `/v1/permissions/sets/${setSupportId}/history?limit=2`); const b = await tcall(T.owner, "GET", `/v1/permissions/sets/${setSupportId}/history?limit=2&cursor=${encodeURIComponent(a.json?.nextCursor ?? "")}`);
+  const bad = await tcall(T.owner, "GET", `/v1/permissions/sets/${setSupportId}/history?limit=0`);
+  const ids = new Set([...(a.json?.items ?? []), ...(b.json?.items ?? [])].map((i) => i.id));
+  return (a.json?.items?.length === 2 && typeof a.json.nextCursor === "string" && b.json?.items?.length === 2 && ids.size === 4 && bad.status === 400) || `${a.text.slice(0, 200)} / ${b.text.slice(0, 200)} / ${bad.status}`;
+});
+await t("teams: reading and changing permissions needs permissions.view / permissions.manage (a plain admin has view only)", async () => {
+  const view = await tcall(tadam, "GET", `/v1/permissions/sets/${setSupportId}`); const edit = await tcall(tadam, "PUT", `/v1/permissions/sets/${setSupportId}/permissions`, { changes: [{ key: "billing.view", status: "deny" }] });
+  const mem = await tcall(tbob, "GET", `/v1/permissions/sets/${setSupportId}`); const create = await tcall(tadam, "POST", "/v1/permissions/sets", { teamId: team1.id, permissions: [] });
+  return (view.status === 200 && view.json.set.id === setSupportId && denied(edit, "permissions.manage") && /Ask the organization owner/.test(edit.json.message) && denied(mem, "permissions.view") && denied(create, "permissions.manage")) || `${view.status} ${edit.status} ${mem.status}`;
+});
+await t("teams: a holder of permissions.manage can only turn on permissions they hold themselves", async () => {
+  const grant = await tcall(T.owner, "PUT", `/v1/permissions/sets/${setSupportId}/permissions`, { changes: [{ key: "permissions.manage", status: "allow" }, { key: "permissions.view", status: "allow" }] });
+  const scratch = await tcall(T.owner, "POST", "/v1/permissions/sets", { name: "Scratch role", permissions: [] });
+  const ok = await tcall(tmia, "PUT", `/v1/permissions/sets/${scratch.json?.set?.id}/permissions`, { changes: [{ key: "permissions.view", status: "allow" }] });
+  const no = await tcall(tmia, "PUT", `/v1/permissions/sets/${scratch.json?.set?.id}/permissions`, { changes: [{ key: "organization.update", status: "allow" }] });
+  const create = await tcall(tmia, "POST", "/v1/permissions/sets", { name: "Mia role", permissions: [{ key: "organization.update", status: "allow" }] });
+  return (grant.status === 200 && scratch.status === 201 && scratch.json.set.teams.length === 0 && scratch.json.set.team === null && ok.status === 200 && ok.json.set.allowedCount === 1 && no.status === 403 && no.json?.error === "permission_not_held" && no.json?.keys?.join() === "organization.update"
+    && no.json?.message === "You can only turn on permissions you have yourself. You don't have: organization.update." && create.status === 403 && create.json?.error === "permission_not_held") || `${grant.status} ${scratch.status} ${ok.status} ${ok.text.slice(0, 100)} ${no.status} ${no.text} ${create.status}`;
+});
+await t("teams: only the owner and admins may change Admin permissions", async () => {
+  const sets = (await tcall(T.owner, "GET", "/v1/permissions/sets")).json.sets; const adminSet = sets.find((s) => s.kind === "admin_default");
+  const r = await tcall(tmia, "PUT", `/v1/permissions/sets/${adminSet.id}/permissions`, { changes: [{ key: "teams.view", status: "deny" }] });
+  return (r.status === 403 && r.json?.error === "admin_permissions_require_admin" && r.json?.message === "Only the owner and admins can change Admin permissions." && r.json?.keys?.join() === "teams.view") || `${r.status} ${r.text}`;
+});
+await t("teams: Member and Admin sets keep their names and cannot be deleted; a team set can be renamed", async () => {
+  const sets = (await tcall(T.owner, "GET", "/v1/permissions/sets")).json.sets; const memberSet = sets.find((s) => s.kind === "member_default");
+  const a = await tcall(T.owner, "PATCH", `/v1/permissions/sets/${memberSet.id}`, { name: "x" }); const b = await tcall(T.owner, "DELETE", `/v1/permissions/sets/${memberSet.id}`);
+  const c = await tcall(T.owner, "PATCH", `/v1/permissions/sets/${setSupportId}`, { name: "Support Role" }); const d = await tcall(T.owner, "PATCH", `/v1/permissions/sets/${setSupportId}`, { name: "" });
+  return (a.status === 400 && a.json?.error === "default_permission_set" && a.json?.message === "Member and Admin keep their names." && b.status === 400 && b.json?.message === "Member and Admin permissions can't be deleted. Turn permissions off instead."
+    && c.status === 200 && c.json.set.name === "Support Role" && d.status === 400) || `${a.text} / ${b.text} / ${c.status} / ${d.status}`;
+});
+await t("teams: a named role can be given to several teams, replacing each team's current role", async () => {
+  const other = (await tcall(T.owner, "POST", "/v1/teams", { name: "Finance", memberIds: [tbob.mid] })).json.team;
+  const r = await tcall(T.owner, "POST", "/v1/permissions/sets", { name: "Billing role", teamIds: [team1.id, other.id], permissions: [{ key: "billing.view", status: "allow" }] });
+  const old = await tcall(T.owner, "GET", `/v1/permissions/sets/${setSupportId}`); const bob = await tcall(tbob, "GET", `/v1/members/${tbob.mid}/permissions`);
+  const bad = await tcall(T.owner, "POST", "/v1/permissions/sets", { permissions: [] }); const both = await tcall(T.owner, "POST", "/v1/permissions/sets", { teamId: team1.id, name: "x", permissions: [] });
+  T.other = other; T.role = r.json?.set;
+  return (r.status === 201 && r.json.set.name === "Billing role" && r.json.set.teams.length === 2 && r.json.set.team.id === team1.id && old.json.set.teams.length === 0 && bob.json.permissions.map((x) => x.key).join() === "billing.view"
+    && bob.json.permissions[0].sources[0].label === "Billing role (via Finance team)" && bad.status === 400 && bad.json?.message === "Name the role." && both.status === 400) || `${r.status} ${r.text.slice(0, 200)} / ${old.text.slice(0, 120)} / ${bob.text.slice(0, 200)} / ${bad.text} / ${both.status}`;
+});
+await t("teams: giving a team a role (or none) through the team replaces what it had", async () => {
+  const none = await tcall(T.owner, "PUT", `/v1/teams/${T.other.id}/permission-set`, { permissionSetId: null });
+  const back = await tcall(T.owner, "PUT", `/v1/teams/${T.other.id}/permission-set`, { permissionSetId: T.role.id });
+  const def = await tcall(T.owner, "PUT", `/v1/teams/${T.other.id}/permission-set`, { permissionSetId: (await tcall(T.owner, "GET", "/v1/permissions/sets")).json.sets[0].id });
+  const nope = await tcall(T.owner, "PUT", `/v1/teams/tem_01h2xcejqtf2nbrexx3vqjhp41/permission-set`, { permissionSetId: null });
+  return (none.status === 200 && none.json.set === null && back.status === 200 && back.json.set.id === T.role.id && back.json.set.teams.length === 2 && def.status === 400 && def.json?.error === "default_permission_set" && nope.status === 404 && nope.json?.error === "team_not_found") || `${none.text} / ${back.status} / ${def.text} / ${nope.status}`;
+});
+await t("teams: deleting a role archives it, takes the permissions away and keeps the history", async () => {
+  const r = await tcall(T.owner, "DELETE", `/v1/permissions/sets/${T.role.id}`); const again = await tcall(T.owner, "DELETE", `/v1/permissions/sets/${T.role.id}`);
+  const get = await tcall(T.owner, "GET", `/v1/permissions/sets/${T.role.id}`); const bob = await tcall(tbob, "GET", `/v1/members/${tbob.mid}/permissions`); const list = await tcall(T.owner, "GET", "/v1/permissions/sets");
+  return (r.status === 204 && again.status === 409 && again.json?.error === "permission_set_archived" && again.json?.message === "This permission set was already deleted." && get.status === 200 && typeof get.json.set.archivedAt === "string" && get.json.set.teams.length === 0
+    && bob.json.permissions.length === 0 && !list.json.sets.some((s) => s.id === T.role.id)) || `${r.status} ${again.status} ${get.status} ${bob.text.slice(0, 120)}`;
+});
+await t("teams: an archived role cannot be edited or renamed (409)", async () => {
+  const a = await tcall(T.owner, "PUT", `/v1/permissions/sets/${T.role.id}/permissions`, { changes: [{ key: "billing.view", status: "deny" }] }); const b = await tcall(T.owner, "PATCH", `/v1/permissions/sets/${T.role.id}`, { name: "Again" });
+  return (a.status === 409 && a.json?.error === "permission_set_archived" && b.status === 409 && b.json?.error === "permission_set_archived") || `${a.status} ${b.status}`;
+});
+await t("teams: an unknown permission set is 404 permission_set_not_found", async () => { const r = await tcall(T.owner, "GET", "/v1/permissions/sets/pms_01h2xcejqtf2nbrexx3vqjhp41"); return (r.status === 404 && r.json?.error === "permission_set_not_found") || `${r.status} ${r.text}`; });
+await t("teams: only an owner or admin may make an Admin team (naming the field needs teams.manage_admin)", async () => {
+  const adminTries = await tcall(tadam, "POST", "/v1/teams", { name: "Ops", grantsOrganizationAdmin: true });
+  const owner = await tcall(T.owner, "POST", "/v1/teams", { name: "Ops", grantsOrganizationAdmin: true, memberIds: [tbob.mid] }); T.ops = owner.json?.team;
+  return (denied(adminTries, "teams.manage_admin") && /manage Admin teams/.test(adminTries.json.message) && owner.status === 201 && owner.json.team.grantsOrganizationAdmin === true) || `${adminTries.status} ${adminTries.text} / ${owner.status} ${owner.text}`;
+});
+await t("teams: members of an Admin team are effective admins, shown as 'member,admin'", async () => {
+  const p = await tcall(tbob, "GET", `/v1/members/${tbob.mid}/permissions`); const org = await tcall(tbob, "GET", "/v1/org"); const ownerView = await tcall(T.owner, "GET", "/v1/org");
+  const row = ownerView.json.members.find((m) => m.id === tbob.mid); const src = p.json?.permissions?.[0]?.sources?.[0];
+  return (p.json.isAdmin === true && p.json.permissions.length === 43 && src.kind === "admin_default" && src.via === "team" && src.teamId === T.ops.id && src.label === "Admin permissions (via Ops team)"
+    && org.json.currentMember.role === "member,admin" && org.json.currentMember.directRole === "member" && org.json.currentMember.adminTeams[0].id === T.ops.id && org.json.currentMember.permissions.length === 43
+    && row.role === "member" && row.effectiveRole === "member,admin" && row.adminTeams[0].name === "Ops") || `${p.text.slice(0, 200)} / ${org.json.currentMember && JSON.stringify(org.json.currentMember).slice(0, 300)}`;
+});
+await t("teams: admin powers apply through an Admin team (the member can invite)", async () => {
+  const r = await tcall(tbob, "POST", "/v1/invitations", { email: email("via-team"), role: "member" }); return (r.status === 201) || `${r.status} ${r.text}`;
+});
+await t("teams: the Admin set lists the Admin team and its size", async () => {
+  const a = (await tcall(T.owner, "GET", "/v1/permissions/sets")).json.sets.find((s) => s.kind === "admin_default");
+  return (a.appliesTo.adminTeams.length === 1 && a.appliesTo.adminTeams[0].id === T.ops.id && a.appliesTo.adminTeams[0].memberCount === 1 && a.appliesTo.directAdminCount === 1) || JSON.stringify(a.appliesTo);
+});
+await t("teams: an admin cannot delete or switch off an Admin team (403 teams.manage_admin)", async () => {
+  const del = await tcall(tadam, "DELETE", `/v1/teams/${T.ops.id}`); const off = await tcall(tadam, "PATCH", `/v1/teams/${T.ops.id}`, { grantsOrganizationAdmin: false }); const rm = await tcall(tadam, "PATCH", `/v1/teams/${T.ops.id}`, { memberIds: [] });
+  return (denied(del, "teams.manage_admin") && denied(off, "teams.manage_admin") && denied(rm, "teams.manage_admin")) || `${del.status} ${off.status} ${rm.status}`;
+});
+await t("teams: you cannot add people to a team whose role grants what you do not hold (403, key named)", async () => {
+  const lab = (await tcall(T.owner, "POST", "/v1/teams", { name: "Lab" })).json.team;
+  const set = await tcall(T.owner, "POST", "/v1/permissions/sets", { teamId: lab.id, permissions: [{ key: "organization.update", status: "allow" }] });
+  const r = await tcall(tadam, "PATCH", `/v1/teams/${lab.id}`, { memberIds: [tcat.mid] }); const owner = await tcall(T.owner, "PATCH", `/v1/teams/${lab.id}`, { memberIds: [tcat.mid] });
+  return (set.status === 201 && denied(r, "organization.update") && r.json.message === "You can't add people to this team because it grants permissions you don't have." && owner.status === 200) || `${set.status} ${r.status} ${r.text} / ${owner.status}`;
+});
+await t("teams: role changes need an admin who holds all of the Admin set, and nobody changes their own role", async () => {
+  const hr = (await tcall(T.owner, "POST", "/v1/teams", { name: "Hr", memberIds: [tmia.mid] })).json.team;
+  await tcall(T.owner, "POST", "/v1/permissions/sets", { teamId: hr.id, permissions: [{ key: "members.update", status: "allow" }] });
+  const own = await tcall(tmia, "POST", `/v1/members/${tmia.mid}/role`, { role: "member" }); const promote = await tcall(tmia, "POST", `/v1/members/${tcat.mid}/role`, { role: "admin" });
+  const demote = await tcall(tmia, "POST", `/v1/members/${tadam.mid}/role`, { role: "member" });
+  return (own.status === 403 && own.json?.message === "You can't change your own role. Ask the owner or another admin." && promote.status === 403 && promote.json?.message === "Only the owner or an admin can make someone an admin."
+    && demote.status === 403 && demote.json?.message === "Only the owner or an admin can change an admin's role.") || `${own.status} ${own.text} / ${promote.status} ${promote.text} / ${demote.status} ${demote.text}`;
+});
+await t("teams: a member may read their own permissions but not anyone else's", async () => {
+  const own = await tcall(tcat, "GET", `/v1/members/${tcat.mid}/permissions`); const other = await tcall(tcat, "GET", `/v1/members/${tmia.mid}/permissions`);
+  const ghost = await tcall(T.owner, "GET", "/v1/members/om_01h2xcejqtf2nbrexx3vqjhp41/permissions"); const bad = await tcall(T.owner, "GET", "/v1/members/nope/permissions");
+  return (own.status === 200 && denied(other, "permissions.view") && ghost.status === 404 && ghost.json?.error === "member_not_found" && bad.status === 400) || `${own.status} ${other.status} ${ghost.status} ${bad.status}`;
+});
+await t("teams: the owner holds all 59 permissions, each sourced to the owner", async () => {
+  const r = await tcall(T.owner, "GET", `/v1/members/${(await tmid(T.owner))}/permissions`);
+  return (r.json.isOwner === true && r.json.permissions.length === 59 && r.json.permissions[0].sources[0].kind === "owner" && r.json.permissions[0].sources[0].label === "Organization owner") || r.text.slice(0, 200);
+});
+await t("teams: removing a person from the workspace takes them out of their teams", async () => {
+  const before = (await tcall(T.owner, "GET", `/v1/teams/${team1.id}`)).json.team.memberIds; const rm = await tcall(T.owner, "DELETE", `/v1/members/${tcat.mid}`);
+  const after = (await tcall(T.owner, "GET", `/v1/teams/${team1.id}`)).json.team.memberIds;
+  return (before.includes(tcat.mid) && rm.status === 204 && !after.includes(tcat.mid) && after.includes(tmia.mid)) || `${before} ${rm.status} ${after}`;
+});
+await t("teams: deleting a team returns 204, removes it from the workspace and keeps its role", async () => {
+  const r = await tcall(T.owner, "DELETE", `/v1/teams/${team1.id}`); const again = await tcall(T.owner, "DELETE", `/v1/teams/${team1.id}`);
+  const org = await tcall(T.owner, "GET", "/v1/org"); const set = await tcall(T.owner, "GET", `/v1/permissions/sets/${setSupportId}`); const mia = await tcall(tmia, "GET", `/v1/members/${tmia.mid}/permissions`);
+  return (r.status === 204 && again.status === 404 && !org.json.teams.some((x) => x.id === team1.id) && set.status === 200 && set.json.set.archivedAt === null && set.json.set.teams.length === 0 && mia.json.permissions.map((x) => x.key).join() === "members.update") || `${r.status} ${again.status} ${set.status} ${mia.text.slice(0, 100)}`;
+});
+
 
 // ---------- 8. SSO / SCIM surfaces ----------
 section = "sso-scim";

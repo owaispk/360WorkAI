@@ -1,0 +1,308 @@
+@page "/dashboard/permissions"
+@inherits ActionPage
+@using System.Text.Json
+
+<PageTitle>Permissions · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="permissions-page">
+    @if (_loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (!Can("permissions.view"))
+    {
+        <h1>Permissions</h1>
+        <p class="den-muted" data-testid="no-access">You don't have access to permissions. Ask an admin to change your permissions.</p>
+        <a class="den-link" href="/dashboard">Back to dashboard</a>
+    }
+    else
+    {
+        <h1>Permissions</h1>
+        <p class="den-muted">Choose what each group of people can do. A person can do anything any of their groups allows.</p>
+
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @if (NeedsReauth)
+        {
+            <ReauthForm @bind-Password="ReauthPassword" Busy="Busy" OnConfirm="ConfirmItsYouAsync" OnCancel="CancelReauth" />
+        }
+
+        <ul class="den-members" data-testid="set-list">
+            @foreach (var set in _sets)
+            {
+                <li data-testid="set-row" data-name="@set.Name" data-kind="@set.Kind">
+                    <div class="den-member-main">
+                        <strong>@set.Name</strong>
+                        <span class="den-muted">@Describe(set)</span>
+                    </div>
+                    <div class="den-member-actions">
+                        <button type="button" class="den-link" @onclick="() => SelectAsync(set.Id)">@(_selectedId == set.Id ? "Showing" : "Open")</button>
+                    </div>
+                </li>
+            }
+        </ul>
+
+        @if (Can("permissions.manage"))
+        {
+            @foreach (var team in TeamsWithoutRole())
+            {
+                <p><button type="button" class="den-link" data-testid="setup-role" data-team="@team.Name" @onclick="() => SetUpRoleAsync(team)">Set up permissions for @team.Name</button></p>
+            }
+            <form class="den-inline" @onsubmit="NewRoleAsync" novalidate data-testid="role-form">
+                <input aria-label="New role name" placeholder="New role name" value="@_newRole" @oninput="e => _newRole = e.Value?.ToString() ?? string.Empty" />
+                <button type="submit" class="den-link" disabled="@Busy">Create a shared role</button>
+            </form>
+        }
+
+        @if (_detail is { } detail)
+        {
+            <h2 data-testid="detail-name">@detail.Name</h2>
+            @if (detail.Teams.Count > 0)
+            {
+                <p class="den-muted" data-testid="detail-teams">Applies to: @string.Join(", ", detail.Teams.Select(t => t.Name))</p>
+            }
+            @if (detail.IsArchived) { <p class="den-muted">This role was deleted and can't be changed.</p> }
+
+            @foreach (var area in _areas)
+            {
+                var inArea = _catalog.Where(p => p.Area == area.Key).ToList();
+                if (inArea.Count == 0) continue;
+                <h3 class="den-area">@area.Label</h3>
+                @foreach (var permission in inArea)
+                {
+                    <label class="den-check" data-testid="permission-row" data-key="@permission.Key">
+                        <input type="checkbox" checked="@_allowed.Contains(permission.Key)" disabled="@(!CanEdit(detail))" @onchange="e => Toggle(permission.Key, e.Value is true)" />
+                        <span>@permission.Label @if (permission.Sensitive) { <span class="den-badge den-badge-pending" title="Needs a recent sign-in">Sensitive</span> }
+                            @if (permission.Description is not null) { <span class="den-muted"> · @permission.Description</span> }</span>
+                    </label>
+                }
+            }
+
+            @if (CanEdit(detail))
+            {
+                <p>
+                    <button type="button" class="den-button" disabled="@(Busy || !HasChanges())" @onclick="SaveAsync" data-testid="save-permissions">Save changes</button>
+                    @if (detail.Kind == "team")
+                    {
+                        @if (_confirmDelete) 
+                        {
+                            <button type="button" class="den-link den-danger" @onclick="DeleteRoleAsync">Confirm: delete this role</button>
+                            <button type="button" class="den-link" @onclick="() => _confirmDelete = false">Cancel</button>
+                        }
+                        else { <button type="button" class="den-link" @onclick="() => _confirmDelete = true">Delete role</button> }
+                    }
+                </p>
+                @if (detail.Kind == "team")
+                {
+                    <form class="den-inline" @onsubmit="RenameRoleAsync" novalidate>
+                        <input aria-label="Role name" value="@_roleName" @oninput="e => _roleName = e.Value?.ToString() ?? string.Empty" data-testid="role-name" />
+                        <button type="submit" class="den-link" disabled="@Busy">Rename</button>
+                    </form>
+                    <p>
+                        @foreach (var team in detail.Teams)
+                        {
+                            <button type="button" class="den-link" @onclick="() => AssignAsync(team.Id, null)">Remove from @team.Name</button>
+                        }
+                        @foreach (var team in _allTeams.Where(t => detail.Teams.All(x => x.Id != t.Id)))
+                        {
+                            <button type="button" class="den-link" data-testid="give-to" data-team="@team.Name" @onclick="() => AssignAsync(team.Id, detail.Id)">Give to @team.Name</button>
+                        }
+                    </p>
+                }
+            }
+
+            <p><button type="button" class="den-link" data-testid="toggle-history" @onclick="ToggleHistoryAsync">@(_showHistory ? "Hide history" : "Show history")</button></p>
+            @if (_showHistory)
+            {
+                <ul class="den-members" data-testid="history">
+                    @foreach (var item in _history)
+                    {
+                        <li><span>@item.Label <span class="den-badge den-badge-@(item.Status == "allow" ? "admin" : "pending")">@item.Status</span></span> <span class="den-muted">@item.When · @item.Who</span></li>
+                    }
+                    @if (_history.Count == 0) { <li class="den-muted">No changes recorded.</li> }
+                </ul>
+                @if (_historyCursor is not null) { <button type="button" class="den-link" @onclick="MoreHistoryAsync">Show more</button> }
+            }
+        }
+        <p><a class="den-link" href="/dashboard">Back to dashboard</a></p>
+    }
+</section>
+
+@code {
+    private sealed record SetRow(string Id, string Name, string Kind, int Allowed, List<TeamRef> Teams);
+    private sealed record TeamRef(string Id, string Name);
+    private sealed record Detail(string Id, string Name, string Kind, bool IsArchived, List<TeamRef> Teams);
+    private sealed record Area(string Key, string Label);
+    private sealed record Definition(string Key, string Area, string Label, string? Description, bool Sensitive);
+    private sealed record HistoryItem(string Label, string Status, string Who, string When);
+
+    private bool _loading = true;
+    private HashSet<string> _permissions = [];
+    private List<SetRow> _sets = [];
+    private List<TeamRef> _allTeams = [];
+    private List<Area> _areas = [];
+    private List<Definition> _catalog = [];
+    private string? _selectedId;
+    private Detail? _detail;
+    private HashSet<string> _allowed = [], _original = [];
+    private string _newRole = "", _roleName = "";
+    private bool _confirmDelete, _showHistory;
+    private List<HistoryItem> _history = [];
+    private string? _historyCursor;
+
+    private bool Can(string permission) => _permissions.Contains(permission);
+    private bool CanEdit(Detail d) => Can("permissions.manage") && !d.IsArchived;
+
+    private static string Describe(SetRow set) => set.Kind switch
+    {
+        "member_default" => $"Everyone · {set.Allowed} allowed",
+        "admin_default" => $"Admins · {set.Allowed} allowed",
+        _ => $"{(set.Teams.Count == 0 ? "No team yet" : string.Join(", ", set.Teams.Select(t => t.Name)))} · {set.Allowed} allowed",
+    };
+
+    private IEnumerable<TeamRef> TeamsWithoutRole() => _allTeams.Where(t => _sets.All(s => s.Kind != "team" || s.Teams.All(x => x.Id != t.Id)));
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var me = await Den.RequestAsync("/api/browser/v1/me");
+        if (!me.Ok) { Nav.NavigateTo("/"); return; }
+        MyEmail = me.String("user", "email") ?? "";
+        if (!await LoadAsync()) return;
+        _loading = false;
+        StateHasChanged();
+        // A link from the Teams page opens that team's role.
+        var team = System.Web.HttpUtility.ParseQueryString(new Uri(Nav.Uri).Query)["team"];
+        if (team is not null && _sets.FirstOrDefault(s => s.Teams.Any(t => t.Id == team)) is { } set) { await SelectAsync(set.Id); StateHasChanged(); }
+    }
+
+    protected override async Task ReloadAsync()
+    {
+        await LoadAsync();
+        if (_selectedId is not null) await SelectAsync(_selectedId, keepNotice: true);
+    }
+
+    private async Task<bool> LoadAsync()
+    {
+        var org = await Den.RequestAsync("/api/browser/v1/org");
+        if (org.Status is 404 or 403) { Nav.NavigateTo("/organization"); return false; }
+        if (org.Json is not { ValueKind: JsonValueKind.Object } root) return false;
+        _permissions = root.GetProperty("currentMember").GetProperty("permissions").EnumerateArray().Select(p => p.GetString() ?? "").ToHashSet();
+        _allTeams = root.GetProperty("teams").EnumerateArray().Select(t => new TeamRef(t.GetProperty("id").GetString() ?? "", t.GetProperty("name").GetString() ?? "")).ToList();
+        if (!Can("permissions.view")) return true;
+
+        var catalog = await Den.RequestAsync("/api/browser/v1/permissions/catalog");
+        if (catalog.Json is { ValueKind: JsonValueKind.Object } c)
+        {
+            _areas = c.GetProperty("areas").EnumerateArray().Select(a => new Area(a.GetProperty("key").GetString() ?? "", a.GetProperty("label").GetString() ?? "")).ToList();
+            _catalog = c.GetProperty("permissions").EnumerateArray().Select(p => new Definition(p.GetProperty("key").GetString() ?? "", p.GetProperty("area").GetString() ?? "", p.GetProperty("label").GetString() ?? "",
+                p.GetProperty("description").ValueKind == JsonValueKind.String ? p.GetProperty("description").GetString() : null, p.GetProperty("sensitive").GetBoolean())).ToList();
+        }
+        var sets = await Den.RequestAsync("/api/browser/v1/permissions/sets");
+        if (sets.Json is { ValueKind: JsonValueKind.Object } body)
+            _sets = body.GetProperty("sets").EnumerateArray().Select(s => new SetRow(s.GetProperty("id").GetString() ?? "", s.GetProperty("name").GetString() ?? "", s.GetProperty("kind").GetString() ?? "",
+                s.GetProperty("allowedCount").GetInt32(), s.GetProperty("teams").EnumerateArray().Select(t => new TeamRef(t.GetProperty("id").GetString() ?? "", t.GetProperty("name").GetString() ?? "")).ToList())).ToList();
+        return true;
+    }
+
+    private async Task SelectAsync(string id, bool keepNotice = false)
+    {
+        if (!keepNotice) { Error = Notice = null; }
+        var result = await Den.RequestAsync($"/api/browser/v1/permissions/sets/{id}");
+        if (!result.Ok || result.Json is not { ValueKind: JsonValueKind.Object } root) { Error = result.Message("Could not open that role."); return; }
+        var set = root.GetProperty("set");
+        _selectedId = id;
+        _detail = new Detail(id, set.GetProperty("name").GetString() ?? "", set.GetProperty("kind").GetString() ?? "", set.GetProperty("archivedAt").ValueKind == JsonValueKind.String,
+            set.GetProperty("teams").EnumerateArray().Select(t => new TeamRef(t.GetProperty("id").GetString() ?? "", t.GetProperty("name").GetString() ?? "")).ToList());
+        _original = set.GetProperty("permissions").EnumerateArray().Where(p => p.GetProperty("status").GetString() == "allow").Select(p => p.GetProperty("key").GetString() ?? "").ToHashSet();
+        _allowed = [.. _original];
+        _roleName = _detail.Name;
+        _confirmDelete = false;
+        _showHistory = false;
+        _history = [];
+    }
+
+    private void Toggle(string key, bool on)
+    {
+        if (on) _allowed.Add(key); else _allowed.Remove(key);
+    }
+
+    private bool HasChanges() => !_allowed.SetEquals(_original);
+
+    private async Task SaveAsync()
+    {
+        // Only what actually differs is sent, so a request never repeats a decision.
+        var changes = _allowed.Except(_original).Select(k => new { key = k, status = "allow" })
+            .Concat(_original.Except(_allowed).Select(k => new { key = k, status = "deny" })).ToArray();
+        var id = _selectedId!;
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/permissions/sets/{id}/permissions", "PUT", new { changes }), "Permissions saved.", Explain);
+    }
+
+    private static string? Explain(WorkAI360.Web.Services.DenResponse r) => r.String("error") switch
+    {
+        "permission_not_held" or "admin_permissions_require_admin" or "permission_locked" or "unknown_permission" => r.Message("That change was not allowed."),
+        _ => null,
+    };
+
+    private async Task SetUpRoleAsync(TeamRef team) =>
+        await RunAsync(async () =>
+        {
+            var created = await Den.RequestAsync("/api/browser/v1/permissions/sets", "POST", new { teamId = team.Id, permissions = Array.Empty<object>() });
+            if (created.Ok && created.String("set", "id") is { } id) _selectedId = id;
+            return created;
+        }, $"{team.Name} now has its own permissions. Choose what it can do.");
+
+    private async Task NewRoleAsync()
+    {
+        var name = _newRole.Trim();
+        if (name.Length == 0) { Error = "Give the role a name."; Notice = null; return; }
+        await RunAsync(async () =>
+        {
+            var created = await Den.RequestAsync("/api/browser/v1/permissions/sets", "POST", new { name, permissions = Array.Empty<object>() });
+            if (created.Ok && created.String("set", "id") is { } id) _selectedId = id;
+            return created;
+        }, $"{name} was created. Choose what it can do, then give it to teams.");
+        if (Error is null && !NeedsReauth) _newRole = "";
+    }
+
+    private async Task RenameRoleAsync()
+    {
+        var name = _roleName.Trim();
+        var id = _selectedId!;
+        if (name.Length == 0) { Error = "Give the role a name."; Notice = null; return; }
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/permissions/sets/{id}", "PATCH", new { name }), $"Renamed to {name}.");
+    }
+
+    private async Task DeleteRoleAsync()
+    {
+        var id = _selectedId!;
+        _confirmDelete = false;
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/permissions/sets/{id}", "DELETE"), "The role was deleted.");
+        if (Error is null && !NeedsReauth) { _selectedId = null; _detail = null; }
+    }
+
+    private async Task AssignAsync(string teamId, string? setId) =>
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/teams/{teamId}/permission-set", "PUT", new { permissionSetId = setId }), setId is null ? "Removed from the team." : "Given to the team.", Explain);
+
+    private async Task ToggleHistoryAsync()
+    {
+        _showHistory = !_showHistory;
+        if (_showHistory && _history.Count == 0) await LoadHistoryAsync(null);
+    }
+
+    private Task MoreHistoryAsync() => LoadHistoryAsync(_historyCursor);
+
+    private async Task LoadHistoryAsync(string? cursor)
+    {
+        var url = $"/api/browser/v1/permissions/sets/{_selectedId}/history?limit=20" + (cursor is null ? "" : $"&cursor={Uri.EscapeDataString(cursor)}");
+        var result = await Den.RequestAsync(url);
+        if (!result.Ok || result.Json is not { ValueKind: JsonValueKind.Object } root) { Error = result.Message("Could not load the history."); return; }
+        foreach (var item in root.GetProperty("items").EnumerateArray())
+        {
+            var by = item.GetProperty("changedBy");
+            _history.Add(new HistoryItem(item.GetProperty("label").GetString() ?? item.GetProperty("key").GetString() ?? "", item.GetProperty("status").GetString() ?? "",
+                by.ValueKind == JsonValueKind.Object ? by.GetProperty("name").GetString() ?? "Someone" : "Default", item.GetProperty("createdAt").GetString() ?? ""));
+        }
+        _historyCursor = root.GetProperty("nextCursor").ValueKind == JsonValueKind.String ? root.GetProperty("nextCursor").GetString() : null;
+    }
+}

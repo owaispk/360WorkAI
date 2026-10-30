@@ -1,0 +1,15 @@
+<form class="den-reauth" @onsubmit="OnConfirm" data-testid="reauth">
+    <p>For security, confirm it's you before changing workspace settings.</p>
+    <label for="reauth-password">Password</label>
+    <input id="reauth-password" type="password" autocomplete="current-password" value="@Password" @oninput="e => PasswordChanged.InvokeAsync(e.Value?.ToString() ?? string.Empty)" />
+    <button type="submit" class="den-button" disabled="@Busy">Confirm</button>
+    <button type="button" class="den-link" @onclick="OnCancel">Cancel</button>
+</form>
+
+@code {
+    [Parameter] public string Password { get; set; } = "";
+    [Parameter] public EventCallback<string> PasswordChanged { get; set; }
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public EventCallback OnConfirm { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+}
