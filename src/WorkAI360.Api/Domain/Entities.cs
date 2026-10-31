@@ -121,6 +121,8 @@ public sealed class OAuthClient
     public string? SecretHash { get; set; }
     public string? LogoUri { get; set; }
     public DateTime CreatedAt { get; set; }
+    /// <summary>For a client that presented an HTTPS client_id (a Client ID Metadata Document): when its document was last fetched.</summary>
+    public DateTime? MetadataFetchedAt { get; set; }
 }
 
 /// <summary>A one-time authorization code; the primary key is the SHA-256 of the code.</summary>

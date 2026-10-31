@@ -55,6 +55,9 @@ builder.Services.AddSingleton<SigningKeyStore>();
 builder.Services.AddSingleton<SignedQuery>();
 builder.Services.AddScoped<OAuthUrls>();
 builder.Services.AddScoped<TokenService>();
+builder.Services.Configure<OAuthClientMetadataOptions>(builder.Configuration.GetSection("OAuth:ClientMetadata"));
+builder.Services.AddSingleton<IClientMetadataFetcher, HttpClientMetadataFetcher>();
+builder.Services.AddScoped<ClientResolver>();
 builder.Services.AddScoped<McpAuthenticator>();
 builder.Services.AddScoped<ICapabilityProvider, BuiltInCapabilities>();
 

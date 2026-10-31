@@ -67,7 +67,7 @@ public static class OAuthEndpoints
         revocation_endpoint_auth_methods_supported = new[] { "none", "client_secret_basic", "client_secret_post" },
         code_challenge_methods_supported = new[] { "S256" },
         authorization_response_iss_parameter_supported = false,
-        client_id_metadata_document_supported = false,
+        client_id_metadata_document_supported = true,
     };
 
     public static object ProtectedResourceMetadata(OAuthUrls urls) => new
@@ -148,10 +148,10 @@ public static class OAuthEndpoints
     // ============================== authorize ==============================
 
     /// <summary>Checks an authorization request. Returns the request, or the response to send instead.</summary>
-    private static async Task<(AuthorizeRequest? Request, IResult? Failure)> ValidateAsync(IReadOnlyDictionary<string, string> p, DenDbContext db, OAuthUrls urls, bool signed)
+    private static async Task<(AuthorizeRequest? Request, IResult? Failure)> ValidateAsync(IReadOnlyDictionary<string, string> p, ClientResolver clients, OAuthUrls urls, bool signed)
     {
         p.TryGetValue("client_id", out var clientId);
-        var client = string.IsNullOrEmpty(clientId) ? null : await db.OAuthClients.AsNoTracking().FirstOrDefaultAsync(c => c.Id == clientId);
+        var client = await clients.ResolveAsync(clientId);
         if (client is null) return (null, Error(400, "invalid_client", "Unknown client."));
 
         var registered = JsonSerializer.Deserialize<List<string>>(client.RedirectUrisJson) ?? [];
@@ -185,7 +185,7 @@ public static class OAuthEndpoints
         return (new AuthorizeRequest(client, redirectUri, OAuthConstants.JoinScope(requested), resource, challenge, state, p.GetValueOrDefault("prompt"), parameters), null);
     }
 
-    private static async Task<IResult> AuthorizeAsync(HttpContext ctx, DenDbContext db, SessionService sessions, SignedQuery signedQuery, OAuthUrls urls)
+    private static async Task<IResult> AuthorizeAsync(HttpContext ctx, DenDbContext db, ClientResolver clients, SessionService sessions, SignedQuery signedQuery, OAuthUrls urls)
     {
         var raw = ctx.Request.Query.Where(q => q.Value.Count == 1).ToDictionary(q => q.Key, q => q.Value[0]!);
         if (ctx.Request.Query.Any(q => q.Value.Count != 1)) return Error(400, "invalid_request", "Repeated parameters are not allowed.");
@@ -200,7 +200,7 @@ public static class OAuthEndpoints
             parameters = verified;
         }
 
-        var (request, failure) = await ValidateAsync(parameters, db, urls, signed);
+        var (request, failure) = await ValidateAsync(parameters, clients, urls, signed);
         if (failure is not null) return failure;
         var req = request!;
         var query = signedQuery.Sign(req.Parameters, OAuthConstants.AuthorizationRequestLifetime);
@@ -222,17 +222,17 @@ public static class OAuthEndpoints
         return Results.Redirect($"{urls.Web}/mcp/consent?{query}");
     }
 
-    private static async Task<IResult> PreloginAsync(HttpContext ctx, DenDbContext db, SignedQuery signedQuery)
+    private static async Task<IResult> PreloginAsync(HttpContext ctx, ClientResolver clients, SignedQuery signedQuery)
     {
         var body = await ReadParamsAsync(ctx.Request);
         var parameters = signedQuery.Verify(body.GetValueOrDefault("oauth_query"));
         if (parameters is null || parameters.GetValueOrDefault("client_id") != body.GetValueOrDefault("client_id")) return Error(400, "invalid_signature", "The OAuth request failed.");
-        var client = await db.OAuthClients.AsNoTracking().FirstOrDefaultAsync(c => c.Id == parameters["client_id"]);
+        var client = await clients.ResolveAsync(parameters["client_id"]);
         if (client is null) return Error(400, "invalid_client", "Unknown client.");
         return Results.Json(new { client_id = client.Id, client_name = client.Name, logo_uri = client.LogoUri });
     }
 
-    private static async Task<IResult> ConsentAsync(HttpContext ctx, DenDbContext db, SessionService sessions, SignedQuery signedQuery, OAuthUrls urls)
+    private static async Task<IResult> ConsentAsync(HttpContext ctx, DenDbContext db, ClientResolver clients, SessionService sessions, SignedQuery signedQuery, OAuthUrls urls)
     {
         var current = await sessions.ResolveAsync(ctx);
         if (current is null) return Error(401, "unauthorized", "Sign in to continue.");
@@ -246,7 +246,7 @@ public static class OAuthEndpoints
         var parameters = signedQuery.Verify(query);
         if (parameters is null) return Error(400, "invalid_signature", "The OAuth request failed.");
 
-        var (request, failure) = await ValidateAsync(parameters, db, urls, signed: true);
+        var (request, failure) = await ValidateAsync(parameters, clients, urls, signed: true);
         if (failure is not null) return failure;
         var req = request!;
 
@@ -297,22 +297,22 @@ public static class OAuthEndpoints
 
     // ============================== tokens ==============================
 
-    private static async Task<IResult> TokenAsync(HttpContext ctx, DenDbContext db, TokenService tokens, OAuthUrls urls, TokenRateLimit rateLimit)
+    private static async Task<IResult> TokenAsync(HttpContext ctx, DenDbContext db, ClientResolver clients, TokenService tokens, OAuthUrls urls, TokenRateLimit rateLimit)
     {
         ctx.Response.Headers.CacheControl = "no-store";
         ctx.Response.Headers.Pragma = "no-cache";
         var form = await ReadParamsAsync(ctx.Request);
         var admission = rateLimit.Admit(ctx, form, BasicClientId(ctx.Request));
         if (admission.Refused is { } refused) return refused;
-        var result = await HandleTokenRequestAsync(ctx, form, db, tokens, urls);
+        var result = await HandleTokenRequestAsync(ctx, form, db, clients, tokens, urls);
         rateLimit.RecordFailure(admission, result);
         return result;
     }
 
-    private static async Task<IResult> HandleTokenRequestAsync(HttpContext ctx, Dictionary<string, string> form, DenDbContext db, TokenService tokens, OAuthUrls urls)
+    private static async Task<IResult> HandleTokenRequestAsync(HttpContext ctx, Dictionary<string, string> form, DenDbContext db, ClientResolver clients, TokenService tokens, OAuthUrls urls)
     {
 
-        var (client, clientFailure) = await AuthenticateClientAsync(ctx, db, form);
+        var (client, clientFailure) = await AuthenticateClientAsync(ctx, clients, form);
         if (clientFailure is not null) return clientFailure;
 
         return form.GetValueOrDefault("grant_type") switch
@@ -404,10 +404,10 @@ public static class OAuthEndpoints
         return Results.Json(await tokens.IssueAsync(client.Id, row.UserId, row.OrganizationId, issuedScope, row.Resource, row.CodeHash, row.FamilyId));
     }
 
-    private static async Task<IResult> RevokeAsync(HttpContext ctx, DenDbContext db, TokenService tokens)
+    private static async Task<IResult> RevokeAsync(HttpContext ctx, DenDbContext db, ClientResolver clients, TokenService tokens)
     {
         var form = await ReadParamsAsync(ctx.Request);
-        var (client, failure) = await AuthenticateClientAsync(ctx, db, form);
+        var (client, failure) = await AuthenticateClientAsync(ctx, clients, form);
         if (failure is not null) return failure;
 
         // RFC 7009: the response never reveals whether the token existed.
@@ -437,7 +437,7 @@ public static class OAuthEndpoints
         catch (Exception e) when (e is FormatException or UriFormatException) { return null; }
     }
 
-    private static async Task<(OAuthClient? Client, IResult? Failure)> AuthenticateClientAsync(HttpContext ctx, DenDbContext db, Dictionary<string, string> form)
+    private static async Task<(OAuthClient? Client, IResult? Failure)> AuthenticateClientAsync(HttpContext ctx, ClientResolver clients, Dictionary<string, string> form)
     {
         string? id = form.GetValueOrDefault("client_id"), secret = form.GetValueOrDefault("client_secret");
         var header = ctx.Request.Headers.Authorization.ToString();
@@ -453,7 +453,7 @@ public static class OAuthEndpoints
         }
         if (string.IsNullOrEmpty(id)) return (null, Error(400, "invalid_request", "client_id is required."));
 
-        var client = await db.OAuthClients.AsNoTracking().FirstOrDefaultAsync(c => c.Id == id);
+        var client = await clients.ResolveAsync(id);
         if (client is null) return (null, InvalidClient());
         if (client.AuthMethod != "none")
         {
