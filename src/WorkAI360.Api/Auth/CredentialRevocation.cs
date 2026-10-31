@@ -13,6 +13,10 @@ public sealed class CredentialRevocation(DenDbContext db)
     public async Task RevokeAsync(string userId, string organizationId)
     {
         await db.Sessions.Where(s => s.UserId == userId).ExecuteDeleteAsync();
+        // Organization API keys act as the member who made them: turn this person's keys for the workspace off (they stay listed, as disabled, like the reference).
+        var now = DateTime.UtcNow;
+        await db.Set<Domain.OrgAdmin.ApiKey>().Where(k => k.UserId == userId && k.OrganizationId == organizationId && k.Enabled)
+            .ExecuteUpdateAsync(s => s.SetProperty(k => k.Enabled, false).SetProperty(k => k.UpdatedAt, now));
         await db.RefreshTokens.Where(t => t.UserId == userId && t.OrganizationId == organizationId).ExecuteDeleteAsync();
         await db.OAuthConsents.Where(c => c.UserId == userId && c.OrganizationId == organizationId).ExecuteDeleteAsync();
         await db.McpAccessTokens.Where(t => t.UserId == userId && t.OrganizationId == organizationId).ExecuteDeleteAsync();

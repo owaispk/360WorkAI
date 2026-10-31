@@ -7,7 +7,7 @@ using WorkAI360.Api.OAuth;
 
 namespace WorkAI360.Api.Auth;
 
-public sealed record OrgContext(AuthContext Auth, Organization Organization, Member Member, MemberPermissions Permissions)
+public sealed record OrgContext(AuthContext Auth, Organization Organization, Member Member, MemberPermissions Permissions, string? ApiKeyId = null)
 {
     public bool IsOwner => Permissions.IsOwner;
     /// <summary>An admin by role or through an Admin team.</summary>
@@ -18,24 +18,58 @@ public sealed record OrgContext(AuthContext Auth, Organization Organization, Mem
 /// Resolves "who is asking, in which workspace" for /v1 routes and decides what they may do, answering with the
 /// reference's exact error shapes (so the web app's messages and re-authentication prompt keep working).
 /// </summary>
-public sealed class OrgAccess(DenDbContext db, SessionService sessions, PermissionService permissions, OAuthUrls urls, IOptions<AuthOptions> options)
+public sealed class OrgAccess(DenDbContext db, SessionService sessions, PermissionService permissions, OAuthUrls urls, IOptions<AuthOptions> options, ApiKeyAuthenticator apiKeys)
 {
     private const string RequiresAdmin = "requires_admin";
 
-    /// <summary>The workspace is the one named by x-openwork-org-id, else the session's active one. Not signed in is 401; not a member is 404.</summary>
+    /// <summary>
+    /// The workspace is the one named by x-openwork-org-id, else the session's active one. Not signed in is 401; not a member is 404.
+    /// An organization API key (x-api-key) is tried first, as in the reference: it names its own workspace (the header is ignored) and acts as the
+    /// member that created it, who must still belong to it. API keys are accepted here and nowhere else, so session-only routes refuse them.
+    /// </summary>
     public async Task<(OrgContext? Context, IResult? Failure)> ResolveAsync(HttpContext ctx)
     {
-        var auth = await sessions.ResolveAsync(ctx);
+        var (principal, retryAfter) = await apiKeys.ResolveAsync(ctx);
+        if (retryAfter is { } wait)
+        {
+            ctx.Response.Headers.RetryAfter = ((int)Math.Ceiling(wait.TotalSeconds)).ToString();
+            return (null, Results.Json(new { error = "rate_limited", message = "This API key sent too many requests. Try again shortly." }, statusCode: 429));
+        }
+
+        var auth = principal is null ? await sessions.ResolveAsync(ctx) : AsAuth(principal);
         if (auth is null) return (null, Responses.Unauthorized());
 
         var requested = ctx.Request.Headers[OrgEndpoints.OrgHeader].ToString();
-        var orgId = string.IsNullOrWhiteSpace(requested) ? auth.Session.ActiveOrganizationId : requested.Trim();
+        var orgId = principal is not null ? principal.Key.OrganizationId : string.IsNullOrWhiteSpace(requested) ? auth.Session.ActiveOrganizationId : requested.Trim();
         if (orgId is null) return (null, NotFound());
 
         var member = await db.Members.AsNoTracking().FirstOrDefaultAsync(m => m.OrganizationId == orgId && m.UserId == auth.User.Id);
         if (member is null) return (null, NotFound());
+        if (principal is not null && principal.Key.MemberId != member.Id)
+            return (null, Results.Json(new { error = "forbidden", message = "This API key is no longer valid for the current organization member." }, statusCode: 403));
         var org = await db.Organizations.AsNoTracking().FirstAsync(o => o.Id == orgId);
-        return (new OrgContext(auth, org, member, await permissions.ResolveAsync(orgId, member)), null);
+        return (new OrgContext(auth, org, member, await permissions.ResolveAsync(orgId, member), principal?.Key.Id), null);
+    }
+
+    /// <summary>A key has no web session: this stand-in is never stored, and counts as freshly signed in (keys skip the recent-sign-in rule, as in the reference).</summary>
+    private static AuthContext AsAuth(ApiKeyPrincipal principal)
+    {
+        var now = DateTime.UtcNow;
+        var session = new Session
+        {
+            Id = "apikey_" + principal.Key.Id, TokenHash = "", UserId = principal.User.Id, ActiveOrganizationId = principal.Key.OrganizationId,
+            Method = "api_key", CreatedAt = now, UpdatedAt = now, ExpiresAt = principal.Key.ExpiresAt,
+        };
+        return new AuthContext(principal.User, session, "");
+    }
+
+    /// <summary>For routes about the person rather than a workspace (/v1/me): a signed-in session, or an API key (then <c>Session</c> is null, as in the reference).</summary>
+    public async Task<(User User, Session? Session, string Token)?> ResolveUserAsync(HttpContext ctx)
+    {
+        var (principal, _) = await apiKeys.ResolveAsync(ctx);
+        if (principal is not null) return (principal.User, null, "");
+        var auth = await sessions.ResolveAsync(ctx);
+        return auth is null ? null : (auth.User, auth.Session, auth.PresentedToken);
     }
 
     private static IResult NotFound() => Results.Json(new { error = "organization_not_found" }, statusCode: 404);
