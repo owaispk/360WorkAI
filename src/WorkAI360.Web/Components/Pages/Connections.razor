@@ -1,0 +1,93 @@
+@page "/dashboard/mcp-connections"
+@inherits ConnectionsPageBase
+@using System.Text.Json
+
+<PageTitle>Connections · OpenWork Cloud</PageTitle>
+
+<ConnectionStyles />
+<section class="den-card den-wide cx-page" data-testid="connections-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>Connections</h1>
+        <p class="den-muted">@OrgName · the apps and servers your agents can use.</p>
+
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+
+        @if (!Can("connections.view"))
+        {
+            <p class="den-muted" data-testid="no-access">Only people who manage connections see every connection. Yours are on <a class="den-link" href="/dashboard/your-connections">Your connections</a>.</p>
+        }
+        else
+        {
+            @if (_rows.Count == 0)
+            {
+                <p class="den-muted" data-testid="no-connections">No connections yet. Add one to let agents use an app or server.</p>
+            }
+            <ul class="den-members" data-testid="connection-list">
+                @foreach (var c in _rows)
+                {
+                    var (label, kind) = Status(c);
+                    <li data-testid="connection-row" data-name="@Str(c, "name")" data-id="@Str(c, "id")">
+                        <div class="den-member-main">
+                            <strong>@Str(c, "name")</strong>
+                            <span class="den-muted">@Str(c, "url")</span>
+                            <span class="den-muted">@AuthLabel(Str(c, "authType"), Str(c, "credentialMode")) · @SharedWith(c)</span>
+                        </div>
+                        <div class="den-member-actions">
+                            <span class="den-badge @(kind == "ok" ? "den-badge-ok" : kind == "warn" ? "den-badge-admin" : "")" data-testid="status">@(OrgStatus(c) ?? label)</span>
+                            <a class="den-link" href="/dashboard/mcp-connections/@Str(c, "id")" data-testid="open-connection">Open</a>
+                        </div>
+                    </li>
+                }
+            </ul>
+        }
+        <p>
+            <a class="cx-button" href="/dashboard/mcp-connections/new" data-testid="add-connection">Add a connection</a>
+        </p>
+        <a class="den-link" href="/dashboard">Back to dashboard</a>
+    }
+</section>
+
+@code {
+    private List<JsonElement> _rows = [];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await LoadOrgAsync()) return;
+        await LoadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override Task ReloadAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _rows = [];
+        if (!Can("connections.view")) return;
+        var r = await Den.RequestAsync("/api/browser/v1/mcp-connections?scope=manageable");
+        if (r.Ok && r.Json is { ValueKind: JsonValueKind.Object } body) _rows = body.GetProperty("connections").EnumerateArray().ToList();
+        else Error = r.Message("Connections could not be loaded.");
+    }
+
+    /// <summary>Whether the connector itself works: the shared credential's check, or the newest ready check any person recorded.</summary>
+    private static string? OrgStatus(JsonElement c)
+    {
+        if (!c.TryGetProperty("organizationReadiness", out var r) || r.ValueKind != JsonValueKind.Object) return Str(c, "credentialMode") == "per_member" ? "Waiting for sign-ins" : "Not checked";
+        return Str(r, "status") == "ready" ? "Ready" : "Could not verify";
+    }
+
+    private string SharedWith(JsonElement c)
+    {
+        if (!c.TryGetProperty("access", out var a) || a.ValueKind != JsonValueKind.Object) return "";
+        if (a.GetProperty("orgWide").GetBoolean()) return "Shared with everyone";
+        var n = a.GetProperty("memberIds").GetArrayLength() + a.GetProperty("teamIds").GetArrayLength();
+        return n == 0 ? "Not shared yet" : $"Shared with {n} {(n == 1 ? "person or team" : "people and teams")}";
+    }
+}

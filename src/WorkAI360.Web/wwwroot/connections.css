@@ -1,0 +1,20 @@
+/* The connection pages (connections, catalog, detail, your connections, sign-in). Linked by <ConnectionStyles />. */
+.cx-page select { width: 100%; border: 1px solid var(--line); border-radius: 12px; padding: 11px 14px; font-size: 15px; background: #fff; }
+.cx-page .cx-button { display: inline-block; width: auto; margin-top: 8px; padding: 9px 18px; border-radius: 999px; border: 0; background: var(--accent); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; text-decoration: none; }
+.cx-page .cx-button[disabled] { opacity: .55; cursor: default; }
+.cx-page .cx-secondary { background: #fff; color: var(--ink); border: 1px solid var(--line); }
+.cx-page .cx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; margin: 12px 0; }
+.cx-page .cx-preset { text-align: left; border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; background: #fff; cursor: pointer; font: inherit; color: var(--ink); }
+.cx-page .cx-preset:hover, .cx-page .cx-preset[aria-pressed="true"] { border-color: var(--accent); }
+.cx-page .cx-preset strong { display: block; font-size: 14px; }
+.cx-page .cx-preset span { display: block; font-size: 12px; color: var(--muted); margin-top: 4px; }
+.cx-page .cx-tools { list-style: none; margin: 8px 0; padding: 0; border: 1px solid var(--line); border-radius: 14px; }
+.cx-page .cx-tools li { display: flex; gap: 12px; align-items: flex-start; padding: 10px 14px; border-top: 1px solid var(--line); }
+.cx-page .cx-tools li:first-child { border-top: 0; }
+.cx-page .cx-tools input[type="checkbox"], .cx-page .den-check input[type="checkbox"], .cx-page .den-check input[type="radio"] { width: auto; margin-top: 3px; }
+.cx-page .cx-tool-name { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.cx-page .cx-hint { font-size: 12px; color: var(--muted); }
+.cx-page .cx-ok { color: #047857; } .cx-page .cx-warn { color: #b45309; }
+.cx-page .cx-discovery { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin: 12px 0; background: #f8fafc; font-size: 14px; }
+.cx-page .cx-section { margin-top: 24px; padding-top: 4px; border-top: 1px solid var(--line); }
+.cx-page .cx-row-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }

@@ -1,0 +1,62 @@
+@page "/connect/mcp"
+@inherits ConnectionsPageBase
+@using System.Text.Json
+
+<PageTitle>Sign in to a connection · OpenWork Cloud</PageTitle>
+
+<ConnectionStyles />
+<section class="den-card cx-page" data-testid="connect-mcp-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (_message is not null)
+    {
+        <h1>Sign in</h1>
+        <p class="den-error" role="alert" data-testid="error">@_message</p>
+        <a class="den-link" href="/dashboard/your-connections">Your connections</a>
+    }
+    else
+    {
+        <h1 data-testid="connect-title">Sign in to @_name</h1>
+        <p class="den-muted">You will go to the service to allow OpenWork to use your account there, and come back here.</p>
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        <button type="button" class="cx-button" disabled="@Busy" @onclick="ConnectAsync" data-testid="connect">Connect @_name</button>
+        <p><a class="den-link" href="/dashboard/your-connections">Your connections</a></p>
+    }
+</section>
+
+@code {
+    private string _id = "", _name = "";
+    private string? _message;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await LoadOrgAsync()) return;
+        var query = System.Web.HttpUtility.ParseQueryString(new Uri(Nav.Uri).Query);
+        _id = query["connectionId"] ?? "";
+        var org = query["org"];
+        // The link names the workspace: switch to it first (only a workspace the person belongs to is accepted).
+        if (!string.IsNullOrEmpty(org)) await Den.RequestAsync("/api/browser/v1/me/active-organization", "POST", new { organizationId = org });
+        var list = await Den.RequestAsync("/api/browser/v1/mcp-connections");
+        var found = list.Ok && list.Json is { ValueKind: JsonValueKind.Object } body
+            ? body.GetProperty("connections").EnumerateArray().Cast<JsonElement?>().FirstOrDefault(c => Str(c!.Value, "id") == _id)
+            : null;
+        if (found is null) _message = "This connection is not available to you. Ask whoever shared the link to share the connection with you.";
+        else _name = Str(found.Value, "name");
+        Loading = false;
+        StateHasChanged();
+    }
+
+    private async Task ConnectAsync()
+    {
+        Error = null;
+        Busy = true;
+        var r = await Den.RequestAsync($"/api/browser/v1/mcp-connections/{_id}/connect/start");
+        Busy = false;
+        if (r.Ok && r.String("status") == "needs_auth" && r.String("authorizeUrl") is { } url) { Nav.NavigateTo(url, forceLoad: true); return; }
+        if (r.Ok) { Nav.NavigateTo($"/dashboard/your-connections?connectionId={_id}"); return; }
+        Error = r.Message("Could not start the sign-in.");
+    }
+}

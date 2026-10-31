@@ -1,0 +1,129 @@
+@page "/dashboard/your-connections"
+@inherits ConnectionsPageBase
+@using System.Text.Json
+
+<PageTitle>Your connections · OpenWork Cloud</PageTitle>
+
+<ConnectionStyles />
+<section class="den-card den-wide cx-page" data-testid="your-connections-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>Your connections</h1>
+        <p class="den-muted">@OrgName · sign in to the apps your agents use on your behalf.</p>
+
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @if (_signInFailed is not null) { <p class="den-error" role="alert" data-testid="sign-in-failed">@_signInFailed</p> }
+
+        @if (_rows.Count == 0)
+        {
+            <p class="den-muted" data-testid="no-connections">Nothing has been shared with you yet.</p>
+        }
+        <ul class="den-members" data-testid="connection-list">
+            @foreach (var c in _rows)
+            {
+                var id = Str(c, "id");
+                var (label, kind) = Status(c);
+                var mode = Str(c, "credentialMode"); var auth = Str(c, "authType");
+                <li data-testid="connection-row" data-name="@Str(c, "name")" data-id="@id" data-focus="@(id == _focus ? "true" : "false")">
+                    <div class="den-member-main">
+                        <strong>@Str(c, "name")</strong>
+                        <span class="den-muted">@Str(c, "url")</span>
+                        <span class="den-muted">@AuthLabel(auth, mode)</span>
+                        @if (_keyFor == id)
+                        {
+                            <form class="den-inline" @onsubmit="() => SaveKeyAsync(id)" data-testid="key-form">
+                                <input type="password" aria-label="Your API key" autocomplete="off" placeholder="Your API key" @bind="_key" @bind:event="oninput" data-testid="key-input" />
+                                <button type="submit" class="den-link" disabled="@Busy" data-testid="save-key">Save</button>
+                                <button type="button" class="den-link" @onclick="() => _keyFor = null">Cancel</button>
+                            </form>
+                        }
+                    </div>
+                    <div class="den-member-actions">
+                        <span class="den-badge @(kind == "ok" ? "den-badge-ok" : kind == "warn" ? "den-badge-admin" : "")" data-testid="status">@label</span>
+                        @if (mode == "per_member" && auth == "oauth")
+                        {
+                            @if (Flag(c, "connectedForMe"))
+                            {
+                                <button type="button" class="den-link" disabled="@Busy" @onclick="() => DisconnectAsync(id)" data-testid="disconnect">Disconnect</button>
+                            }
+                            else
+                            {
+                                <button type="button" class="den-link" disabled="@Busy" @onclick="() => ConnectAsync(id)" data-testid="connect">Connect</button>
+                            }
+                        }
+                        else if (mode == "per_member" && auth == "apikey")
+                        {
+                            <button type="button" class="den-link" @onclick="() => StartKey(id)" data-testid="enter-key">@(Flag(c, "connectedForMe") ? "Replace key" : "Enter your key")</button>
+                            @if (Flag(c, "connectedForMe")) { <button type="button" class="den-link" disabled="@Busy" @onclick="() => DisconnectAsync(id)" data-testid="disconnect">Remove key</button> }
+                        }
+                        else
+                        {
+                            <span class="den-muted">@(auth == "none" ? "Ready to use" : "Managed by an admin")</span>
+                        }
+                    </div>
+                </li>
+            }
+        </ul>
+        <p><a class="cx-button cx-secondary" href="/dashboard/mcp-connections/new" data-testid="add-connection">Add a connection</a></p>
+        <a class="den-link" href="/dashboard">Back to dashboard</a>
+    }
+</section>
+
+@code {
+    private List<JsonElement> _rows = [];
+    private string? _focus, _keyFor, _signInFailed;
+    private string _key = "";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await LoadOrgAsync()) return;
+        var query = System.Web.HttpUtility.ParseQueryString(new Uri(Nav.Uri).Query);
+        _focus = query["connectionId"];
+        await LoadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override Task ReloadAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _rows = [];
+        var r = await Den.RequestAsync("/api/browser/v1/mcp-connections");
+        if (r.Ok && r.Json is { ValueKind: JsonValueKind.Object } body) _rows = body.GetProperty("connections").EnumerateArray().ToList();
+        else Error = r.Message("Your connections could not be loaded.");
+        // A sign-in that came back but did not connect says why (in our words).
+        _signInFailed = _rows.Select(c => (c, r: c.TryGetProperty("readiness", out var x) && x.ValueKind == JsonValueKind.Object ? x : (JsonElement?)null))
+            .Where(t => t.r is { } rr && Str(rr, "status") == "could_not_verify" && Str(rr, "failure") is "sign_in_rejected" or "setup_required" && !Flag(t.c, "connectedForMe"))
+            .Select(t => $"{Str(t.c, "name")}: {Str(t.r!.Value, "reason")}").FirstOrDefault();
+    }
+
+    private async Task ConnectAsync(string id)
+    {
+        Error = Notice = null;
+        Busy = true;
+        var r = await Den.RequestAsync($"/api/browser/v1/mcp-connections/{id}/connect/start");
+        Busy = false;
+        if (r.Ok && r.String("status") == "needs_auth" && r.String("authorizeUrl") is { } url) { Nav.NavigateTo(url, forceLoad: true); return; }
+        if (r.Ok) { Notice = "Already connected."; await LoadAsync(); return; }
+        Error = r.String("error") == "mcp_oauth_configuration_required" ? "An admin needs to register an OAuth app for this server before anyone can sign in." : r.Message("Could not start the sign-in.");
+    }
+
+    private void StartKey(string id) { _keyFor = id; _key = ""; }
+
+    private Task DisconnectAsync(string id) => RunAsync(() => Den.RequestAsync($"/api/browser/v1/mcp-connections/{id}/disconnect-my-account", "POST"), "Disconnected.");
+
+    private async Task SaveKeyAsync(string id)
+    {
+        var key = _key.Trim();
+        if (key.Length == 0) { Error = "Enter your key."; return; }
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/mcp-connections/{id}/my-credential", "PUT", new { apiKey = key }), "Your key was saved.");
+        if (Error is null) { _keyFor = null; _key = ""; }
+    }
+}

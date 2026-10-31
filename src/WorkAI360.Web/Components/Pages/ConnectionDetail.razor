@@ -1,0 +1,287 @@
+@page "/dashboard/mcp-connections/{Id}"
+@inherits ConnectionsPageBase
+@using System.Text.Json
+
+<PageTitle>@(_c is { } c0 ? Str(c0, "name") : "Connection") · OpenWork Cloud</PageTitle>
+
+<ConnectionStyles />
+<section class="den-card den-wide cx-page" data-testid="connection-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (_c is not { } c)
+    {
+        <h1>Connection</h1>
+        <p class="den-error" role="alert" data-testid="not-found">@(_missing ?? "This connection could not be found.")</p>
+        <a class="den-link" href="/dashboard/your-connections">Back to your connections</a>
+    }
+    else
+    {
+        var (label, kind) = Status(c);
+        <h1 data-testid="connection-name">@Str(c, "name")</h1>
+        <p class="den-muted">@Str(c, "url")</p>
+        <p>
+            <span class="den-badge @(kind == "ok" ? "den-badge-ok" : kind == "warn" ? "den-badge-admin" : "")" data-testid="status">@label</span>
+            <span class="den-muted"> @AuthLabel(Str(c, "authType"), Str(c, "credentialMode"))</span>
+        </p>
+
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @if (NeedsReauth)
+        {
+            <ReauthForm @bind-Password="ReauthPassword" Busy="Busy" OnConfirm="ConfirmItsYouAsync" OnCancel="CancelReauth" />
+        }
+        @if (_setup is not null)
+        {
+            <div class="cx-discovery" data-testid="oauth-setup">@_setup</div>
+        }
+
+        <div class="cx-section" data-testid="signin-section">
+            <h2>Sign-in</h2>
+            @if (Str(c, "authType") == "none")
+            {
+                <p class="den-muted">This server needs no sign-in.</p>
+            }
+            else if (Str(c, "credentialMode") == "per_member")
+            {
+                <p class="den-muted">Each person signs in on <a class="den-link" href="/dashboard/your-connections?connectionId=@Id">Your connections</a>.</p>
+            }
+            else if (Str(c, "authType") == "oauth")
+            {
+                <p class="den-muted">One account is used for everyone who may use this connection.</p>
+                @if (Flag(c, "connected"))
+                {
+                    @if (Can("connections.disconnect")) { <button type="button" class="cx-button cx-secondary" disabled="@Busy" @onclick="DisconnectAsync" data-testid="disconnect">Disconnect</button> }
+                }
+                else if (Can("connections.manage"))
+                {
+                    <button type="button" class="cx-button" disabled="@Busy" @onclick="ConnectAsync" data-testid="connect">Connect</button>
+                }
+            }
+            else
+            {
+                @if (!Flag(c, "connected"))
+                {
+                    <form @onsubmit="SaveKeyAsync" novalidate data-testid="key-form">
+                        <label for="cx-key">API key</label>
+                        <input id="cx-key" type="password" autocomplete="off" @bind="_key" @bind:event="oninput" />
+                        <button type="submit" class="cx-button" disabled="@Busy" data-testid="save-key">Save key</button>
+                    </form>
+                }
+                else
+                {
+                    <p class="den-muted">A key is saved (it is never shown).</p>
+                    @if (Can("connections.disconnect")) { <button type="button" class="cx-button cx-secondary" disabled="@Busy" @onclick="DisconnectAsync" data-testid="disconnect">Remove the key</button> }
+                }
+            }
+            @if (Can("connections.manage"))
+            {
+                <button type="button" class="cx-button cx-secondary" disabled="@Busy" @onclick="CheckAsync" data-testid="check">Check now</button>
+            }
+            @if (c.TryGetProperty("readiness", out var ready) && ready.ValueKind == JsonValueKind.Object && Str(ready, "reason") != "")
+            {
+                <p class="cx-hint" data-testid="readiness-reason">@Str(ready, "reason")</p>
+            }
+        </div>
+
+        <div class="cx-section" data-testid="tools-section">
+            <h2>Tools</h2>
+            <p class="den-muted">Switch off any tool you do not want agents to use. A switched-off tool is hidden from agents and refused if they try it.</p>
+            @if (_toolsMessage is not null)
+            {
+                <p class="den-muted" data-testid="tools-message">@_toolsMessage</p>
+            }
+            else
+            {
+                <label class="den-check"><input type="checkbox" checked="@_allDisabled" disabled="@(!Can("connections.manage"))" @onchange="e => _allDisabled = e.Value is true" data-testid="all-disabled" /> <span>Turn every tool off</span></label>
+                <ul class="cx-tools" data-testid="tool-list">
+                    @foreach (var tool in _tools)
+                    {
+                        var name = Str(tool, "name");
+                        <li data-testid="tool-row" data-tool="@name">
+                            <input type="checkbox" aria-label="Allow @name" checked="@(!_allDisabled && !_disabled.Contains(name))" disabled="@(_allDisabled || !Can("connections.manage"))" @onchange="e => ToggleTool(name, e.Value is true)" />
+                            <div>
+                                <span class="cx-tool-name">@name</span>
+                                @if (Str(tool, "description") != "") { <div class="cx-hint">@Str(tool, "description")</div> }
+                            </div>
+                        </li>
+                    }
+                </ul>
+                @if (Can("connections.manage"))
+                {
+                    <button type="button" class="cx-button" disabled="@Busy" @onclick="SavePolicyAsync" data-testid="save-policy">Save tool settings</button>
+                }
+            }
+        </div>
+
+        <div class="cx-section" data-testid="sharing-section">
+            <h2>Who can use it</h2>
+            @if (c.TryGetProperty("access", out var access) && access.ValueKind == JsonValueKind.Object)
+            {
+                <label class="den-check"><input type="radio" name="cx-who" checked="@_everyone" disabled="@(!Can("sharing.share_org_wide"))" @onchange="() => _everyone = true" data-testid="share-everyone" /> <span>Everyone in @OrgName</span></label>
+                <label class="den-check"><input type="radio" name="cx-who" checked="@(!_everyone)" @onchange="() => _everyone = false" data-testid="share-some" /> <span>Only people and teams I choose</span></label>
+                @if (!_everyone)
+                {
+                    @foreach (var team in Teams)
+                    {
+                        <label class="den-check"><input type="checkbox" checked="@_teams.Contains(team.Id)" @onchange="e => Toggle(_teams, team.Id, e.Value is true)" data-team="@team.Name" /> <span>Team: @team.Name</span></label>
+                    }
+                    @foreach (var person in People)
+                    {
+                        <label class="den-check"><input type="checkbox" checked="@_members.Contains(person.Id)" @onchange="e => Toggle(_members, person.Id, e.Value is true)" data-email="@person.Email" /> <span>@person.Name <span class="den-muted">@person.Email</span></span></label>
+                    }
+                }
+                <button type="button" class="cx-button" disabled="@Busy" @onclick="SaveAccessAsync" data-testid="save-access">Save sharing</button>
+            }
+            else { <p class="den-muted">Only the person who added this connection, or an admin, can change who uses it.</p> }
+        </div>
+
+        <div class="cx-section" data-testid="settings-section">
+            <h2>Settings</h2>
+            <form @onsubmit="SaveSettingsAsync" novalidate>
+                <label for="cx-name">Name</label>
+                <input id="cx-name" autocomplete="off" @bind="_name" @bind:event="oninput" />
+                @if (Str(c, "authType") == "oauth" && Can("connections.manage"))
+                {
+                    <label for="cx-client">OAuth app client ID <span class="cx-hint">(only if the server needs a pre-registered app)</span></label>
+                    <input id="cx-client" autocomplete="off" @bind="_clientId" @bind:event="oninput" />
+                    <label for="cx-secret">Client secret <span class="cx-hint">(optional, stored encrypted)</span></label>
+                    <input id="cx-secret" type="password" autocomplete="off" @bind="_clientSecret" @bind:event="oninput" />
+                }
+                <button type="submit" class="cx-button" disabled="@Busy" data-testid="save-settings">Save settings</button>
+            </form>
+        </div>
+
+        <div class="cx-section" data-testid="remove-section">
+            <h2>Remove</h2>
+            @if (_confirmRemove)
+            {
+                <p class="den-muted">This deletes the connection, who can use it and every stored sign-in. Nothing is deleted in the connected service.</p>
+                <button type="button" class="cx-button" disabled="@Busy" @onclick="RemoveAsync" data-testid="confirm-remove">Remove @Str(c, "name")</button>
+                <button type="button" class="cx-button cx-secondary" @onclick="() => _confirmRemove = false">Cancel</button>
+            }
+            else if (Flag(c, "canRemove"))
+            {
+                <button type="button" class="cx-button cx-secondary" @onclick="() => _confirmRemove = true" data-testid="remove">Remove this connection</button>
+            }
+        </div>
+        <p><a class="den-link" href="@(Can("connections.view") ? "/dashboard/mcp-connections" : "/dashboard/your-connections")">Back</a></p>
+    }
+</section>
+
+@code {
+    [Parameter] public string Id { get; set; } = "";
+
+    private JsonElement? _c;
+    private string? _missing, _toolsMessage, _setup;
+    private List<JsonElement> _tools = [];
+    private HashSet<string> _disabled = [];
+    private bool _allDisabled, _everyone, _confirmRemove;
+    private HashSet<string> _members = [], _teams = [];
+    private string _key = "", _name = "", _clientId = "", _clientSecret = "";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await LoadOrgAsync()) return;
+        _confirmRemove = Nav.Uri.Contains("remove=1");
+        await LoadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override Task ReloadAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _c = null; _tools = []; _toolsMessage = null;
+        var r = Can("connections.view") ? await Den.RequestAsync($"/api/browser/v1/mcp-connections/{Id}") : null;
+        if (r is { Ok: true } && r.Json is { } json) _c = json;
+        else
+        {
+            // Someone who only uses connections may still open one they added or were given.
+            var mine = await Den.RequestAsync("/api/browser/v1/mcp-connections");
+            if (mine.Ok && mine.Json is { ValueKind: JsonValueKind.Object } list)
+                _c = list.GetProperty("connections").EnumerateArray().Cast<JsonElement?>().FirstOrDefault(x => Str(x!.Value, "id") == Id);
+            if (_c is null) { _missing = r?.Message("This connection could not be found.") ?? "This connection could not be found."; return; }
+        }
+        var c = _c.Value;
+        _name = Str(c, "name");
+        if (c.TryGetProperty("access", out var access) && access.ValueKind == JsonValueKind.Object)
+        {
+            _everyone = access.GetProperty("orgWide").GetBoolean();
+            _members = access.GetProperty("memberIds").EnumerateArray().Select(e => e.GetString() ?? "").ToHashSet();
+            _teams = access.GetProperty("teamIds").EnumerateArray().Select(e => e.GetString() ?? "").ToHashSet();
+        }
+        var tools = await Den.RequestAsync($"/api/browser/v1/mcp-connections/{Id}/tools");
+        if (tools.Ok && tools.Json is { ValueKind: JsonValueKind.Object } t)
+        {
+            _tools = t.GetProperty("tools").EnumerateArray().ToList();
+            var policy = t.GetProperty("policy");
+            _allDisabled = policy.GetProperty("allDisabled").GetBoolean();
+            _disabled = policy.GetProperty("disabledTools").EnumerateArray().Select(e => e.GetString() ?? "").ToHashSet();
+        }
+        else _toolsMessage = tools.Status == 409 ? "Connect this connection to see its tools." : tools.Message("The tools could not be listed right now.");
+    }
+
+    private static void Toggle(HashSet<string> set, string id, bool on) { if (on) set.Add(id); else set.Remove(id); }
+
+    private void ToggleTool(string name, bool allowed)
+    {
+        if (allowed) _disabled.Remove(name); else _disabled.Add(name);
+    }
+
+    private Task SavePolicyAsync() => RunAsync(() => Den.RequestAsync($"/api/browser/v1/mcp-connections/{Id}/tool-policy", "PUT", new { allDisabled = _allDisabled, disabledTools = _disabled.ToArray() }), "Tool settings saved.");
+
+    private Task SaveAccessAsync() => RunAsync(() => Den.RequestAsync($"/api/browser/v1/mcp-connections/{Id}/access", "PUT", new { access = new { orgWide = _everyone, memberIds = _members.ToArray(), teamIds = _teams.ToArray() } }), "Sharing saved.");
+
+    private Task SaveKeyAsync() => RunAsync(async () =>
+    {
+        var r = await Den.RequestAsync($"/api/browser/v1/mcp-connections/{Id}/shared-credential", "PUT", new { apiKey = _key.Trim() });
+        if (r.Ok) _key = "";
+        return r;
+    }, "The key was saved and the server accepted it.");
+
+    private Task DisconnectAsync() => RunAsync(() => Den.RequestAsync($"/api/browser/v1/mcp-connections/{Id}/disconnect", "POST"), "Disconnected.");
+
+    private Task CheckAsync() => RunAsync(() => Den.RequestAsync($"/api/browser/v1/mcp-connections/{Id}/check", "POST"), "Checked.", r => r.String("error") == "connection_not_ready" ? "Connect this connection before checking it." : null);
+
+    private async Task SaveSettingsAsync()
+    {
+        if (_c is not { } c) return;
+        var name = _name.Trim();
+        if (name.Length == 0) { Error = "Give the connection a name."; return; }
+        var access = c.TryGetProperty("access", out var a) && a.ValueKind == JsonValueKind.Object
+            ? new { orgWide = a.GetProperty("orgWide").GetBoolean(), memberIds = a.GetProperty("memberIds").EnumerateArray().Select(e => e.GetString()).ToArray(), teamIds = a.GetProperty("teamIds").EnumerateArray().Select(e => e.GetString()).ToArray() }
+            : new { orgWide = true, memberIds = Array.Empty<string?>(), teamIds = Array.Empty<string?>() };
+        var common = new Dictionary<string, object?>
+        {
+            ["expectedUpdatedAt"] = Str(c, "updatedAt"), ["name"] = name, ["url"] = Str(c, "url"), ["authType"] = Str(c, "authType"), ["credentialMode"] = Str(c, "credentialMode"), ["access"] = access,
+        };
+        if (_clientId.Trim().Length > 0) common["oauthClient"] = _clientSecret.Trim().Length > 0 ? new { clientId = _clientId.Trim(), clientSecret = _clientSecret.Trim() } : new { clientId = _clientId.Trim() };
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/mcp-connections/{Id}", "PUT", common), "Settings saved.",
+            r => r.String("error") == "connection_conflict" ? "This connection changed after you opened it. Reload the page and try again." : null);
+        if (Error is null && !NeedsReauth) { _clientId = ""; _clientSecret = ""; }
+    }
+
+    private async Task ConnectAsync()
+    {
+        Error = Notice = _setup = null;
+        Busy = true;
+        var r = await Den.RequestAsync($"/api/browser/v1/mcp-connections/{Id}/connect/start");
+        Busy = false;
+        if (r.Ok && r.String("status") == "needs_auth" && r.String("authorizeUrl") is { } url) { Nav.NavigateTo(url, forceLoad: true); return; }
+        if (r.Ok) { Notice = "Already connected."; await LoadAsync(); return; }
+        if (r.String("error") == "mcp_oauth_configuration_required")
+            _setup = $"This server needs an OAuth app registered first. Allow this redirect address in the provider's app: {r.String("callbackUrl")}. Then enter the app's client ID under Settings.";
+        else Error = r.Message("Could not start the sign-in.");
+    }
+
+    private async Task RemoveAsync()
+    {
+        var removed = false;
+        await RunAsync(async () => { var r = await Den.RequestAsync($"/api/browser/v1/mcp-connections/{Id}", "DELETE"); removed = r.Ok; return r; }, "Removed.");
+        if (removed) Nav.NavigateTo(Can("connections.view") ? "/dashboard/mcp-connections" : "/dashboard/your-connections");
+    }
+}

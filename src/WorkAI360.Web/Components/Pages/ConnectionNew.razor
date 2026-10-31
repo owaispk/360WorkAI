@@ -1,0 +1,167 @@
+@page "/dashboard/mcp-connections/new"
+@inherits ConnectionsPageBase
+@using System.Text.Json
+
+<PageTitle>Add a connection · OpenWork Cloud</PageTitle>
+
+<ConnectionStyles />
+<section class="den-card den-wide cx-page" data-testid="connection-new-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>Add a connection</h1>
+        <p class="den-muted">Pick an app, or enter the address of any MCP server.</p>
+
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @if (NeedsReauth)
+        {
+            <ReauthForm @bind-Password="ReauthPassword" Busy="Busy" OnConfirm="ConfirmItsYouAsync" OnCancel="CancelReauth" />
+        }
+
+        <h2>Catalog</h2>
+        <div class="cx-grid" data-testid="catalog">
+            @foreach (var p in _presets)
+            {
+                var id = Str(p, "presetId");
+                <button type="button" class="cx-preset" data-testid="preset-@id" aria-pressed="@(_preset == id ? "true" : "false")" @onclick="() => Pick(p)">
+                    <strong>@Str(p, "displayName")</strong>
+                    <span>@Str(p, "description")</span>
+                </button>
+            }
+        </div>
+
+        <form @onsubmit="CreateAsync" novalidate data-testid="connection-form">
+            <label for="cx-name">Name</label>
+            <input id="cx-name" autocomplete="off" @bind="_name" @bind:event="oninput" />
+            <label for="cx-url">Server address</label>
+            <input id="cx-url" autocomplete="off" placeholder="https://mcp.example.com/mcp" @bind="_url" @bind:event="oninput" />
+
+            <label for="cx-auth">How people sign in</label>
+            <select id="cx-auth" @onchange="SetAuth">
+                <option value="none" selected="@(_auth == "none")">No sign-in</option>
+                <option value="oauth" selected="@(_auth == "oauth")">OAuth (sign in with the service)</option>
+                @if (Can("connections.manage")) { <option value="apikey" selected="@(_auth == "apikey")">API key</option> }
+            </select>
+            @if (_auth != "none")
+            {
+                <label for="cx-mode">Whose account</label>
+                <select id="cx-mode" @onchange="SetMode">
+                    @if (Can("connections.manage") || _auth == "none") { <option value="shared" selected="@(_mode == "shared")">One account for everyone</option> }
+                    <option value="per_member" selected="@(_mode == "per_member")">Each person uses their own</option>
+                </select>
+            }
+            @if (_auth == "apikey" && _mode == "shared")
+            {
+                <label for="cx-key">API key</label>
+                <input id="cx-key" type="password" autocomplete="off" @bind="_key" @bind:event="oninput" />
+                <span class="cx-hint">Stored encrypted. You can also leave it empty and enter it later.</span>
+            }
+
+            <h2>Who can use it</h2>
+            @if (Can("sharing.share_org_wide"))
+            {
+                <label class="den-check"><input type="radio" name="cx-who" checked="@_everyone" @onchange="() => _everyone = true" data-testid="share-everyone" /> <span>Everyone in @OrgName</span></label>
+            }
+            <label class="den-check"><input type="radio" name="cx-who" checked="@(!_everyone)" @onchange="() => _everyone = false" data-testid="share-some" /> <span>Only people and teams I choose</span></label>
+            @if (!_everyone)
+            {
+                @foreach (var team in Teams)
+                {
+                    <label class="den-check"><input type="checkbox" checked="@_teams.Contains(team.Id)" @onchange="e => Toggle(_teams, team.Id, e.Value is true)" /> <span>Team: @team.Name</span></label>
+                }
+                @foreach (var person in People)
+                {
+                    <label class="den-check"><input type="checkbox" checked="@_members.Contains(person.Id)" @onchange="e => Toggle(_members, person.Id, e.Value is true)" data-email="@person.Email" /> <span>@person.Name <span class="den-muted">@person.Email</span></span></label>
+                }
+            }
+
+            @if (_discovery is not null)
+            {
+                <div class="cx-discovery" data-testid="discovery">@_discovery</div>
+            }
+            <div class="cx-row-actions">
+                <button type="button" class="cx-button cx-secondary" disabled="@Busy" @onclick="CheckAsync" data-testid="check-server">Check the server</button>
+                <button type="submit" class="cx-button" disabled="@Busy" data-testid="create-connection">Add connection</button>
+            </div>
+        </form>
+        <p><a class="den-link" href="@(Can("connections.view") ? "/dashboard/mcp-connections" : "/dashboard/your-connections")">Back</a></p>
+    }
+</section>
+
+@code {
+    private List<JsonElement> _presets = [];
+    private string? _preset;
+    private string _name = "", _url = "", _auth = "none", _mode = "shared", _key = "";
+    private bool _everyone = true;
+    private HashSet<string> _members = [], _teams = [];
+    private string? _discovery;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await LoadOrgAsync()) return;
+        _everyone = Can("sharing.share_org_wide");
+        var presets = await Den.RequestAsync("/api/browser/v1/mcp-connections/presets");
+        if (presets.Ok && presets.Json is { ValueKind: JsonValueKind.Object } body) _presets = body.GetProperty("presets").EnumerateArray().ToList();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    private void SetAuth(ChangeEventArgs e) => _auth = e.Value?.ToString() ?? "none";
+    private void SetMode(ChangeEventArgs e) => _mode = e.Value?.ToString() ?? "shared";
+
+    private static void Toggle(HashSet<string> set, string id, bool on) { if (on) set.Add(id); else set.Remove(id); }
+
+    private void Pick(JsonElement preset)
+    {
+        _preset = Str(preset, "presetId");
+        _name = Str(preset, "displayName");
+        _url = Str(preset, "url");
+        _auth = Str(preset, "authType");
+        // Members can only add servers where each person signs in on their own.
+        _mode = _auth == "oauth" ? "per_member" : "shared";
+        if (_auth == "apikey" && !Can("connections.manage")) _auth = "none";
+        _discovery = null;
+    }
+
+    private async Task CheckAsync()
+    {
+        Error = null; _discovery = null;
+        if (string.IsNullOrWhiteSpace(_url)) { Error = "Enter the server address first."; return; }
+        Busy = true;
+        var r = await Den.RequestAsync("/api/browser/v1/mcp-connections/discover", "POST", new { url = _url.Trim() });
+        Busy = false;
+        if (!r.Ok) { Error = r.Message("The server could not be checked."); return; }
+        var kind = r.String("authentication", "kind");
+        var tools = r.Json?.GetProperty("tools");
+        var count = tools is { } t && t.TryGetProperty("count", out var c) ? c.GetInt32() : (int?)null;
+        _discovery = r.String("status") switch
+        {
+            "ready" when kind == "none" => $"Works without signing in{(count is { } n ? $" ({n} {(n == 1 ? "tool" : "tools")})" : "")}.",
+            "ready" => "This server asks people to sign in (OAuth). Choose OAuth above.",
+            "manual_action_required" => kind == "manual_bearer" ? "This server needs an API key." : "This server needs an OAuth app registered by an admin first.",
+            "unsupported" => "That address does not look like an MCP server.",
+            _ => "The server could not be reached.",
+        };
+        if (kind == "oauth" && _auth == "none") { _auth = "oauth"; _mode = "per_member"; }
+        if (kind == "manual_bearer" && Can("connections.manage") && _auth == "none") _auth = "apikey";
+    }
+
+    private async Task CreateAsync()
+    {
+        var name = _name.Trim(); var url = _url.Trim();
+        if (name.Length == 0) { Error = "Give the connection a name."; return; }
+        if (url.Length == 0) { Error = "Enter the server address."; return; }
+        var access = new { orgWide = _everyone, memberIds = _members.ToArray(), teamIds = _teams.ToArray() };
+        object body = _auth == "apikey" && _mode == "shared" && _key.Length > 0
+            ? new { name, url, authType = _auth, credentialMode = _mode, access, apiKey = _key.Trim() }
+            : new { name, url, authType = _auth, credentialMode = _auth == "none" ? "shared" : _mode, access };
+        Error = null;
+        DenResponse? created = null;
+        await RunAsync(async () => { var r = await Den.RequestAsync("/api/browser/v1/mcp-connections", "POST", body); created = r; return r; }, $"{name} was added.");
+        if (created is { Ok: true } && created.String("id") is { } id) Nav.NavigateTo($"/dashboard/mcp-connections/{id}");
+    }
+}
