@@ -1,0 +1,146 @@
+@page "/dashboard/skills/{SkillId}"
+@inherits LibraryPage
+@using System.Text.Json
+
+<PageTitle>@(_title.Length > 0 ? _title : "Skill") · OpenWork Cloud</PageTitle>
+
+<LibraryStyles />
+
+<section class="den-card den-wide lib-page" data-testid="skill-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (_missing is not null)
+    {
+        <h1>Skill</h1>
+        <p class="den-error" role="alert" data-testid="skill-missing">@_missing</p>
+        <a class="den-link" href="/dashboard/skills">Back to skills</a>
+    }
+    else
+    {
+        <h1 data-testid="skill-title">@_title @if (_status != "active") { <span class="den-badge">@_status</span> }</h1>
+        <p class="den-muted" data-testid="skill-description">@_description</p>
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+
+        <h2>Instructions</h2>
+        @if (_editing)
+        {
+            <form @onsubmit="SaveAsync" novalidate data-testid="skill-edit-form">
+                <textarea aria-label="SKILL.md" @bind="_text" @bind:event="oninput" data-testid="skill-text"></textarea>
+                <label for="skill-reason">What changed? (optional)</label>
+                <input id="skill-reason" autocomplete="off" @bind="_reason" @bind:event="oninput" />
+                <button type="submit" class="den-button" disabled="@Busy" data-testid="save-skill">Save as a new version</button>
+                <button type="button" class="den-link" @onclick="() => _editing = false">Cancel</button>
+            </form>
+        }
+        else
+        {
+            <pre class="lib-pre" data-testid="skill-content">@_text</pre>
+            @if (_canEdit) { <button type="button" class="den-link" @onclick="() => _editing = true" data-testid="edit-skill">Edit</button> }
+        }
+
+        @if (_plugins.Count > 0)
+        {
+            <h2>In these plugins</h2>
+            <ul class="den-list" data-testid="skill-plugins">
+                @foreach (var p in _plugins) { <li><a href="/dashboard/plugins/@p.Id">@p.Name</a></li> }
+            </ul>
+        }
+
+        <h2>Versions</h2>
+        <ul class="den-list" data-testid="version-list">
+            @foreach (var v in _versions) { <li data-testid="version-row">@v.At · @PersonName(v.By)@(v.Reason is null ? "" : $" · {v.Reason}")</li> }
+        </ul>
+
+        @if (_manager)
+        {
+            <SharePanel Kind="config-objects" ResourceId="@SkillId" People="People" Teams="Teams" CanShareWithEveryone="@(Can("sharing.share_org_wide"))" />
+            <div class="lib-actions">
+                @if (_status == "active") { <button type="button" class="den-link" @onclick='() => LifecycleAsync("archive")' data-testid="archive-skill">Archive</button> }
+                else { <button type="button" class="den-link" @onclick='() => LifecycleAsync("restore")' data-testid="restore-skill">Restore</button> }
+                @if (_status != "deleted")
+                {
+                    @if (_confirmDelete) { <button type="button" class="den-link den-danger" @onclick="DeleteAsync" data-testid="confirm-delete-skill">Confirm delete</button> }
+                    else { <button type="button" class="den-link" @onclick="() => _confirmDelete = true" data-testid="delete-skill">Delete</button> }
+                }
+            </div>
+        }
+        <div class="lib-actions"><a class="den-link" href="/dashboard/skills">Back to skills</a></div>
+    }
+</section>
+
+@code {
+    private sealed record Version(string At, string? By, string? Reason);
+    private sealed record PluginRef(string Id, string Name);
+
+    [Parameter] public string SkillId { get; set; } = "";
+
+    private string? _missing;
+    private string _title = "", _description = "", _status = "active", _text = "", _reason = "";
+    private bool _editing, _canEdit, _manager, _confirmDelete;
+    private List<Version> _versions = [];
+    private List<PluginRef> _plugins = [];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await LoadOrgAsync()) return;
+        await ReloadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync()
+    {
+        var r = await Api($"/config-objects/{SkillId}");
+        if (!r.Ok)
+        {
+            _missing = r.Status == 403 ? "This skill has not been shared with you." : r.Status == 404 ? "That skill does not exist." : r.Message("The skill could not be opened.");
+            return;
+        }
+        _missing = null;
+        var o = r.Json!.Value.GetProperty("item");
+        _title = Str(o, "title") ?? "";
+        _description = Str(o, "description") ?? "";
+        _status = Str(o, "status") ?? "";
+        _text = o.TryGetProperty("latestVersion", out var latest) ? Str(latest, "rawSourceText") ?? "" : "";
+        _editing = false;
+        _confirmDelete = false;
+        // Managers can read who it is shared with; that is also how we know to offer editing and sharing.
+        var access = await Api($"/config-objects/{SkillId}/access");
+        _manager = access.Ok;
+        _canEdit = _manager;
+        if (!_canEdit && access.Status == 403)
+        {
+            // An editor can save new versions but cannot see the sharing list: try a harmless check through the version list's owner field.
+            _canEdit = Can("sharing.manage_all");
+        }
+        var versions = await Api($"/config-objects/{SkillId}/versions");
+        _versions = [];
+        if (versions.Json is { ValueKind: JsonValueKind.Object } vb)
+            foreach (var v in vb.GetProperty("items").EnumerateArray()) _versions.Add(new Version(Str(v, "createdAt")?[..16].Replace('T', ' ') ?? "", Str(v, "createdByOrgMembershipId"), Str(v, "sourceRevisionRef")));
+        var plugins = await Api($"/config-objects/{SkillId}/plugins");
+        _plugins = [];
+        if (plugins.Json is { ValueKind: JsonValueKind.Object } pb)
+            foreach (var m in pb.GetProperty("items").EnumerateArray().Where(m => m.GetProperty("removedAt").ValueKind == JsonValueKind.Null))
+            {
+                var id = Str(m, "pluginId") ?? "";
+                var plugin = await Api($"/plugins/{id}");
+                if (plugin.Ok) _plugins.Add(new PluginRef(id, plugin.String("item", "name") ?? "Plugin"));
+            }
+    }
+
+    private async Task SaveAsync()
+    {
+        var text = _text;
+        var reason = _reason.Trim();
+        await RunAsync(() => Api($"/config-objects/{SkillId}/versions", "POST", reason.Length > 0 ? new { input = new { rawSourceText = text }, reason } : new { input = new { rawSourceText = text } }), "Saved as a new version.");
+        if (Error is not null) _editing = true;
+    }
+
+    private async Task LifecycleAsync(string action) => await RunAsync(() => Api($"/config-objects/{SkillId}/{action}", "POST"), action == "archive" ? "Skill archived." : "Skill restored.");
+
+    private async Task DeleteAsync() => await RunAsync(() => Api($"/config-objects/{SkillId}/delete", "POST"), "Skill deleted.");
+}
