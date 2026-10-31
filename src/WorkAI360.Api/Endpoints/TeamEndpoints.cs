@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.Domain;
+using WorkAI360.Api.Features.OrgAdmin;
 
 namespace WorkAI360.Api.Endpoints;
 
@@ -70,7 +71,7 @@ public static class TeamEndpoints
             return Results.Json(new { team = TeamBody.Detail(team, await MemberIdsAsync(db, team.Id)) });
         });
 
-        app.MapPost("/v1/teams", async (HttpContext ctx, OrgAccess access, DenDbContext db, TeamRules rules) =>
+        app.MapPost("/v1/teams", async (HttpContext ctx, OrgAccess access, DenDbContext db, TeamRules rules, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -101,10 +102,12 @@ public static class TeamEndpoints
             foreach (var memberId in memberIds) db.TeamMembers.Add(new TeamMember { Id = Ids.New("tmm"), TeamId = team.Id, MemberId = memberId, CreatedAt = now });
             try { await db.SaveChangesAsync(); }
             catch (DbUpdateException) { return Results.Json(new { error = "team_exists", message = TeamExists }, statusCode: 409); }
+            await audit.RecordAsync(context, new AuditEntry(AuditActions.TeamCreated, [new("team", team.Id, "target", team.Name), new("organization", context.Organization.Id, "parent")],
+                After: TeamSnapshot(team, memberIds)));
             return Results.Json(new { team = TeamBody.Created(team, memberIds) }, statusCode: 201);
         });
 
-        app.MapPatch("/v1/teams/{teamId}", async (string teamId, HttpContext ctx, OrgAccess access, DenDbContext db, TeamRules rules) =>
+        app.MapPatch("/v1/teams/{teamId}", async (string teamId, HttpContext ctx, OrgAccess access, DenDbContext db, TeamRules rules, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -146,6 +149,8 @@ public static class TeamEndpoints
             if (await db.Teams.AnyAsync(t => t.OrganizationId == context!.Organization.Id && t.Name == nextName && t.Id != team.Id)) return Results.Json(new { error = "team_exists", message = TeamExists }, statusCode: 409);
 
             var now = DateTime.UtcNow;
+            var beforeMembers = await MemberIdsAsync(db, team.Id);
+            var before = TeamSnapshot(team, beforeMembers);
             team.Name = nextName;
             team.GrantsOrganizationAdmin = nextGrantsAdmin;
             team.UpdatedAt = now;
@@ -156,10 +161,13 @@ public static class TeamEndpoints
             }
             try { await db.SaveChangesAsync(); }
             catch (DbUpdateException) { return Results.Json(new { error = "team_exists", message = TeamExists }, statusCode: 409); }
-            return Results.Json(new { team = TeamBody.Detail(team, memberIds ?? await MemberIdsAsync(db, team.Id)) });
+            var afterMembers = memberIds ?? beforeMembers;
+            await audit.RecordAsync(context!, new AuditEntry(AuditActions.TeamUpdated, [new("team", team.Id, "target", team.Name), new("organization", context!.Organization.Id, "parent")],
+                Before: before, After: TeamSnapshot(team, afterMembers)));
+            return Results.Json(new { team = TeamBody.Detail(team, afterMembers) });
         });
 
-        app.MapDelete("/v1/teams/{teamId}", async (string teamId, HttpContext ctx, OrgAccess access, DenDbContext db, TeamRules rules) =>
+        app.MapDelete("/v1/teams/{teamId}", async (string teamId, HttpContext ctx, OrgAccess access, DenDbContext db, TeamRules rules, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -176,12 +184,22 @@ public static class TeamEndpoints
             // A team's role outlives it (it can be given to another team); it just stops applying here.
             var now = DateTime.UtcNow;
             foreach (var link in await db.PermissionSetTeams.Where(l => l.TeamId == team.Id && l.RemovedAt == null).ToListAsync()) link.RemovedAt = now;
+            var deletedMembers = await MemberIdsAsync(db, team.Id);
             db.TeamMembers.RemoveRange(await db.TeamMembers.Where(tm => tm.TeamId == team.Id).ToListAsync());
             db.Teams.Remove(team);
             await db.SaveChangesAsync();
+            await audit.RecordAsync(context!, new AuditEntry(AuditActions.TeamDeleted, [new("team", team.Id, "target", team.Name), new("organization", context!.Organization.Id, "parent")],
+                Before: TeamSnapshot(team, deletedMembers)));
             return Results.NoContent();
         });
     }
+
+    private static System.Text.Json.Nodes.JsonObject TeamSnapshot(Team team, IReadOnlyList<string> memberIds) => new()
+    {
+        ["name"] = team.Name,
+        ["grantsOrganizationAdmin"] = team.GrantsOrganizationAdmin,
+        ["memberIds"] = new System.Text.Json.Nodes.JsonArray(memberIds.Select(id => (System.Text.Json.Nodes.JsonNode)System.Text.Json.Nodes.JsonValue.Create(id)!).ToArray()),
+    };
 
     private static async Task<List<string>> MemberIdsAsync(DenDbContext db, string teamId) =>
         await db.TeamMembers.AsNoTracking().Where(tm => tm.TeamId == teamId).OrderBy(tm => tm.CreatedAt).ThenBy(tm => tm.Id).Select(tm => tm.MemberId).ToListAsync();

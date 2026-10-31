@@ -15,6 +15,7 @@ public sealed class OrgAdminFeature : IFeature
         services.AddScoped<ApiKeyAuthenticator>();
         services.AddScoped<AuditPolicies>();
         services.AddScoped<IAuditLog, AuditLog>();
+        services.AddScoped<OrgEnvelope>();
     }
 
     public void MapEndpoints(WebApplication app)

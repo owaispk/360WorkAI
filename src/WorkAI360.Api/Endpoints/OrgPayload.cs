@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.Domain;
+using WorkAI360.Api.Features.OrgAdmin;
 
 namespace WorkAI360.Api.Endpoints;
 
@@ -18,6 +19,7 @@ public static class OrgPayload
                           orderby m.CreatedAt, m.Id
                           select new { Member = m, User = u }).ToListAsync();
         var invitations = await db.Invitations.AsNoTracking().Where(i => i.OrganizationId == org.Id).OrderBy(i => i.CreatedAt).ThenBy(i => i.Id).ToListAsync();
+        var settings = await OrgSettings.GetAsync(db, org.Id);
         var owner = rows.FirstOrDefault(r => r.Member.Role == Roles.Owner);
         var teams = await db.Teams.AsNoTracking().Where(t => t.OrganizationId == org.Id).OrderBy(t => t.CreatedAt).ThenBy(t => t.Id).ToListAsync();
         var teamIds = teams.Select(t => t.Id).ToList();
@@ -65,10 +67,10 @@ public static class OrgPayload
                 name = org.Name,
                 slug = org.Slug,
                 logo = (string?)null,
-                allowedEmailDomains = (string[]?)null,
-                metadata = "{}",
+                allowedEmailDomains = OrgSettings.Domains(settings),
+                metadata = OrgSettings.Metadata(settings).ToJsonString(),
                 createdAt = Responses.IsoUtc(org.CreatedAt),
-                updatedAt = Responses.IsoUtc(org.CreatedAt),
+                updatedAt = Responses.IsoUtc(settings?.UpdatedAt ?? org.CreatedAt),
                 owner = owner is null ? null : new { memberId = owner.Member.Id, userId = owner.User.Id, name = owner.User.Name, email = owner.User.Email, image = owner.User.Image },
             },
             currentMember = new

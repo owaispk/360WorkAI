@@ -24,7 +24,6 @@ public static class AuditActions
     public const string PermissionSetRenamed = "permission_set.renamed";
     public const string PermissionSetPermissionsChanged = "permission_set.permissions_changed";
     public const string PermissionSetArchived = "permission_set.archived";
-    public const string PermissionSetTeamsChanged = "permission_set.teams_changed";
     public const string ApiKeyCreated = "api_key.created";
     public const string ApiKeyDeleted = "api_key.deleted";
     public const string ApiKeyRevoked = "api_key.revoked";

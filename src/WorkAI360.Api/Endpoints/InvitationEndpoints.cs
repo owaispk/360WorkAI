@@ -5,6 +5,7 @@ using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.Domain;
 using WorkAI360.Api.Email;
+using WorkAI360.Api.Features.OrgAdmin;
 using WorkAI360.Api.OAuth;
 
 namespace WorkAI360.Api.Endpoints;
@@ -18,7 +19,7 @@ public static class InvitationEndpoints
 
     public static void MapInvitationEndpoints(this WebApplication app)
     {
-        app.MapPost("/v1/invitations", async (HttpContext ctx, OrgAccess access, DenDbContext db, IEmailSender sender, OAuthUrls urls, ILoggerFactory logs, TeamRules rules) =>
+        app.MapPost("/v1/invitations", async (HttpContext ctx, OrgAccess access, DenDbContext db, IEmailSender sender, OAuthUrls urls, ILoggerFactory logs, TeamRules rules, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -50,6 +51,9 @@ public static class InvitationEndpoints
             var org = context!.Organization;
             var alreadyMember = await (from m in db.Members join u in db.Users on m.UserId equals u.Id where m.OrganizationId == org.Id && u.Email == normalized select m.Id).AnyAsync();
             if (alreadyMember) return Results.Json(new { error = "member_exists", message = "That email address is already a member of this organization." }, statusCode: 409);
+            // A workspace limited to some email domains only invites those.
+            if (OrgSettings.Domains(await OrgSettings.GetAsync(db, org.Id)) is { Length: > 0 } allowed && !OrgSettings.IsAllowed(allowed, normalized))
+                return Results.Json(OrgSettings.Restriction("invite_email_domain_not_allowed", allowed, normalized), statusCode: 409);
 
             var now = DateTime.UtcNow;
             var invitation = await db.Invitations.FirstOrDefaultAsync(i => i.OrganizationId == org.Id && i.Email == normalized && i.Status == InvitationStatus.Pending && i.ExpiresAt > now);
@@ -78,6 +82,9 @@ public static class InvitationEndpoints
                 invitation.ExpiresAt = now + Lifetime;
             }
             await db.SaveChangesAsync();
+            await audit.RecordAsync(context, new AuditEntry(refreshed ? AuditActions.InvitationRefreshed : AuditActions.InvitationCreated,
+                [new("invitation", invitation.Id, "target", invitation.Email), new("organization", org.Id, "parent")],
+                After: new() { ["email"] = invitation.Email, ["role"] = invitation.Role, ["status"] = invitation.Status }));
 
             try
             {
@@ -111,7 +118,7 @@ public static class InvitationEndpoints
             return Results.Json(new { invitationId = invitation.Id, inviteLink = LinkFor(urls, invitation), expiresAt = Responses.IsoUtc(invitation.ExpiresAt) });
         });
 
-        app.MapPost("/v1/invitations/{invitationId}/cancel", async (string invitationId, HttpContext ctx, OrgAccess access, DenDbContext db) =>
+        app.MapPost("/v1/invitations/{invitationId}/cancel", async (string invitationId, HttpContext ctx, OrgAccess access, DenDbContext db, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -125,6 +132,8 @@ public static class InvitationEndpoints
                 return Results.Json(new { error = "invitation_not_pending", message = "Only pending invitations can be canceled.", status = invitation.Status }, statusCode: 409);
             invitation.Status = InvitationStatus.Canceled;
             await db.SaveChangesAsync();
+            await audit.RecordAsync(context!, new AuditEntry(AuditActions.InvitationCanceled, [new("invitation", invitation.Id, "target", invitation.Email), new("organization", context!.Organization.Id, "parent")],
+                Before: new() { ["status"] = InvitationStatus.Pending }, After: new() { ["status"] = InvitationStatus.Canceled }));
             return Results.Json(new { success = true });
         });
 
@@ -135,14 +144,16 @@ public static class InvitationEndpoints
             var invitation = await db.Invitations.AsNoTracking().FirstOrDefaultAsync(i => i.Id == id || i.InviteToken == id);
             if (invitation is null) return Results.Json(new { error = "invitation_not_found" }, statusCode: 404);
             var org = await db.Organizations.AsNoTracking().FirstAsync(o => o.Id == invitation.OrganizationId);
+            var settings = await OrgSettings.GetAsync(db, org.Id);
+            var brand = OrgSettings.Metadata(settings);
             return Results.Json(new
             {
                 invitation = new { id = invitation.Id, email = invitation.Email, role = invitation.Role, status = invitation.EffectiveStatus(DateTime.UtcNow), expiresAt = Responses.IsoUtc(invitation.ExpiresAt), createdAt = Responses.IsoUtc(invitation.CreatedAt) },
-                organization = new { id = org.Id, name = org.Name, slug = org.Slug, allowedEmailDomains = (string[]?)null, branding = new { appName = "OpenWork", logoUrl = (string?)null, iconUrl = (string?)null } },
+                organization = new { id = org.Id, name = org.Name, slug = org.Slug, allowedEmailDomains = OrgSettings.Domains(settings), branding = new { appName = (string?)brand["brandAppName"]?.GetValue<string>() ?? "OpenWork", logoUrl = (string?)brand["brandLogoUrl"]?.GetValue<string>(), iconUrl = (string?)brand["brandIconUrl"]?.GetValue<string>() } },
             });
         });
 
-        app.MapPost("/v1/orgs/invitations/accept", async (HttpContext ctx, SessionService sessions, DenDbContext db) =>
+        app.MapPost("/v1/orgs/invitations/accept", async (HttpContext ctx, SessionService sessions, DenDbContext db, IAuditLog audit) =>
         {
             var current = await sessions.ResolveAsync(ctx);
             if (current is null) return Responses.Unauthorized();
@@ -163,6 +174,10 @@ public static class InvitationEndpoints
             var org = await db.Organizations.FirstAsync(o => o.Id == invitation.OrganizationId);
 
             var alreadyMember = await db.Members.AnyAsync(m => m.OrganizationId == org.Id && m.UserId == current.User.Id);
+            // The domain limit is checked again here: it may have been set after the invitation was sent.
+            if (!alreadyMember && OrgSettings.Domains(await OrgSettings.GetAsync(db, org.Id)) is { Length: > 0 } allowed && !OrgSettings.IsAllowed(allowed, current.User.Email))
+                return Results.Json(OrgSettings.Restriction("account_email_domain_not_allowed", allowed, current.User.Email), statusCode: 409);
+            string? joinedMemberId = null;
             // Accepting twice is harmless; accepting something canceled, expired or used by someone else is not possible.
             if (invitation.Status == InvitationStatus.Accepted) { if (!alreadyMember) return Results.Json(new { error = "invitation_not_found" }, statusCode: 404); }
             else if (invitation.EffectiveStatus(now) != InvitationStatus.Pending) return Results.Json(new { error = "invitation_not_found" }, statusCode: 404);
@@ -182,12 +197,16 @@ public static class InvitationEndpoints
                 else
                 {
                     if (!alreadyMember)
-                        db.Members.Add(new Member { Id = Ids.New("om"), OrganizationId = org.Id, UserId = current.User.Id, Role = invitation.Role, CreatedAt = now, JoinedAt = now, InviteId = invitation.Id });
+                        db.Members.Add(new Member { Id = joinedMemberId = Ids.New("om"), OrganizationId = org.Id, UserId = current.User.Id, Role = invitation.Role, CreatedAt = now, JoinedAt = now, InviteId = invitation.Id });
                     await db.SaveChangesAsync();
                     await tx.CommitAsync();
                 }
             }
 
+            if (joinedMemberId is not null)
+                await audit.RecordAsync(org.Id, AuditActor.User(current.User.Id, joinedMemberId), new AuditEntry(AuditActions.InvitationAccepted,
+                    [new("invitation", invitation.Id, "target", invitation.Email), new("member", joinedMemberId, "related"), new("organization", org.Id, "parent")],
+                    After: new() { ["status"] = InvitationStatus.Accepted, ["role"] = invitation.Role }));
             if (current.Session.ActiveOrganizationId is null) await OrgEndpoints.SetActiveAsync(db, current.Session, org.Id);
             return Results.Json(new { accepted = true, organizationId = org.Id, organizationSlug = org.Slug, invitationId = invitation.Id });
         });

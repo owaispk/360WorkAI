@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.Domain;
+using WorkAI360.Api.Features.OrgAdmin;
 
 namespace WorkAI360.Api.Endpoints;
 
@@ -70,7 +71,7 @@ public static class PermissionEndpoints
             return Results.Json(new { set = await SetBody.DetailAsync(db, permissions, context, set) });
         });
 
-        app.MapPost("/v1/permissions/sets", async (HttpContext ctx, OrgAccess access, DenDbContext db, PermissionService permissions) =>
+        app.MapPost("/v1/permissions/sets", async (HttpContext ctx, OrgAccess access, DenDbContext db, PermissionService permissions, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -151,10 +152,12 @@ public static class PermissionEndpoints
             await permissions.AddRowsAsync(set.Id, plan.Changes, "user", context.Member.Id);
             await db.SaveChangesAsync();
             await tx.CommitAsync();
+            await audit.RecordAsync(context, new AuditEntry(AuditActions.PermissionSetCreated, [new("permission_set", set.Id, "target", set.Name), new("organization", org, "parent")],
+                After: new() { ["name"] = set.Name, ["permissions"] = plan.Changes.Count }));
             return Results.Json(new { set = await SetBody.DetailAsync(db, permissions, context, set) }, statusCode: 201);
         });
 
-        app.MapPut("/v1/permissions/sets/{permissionSetId}/permissions", async (string permissionSetId, HttpContext ctx, OrgAccess access, DenDbContext db, PermissionService permissions) =>
+        app.MapPut("/v1/permissions/sets/{permissionSetId}/permissions", async (string permissionSetId, HttpContext ctx, OrgAccess access, DenDbContext db, PermissionService permissions, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -186,7 +189,7 @@ public static class PermissionEndpoints
             return Results.Json(new { set = await SetBody.DetailAsync(db, permissions, context, set) });
         });
 
-        app.MapPatch("/v1/permissions/sets/{permissionSetId}", async (string permissionSetId, HttpContext ctx, OrgAccess access, DenDbContext db, PermissionService permissions) =>
+        app.MapPatch("/v1/permissions/sets/{permissionSetId}", async (string permissionSetId, HttpContext ctx, OrgAccess access, DenDbContext db, PermissionService permissions, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -207,11 +210,18 @@ public static class PermissionEndpoints
             if (set is null) return SetNotFound();
             if (set.DefaultKey is not null) return Results.Json(new { error = "default_permission_set", message = "Member and Admin keep their names." }, statusCode: 400);
             if (set.ArchivedAt is not null) return Results.Json(new { error = "permission_set_archived", message = "This role was deleted and can't be changed." }, statusCode: 409);
-            if (set.Name != name) { set.Name = name; await db.SaveChangesAsync(); }
+            if (set.Name != name)
+            {
+                var previousName = set.Name;
+                set.Name = name;
+                await db.SaveChangesAsync();
+                await audit.RecordAsync(context!, new AuditEntry(AuditActions.PermissionSetRenamed, [new("permission_set", set.Id, "target", name), new("organization", context!.Organization.Id, "parent")],
+                    Before: new() { ["name"] = previousName }, After: new() { ["name"] = name }));
+            }
             return Results.Json(new { set = await SetBody.DetailAsync(db, permissions, context, set) });
         });
 
-        app.MapDelete("/v1/permissions/sets/{permissionSetId}", async (string permissionSetId, HttpContext ctx, OrgAccess access, DenDbContext db, PermissionService permissions) =>
+        app.MapDelete("/v1/permissions/sets/{permissionSetId}", async (string permissionSetId, HttpContext ctx, OrgAccess access, DenDbContext db, PermissionService permissions, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -228,10 +238,12 @@ public static class PermissionEndpoints
             foreach (var link in await db.PermissionSetTeams.Where(l => l.PermissionSetId == set.Id && l.RemovedAt == null).ToListAsync()) link.RemovedAt = now;
             set.ArchivedAt = now;
             await db.SaveChangesAsync();
+            await audit.RecordAsync(context!, new AuditEntry(AuditActions.PermissionSetArchived, [new("permission_set", set.Id, "target", set.Name), new("organization", context!.Organization.Id, "parent")],
+                Before: new() { ["archived"] = false }, After: new() { ["archived"] = true }));
             return Results.NoContent();
         });
 
-        app.MapPut("/v1/teams/{teamId}/permission-set", async (string teamId, HttpContext ctx, OrgAccess access, DenDbContext db, PermissionService permissions) =>
+        app.MapPut("/v1/teams/{teamId}/permission-set", async (string teamId, HttpContext ctx, OrgAccess access, DenDbContext db, PermissionService permissions, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -267,6 +279,8 @@ public static class PermissionEndpoints
             await AssignTeamsAsync(db, set?.Id, [team.Id], DateTime.UtcNow);
             await db.SaveChangesAsync();
             await tx.CommitAsync();
+            await audit.RecordAsync(context, new AuditEntry(AuditActions.TeamPermissionSetUpdated, [new("team", team.Id, "target", team.Name), new("organization", org, "parent")],
+                After: new() { ["permissionSetId"] = set?.Id }));
             return Results.Json(new { set = set is null ? null : await SetBody.DetailAsync(db, permissions, context, set) });
         });
 

@@ -35,18 +35,19 @@ public static class OrgEndpoints
     {
         var v1 = app.MapGroup("/v1");
 
-        v1.MapGet("/me", async (HttpContext ctx, SessionService sessions) =>
+        // /v1/me and /v1/me/orgs also answer an organization API key (then there is no web session: "session" is null, as in the reference).
+        v1.MapGet("/me", async (HttpContext ctx, OrgAccess access) =>
         {
-            var current = await sessions.ResolveAsync(ctx);
+            var current = await access.ResolveUserAsync(ctx);
             if (current is null) return Responses.Unauthorized();
             var user = (IDictionary<string, object?>)ToDictionary(Responses.UserJson(current.User));
             user["authProviders"] = new[] { "email" };
-            return Results.Json(new { user, session = Responses.SessionJson(current.Session, current.PresentedToken) });
+            return Results.Json(new { user, session = current.Session is null ? null : Responses.SessionJson(current.Session, current.Token) });
         });
 
-        v1.MapGet("/me/orgs", async (HttpContext ctx, SessionService sessions, DenDbContext db) =>
+        v1.MapGet("/me/orgs", async (HttpContext ctx, OrgAccess access, DenDbContext db) =>
         {
-            var current = await sessions.ResolveAsync(ctx);
+            var current = await access.ResolveUserAsync(ctx);
             if (current is null) return Responses.Unauthorized();
 
             var rows = await (from m in db.Members
@@ -54,7 +55,7 @@ public static class OrgEndpoints
                               where m.UserId == current.User.Id
                               orderby m.CreatedAt
                               select new { Org = o, m.Role }).ToListAsync();
-            var activeId = current.Session.ActiveOrganizationId;
+            var activeId = current.ActiveOrganizationId;
             var active = rows.FirstOrDefault(r => r.Org.Id == activeId)?.Org;
             return Results.Json(new
             {
@@ -101,10 +102,14 @@ public static class OrgEndpoints
             return Results.Json(new { organization = Responses.OrganizationJson(org) }, statusCode: StatusCodes.Status201Created);
         });
 
-        v1.MapGet("/org", async (HttpContext ctx, OrgAccess access, DenDbContext db) =>
+        v1.MapGet("/org", async (HttpContext ctx, OrgAccess access, DenDbContext db, WorkAI360.Api.Features.OrgAdmin.OrgEnvelope envelope) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
-            return failure ?? Results.Json(await OrgPayload.BuildAsync(db, context!));
+            if (failure is not null) return failure;
+            // The area that owns features, capabilities and entitlements adds them to the payload.
+            var payload = System.Text.Json.JsonSerializer.SerializeToNode(await OrgPayload.BuildAsync(db, context!))!.AsObject();
+            envelope.AddTo(payload);
+            return Results.Json(payload);
         });
     }
 

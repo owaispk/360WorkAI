@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.Domain;
+using WorkAI360.Api.Features.OrgAdmin;
 
 namespace WorkAI360.Api.Endpoints;
 
@@ -45,7 +46,7 @@ public static partial class MemberEndpoints
 
     public static void MapMemberEndpoints(this WebApplication app)
     {
-        app.MapPost("/v1/members/{memberId}/role", async (string memberId, HttpContext ctx, OrgAccess access, DenDbContext db, CredentialRevocation revocation, TeamRules rules) =>
+        app.MapPost("/v1/members/{memberId}/role", async (string memberId, HttpContext ctx, OrgAccess access, DenDbContext db, CredentialRevocation revocation, TeamRules rules, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -87,11 +88,13 @@ public static partial class MemberEndpoints
             await tx.CommitAsync();
 
             // Losing access must not leave a live session or agent token behind. A promotion takes nothing away.
-            if (Roles.RevokesCredentials(previous, next)) await revocation.RevokeAsync(target.UserId, context.Organization.Id);
+            if (Roles.RevokesCredentials(previous, next)) await revocation.RevokeAsync(target.UserId, context.Organization.Id, context);
+            await audit.RecordAsync(context, new AuditEntry(AuditActions.MemberRoleUpdated, [new("member", target.Id), new("user", target.UserId, "related"), new("organization", context.Organization.Id, "parent")],
+                Before: new() { ["role"] = previous }, After: new() { ["role"] = next }));
             return Results.Json(new { success = true });
         });
 
-        app.MapPost("/v1/members/{memberId}/transfer-ownership", async (string memberId, HttpContext ctx, OrgAccess access, DenDbContext db, CredentialRevocation revocation) =>
+        app.MapPost("/v1/members/{memberId}/transfer-ownership", async (string memberId, HttpContext ctx, OrgAccess access, DenDbContext db, CredentialRevocation revocation, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -118,12 +121,14 @@ public static partial class MemberEndpoints
 
             var previousOwner = context.Member;
             // Both people's standing just changed, so both sign in again (the reference ends the new owner's sessions too).
-            await revocation.RevokeAsync(previousOwner.UserId, context.Organization.Id);
-            await revocation.RevokeAsync(target.UserId, context.Organization.Id);
+            await revocation.RevokeAsync(previousOwner.UserId, context.Organization.Id, context);
+            await revocation.RevokeAsync(target.UserId, context.Organization.Id, context);
+            await audit.RecordAsync(context, new AuditEntry(AuditActions.MemberOwnershipTransferred, [new("member", target.Id), new("user", target.UserId, "related"), new("organization", context.Organization.Id, "parent")],
+                Before: new() { ["ownerMemberId"] = previousOwner.Id }, After: new() { ["ownerMemberId"] = target.Id }));
             return Results.Json(new { success = true });
         });
 
-        app.MapDelete("/v1/members/{memberId}", async (string memberId, HttpContext ctx, OrgAccess access, DenDbContext db, CredentialRevocation revocation) =>
+        app.MapDelete("/v1/members/{memberId}", async (string memberId, HttpContext ctx, OrgAccess access, DenDbContext db, CredentialRevocation revocation, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -136,6 +141,8 @@ public static partial class MemberEndpoints
             {
                 invitation.Status = InvitationStatus.Canceled;
                 await db.SaveChangesAsync();
+                await audit.RecordAsync(context!, new AuditEntry(AuditActions.InvitationCanceled, [new("invitation", invitation.Id, "target", invitation.Email), new("organization", context!.Organization.Id, "parent")],
+                    Before: new() { ["status"] = InvitationStatus.Pending }, After: new() { ["status"] = InvitationStatus.Canceled }));
                 return Results.NoContent();
             }
 
@@ -153,7 +160,9 @@ public static partial class MemberEndpoints
             await db.SaveChangesAsync();
             await tx.CommitAsync();
 
-            await revocation.RevokeAsync(target.UserId, context!.Organization.Id);
+            await revocation.RevokeAsync(target.UserId, context!.Organization.Id, context);
+            await audit.RecordAsync(context, new AuditEntry(AuditActions.MemberRemoved, [new("member", target.Id), new("user", target.UserId, "related"), new("organization", context.Organization.Id, "parent")],
+                Before: new() { ["role"] = target.Role, ["userId"] = target.UserId }));
             return Results.NoContent();
         });
     }

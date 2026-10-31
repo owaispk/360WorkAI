@@ -7,6 +7,9 @@ using WorkAI360.Api.OAuth;
 
 namespace WorkAI360.Api.Auth;
 
+/// <summary>The person behind a request to a /v1/me route: <c>Session</c> is null when an API key was presented.</summary>
+public sealed record UserPrincipal(User User, Session? Session, string Token, string? ActiveOrganizationId);
+
 public sealed record OrgContext(AuthContext Auth, Organization Organization, Member Member, MemberPermissions Permissions, string? ApiKeyId = null)
 {
     public bool IsOwner => Permissions.IsOwner;
@@ -64,12 +67,12 @@ public sealed class OrgAccess(DenDbContext db, SessionService sessions, Permissi
     }
 
     /// <summary>For routes about the person rather than a workspace (/v1/me): a signed-in session, or an API key (then <c>Session</c> is null, as in the reference).</summary>
-    public async Task<(User User, Session? Session, string Token)?> ResolveUserAsync(HttpContext ctx)
+    public async Task<UserPrincipal?> ResolveUserAsync(HttpContext ctx)
     {
         var (principal, _) = await apiKeys.ResolveAsync(ctx);
-        if (principal is not null) return (principal.User, null, "");
+        if (principal is not null) return new UserPrincipal(principal.User, null, "", principal.Key.OrganizationId);
         var auth = await sessions.ResolveAsync(ctx);
-        return auth is null ? null : (auth.User, auth.Session, auth.PresentedToken);
+        return auth is null ? null : new UserPrincipal(auth.User, auth.Session, auth.PresentedToken, auth.Session.ActiveOrganizationId);
     }
 
     private static IResult NotFound() => Results.Json(new { error = "organization_not_found" }, statusCode: 404);

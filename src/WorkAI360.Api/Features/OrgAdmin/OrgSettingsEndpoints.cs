@@ -280,11 +280,19 @@ public static class OrgSettingsEndpoints
 /// <summary>Whether a feature is on: the reference's default, unless configuration says otherwise (<c>Features:Overrides:&lt;key&gt;</c>).</summary>
 public static class FeatureState
 {
+    /// <summary>On in the reference, but they need server routes this build does not have yet (checklist, gateway, connectors, remote sessions, analytics): reported off until those exist.</summary>
+    private static readonly HashSet<string> NeedsUnbuiltServerAreas =
+    [
+        "activationChecklist", "analyticsDailyTrends", "customConnectorSetup", "expandedMcpPresets", "gatewayProviderAuthErrors", "gatewayProviderRemovalLimits",
+        "gatewayProviderTest", "guidedSlackSetup", "libraryConnectorNavigation", "libraryConnectorOrgSetup", "liveProviderSync", "mcpAppLibraries",
+        "providerCredentialStatus", "remoteSessionAnswers", "remoteSessionSubagents", "slackSendAsBot",
+    ];
+
     public static bool Resolve(IConfiguration configuration, string key)
     {
         var overridden = configuration.GetSection("Features:Overrides")[key];
         if (overridden is not null && bool.TryParse(overridden, out var value)) return value;
-        return FeatureDefaults.Organization.TryGetValue(key, out var state) && state;
+        return !NeedsUnbuiltServerAreas.Contains(key) && FeatureDefaults.Organization.TryGetValue(key, out var state) && state;
     }
 
     public static Dictionary<string, bool> All(IConfiguration configuration)

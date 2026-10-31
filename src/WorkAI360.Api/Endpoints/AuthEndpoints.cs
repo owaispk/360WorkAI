@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.Domain;
+using WorkAI360.Api.Features.OrgAdmin;
 
 namespace WorkAI360.Api.Endpoints;
 
@@ -58,7 +59,7 @@ public static class AuthEndpoints
     {
         var auth = app.MapGroup("/api/auth");
 
-        auth.MapPost("/sign-up/email", async (SignUpBody? body, HttpContext ctx, DenDbContext db, SessionService sessions, RateLimiter limiter, IOptions<AuthOptions> options, EmailVerificationService verification) =>
+        auth.MapPost("/sign-up/email", async (SignUpBody? body, HttpContext ctx, DenDbContext db, SessionService sessions, RateLimiter limiter, IOptions<AuthOptions> options, EmailVerificationService verification, IAuditLog audit) =>
         {
             if (body is null || string.IsNullOrWhiteSpace(body.Name) || !IsValidEmail(body.Email) || body.Password is null)
                 return Json(400, new { message = "Invalid name, email or password.", code = "VALIDATION_ERROR" });
@@ -100,10 +101,11 @@ public static class AuthEndpoints
 
             var (token, session) = await sessions.CreateAsync(user, null, "email", ctx);
             sessions.WriteCookie(ctx, token, session);
+            await audit.RecordForUserAsync(user.Id, SessionEntry(AuditActions.SessionCreated, session.Id, "email"));
             return Json(200, new { token, user = Responses.UserJson(user) });
         });
 
-        auth.MapPost("/sign-in/email", async (SignInBody? body, HttpContext ctx, DenDbContext db, SessionService sessions, LoginThrottle throttle, RateLimiter limiter, IOptions<AuthOptions> options, EmailVerificationService verification) =>
+        auth.MapPost("/sign-in/email", async (SignInBody? body, HttpContext ctx, DenDbContext db, SessionService sessions, LoginThrottle throttle, RateLimiter limiter, IOptions<AuthOptions> options, EmailVerificationService verification, IAuditLog audit) =>
         {
             if (body is null || !IsValidEmail(body.Email) || string.IsNullOrEmpty(body.Password))
                 return Json(400, new { message = "Invalid email or password.", code = "VALIDATION_ERROR" });
@@ -122,6 +124,8 @@ public static class AuthEndpoints
             if (user is null || !ok)
             {
                 throttle.RecordFailure(email);
+                // Only a wrong password for a real account is recorded (in that person's workspaces); an unknown address leaves nothing behind.
+                if (user is not null) await audit.RecordForUserAsync(user.Id, new AuditEntry(AuditActions.SessionSignInFailed, [new("user", user.Id, "target")], "security", "failed", ReasonCode: "invalid_credentials"));
                 return Json(401, new { message = "Invalid email or password", code = "INVALID_EMAIL_OR_PASSWORD" });
             }
 
@@ -136,6 +140,7 @@ public static class AuthEndpoints
             var active = await db.Members.Where(m => m.UserId == user.Id).OrderBy(m => m.CreatedAt).Select(m => m.OrganizationId).FirstOrDefaultAsync();
             var (token, session) = await sessions.CreateAsync(user, active, "email", ctx);
             sessions.WriteCookie(ctx, token, session);
+            await audit.RecordForUserAsync(user.Id, SessionEntry(AuditActions.SessionCreated, session.Id, "email"));
             return Json(200, new { redirect = false, token, user = Responses.UserJson(user) });
         });
 
@@ -147,12 +152,14 @@ public static class AuthEndpoints
                 : Results.Json(new { session = Responses.SessionJson(current.Session, current.PresentedToken), user = Responses.UserJson(current.User) });
         });
 
-        auth.MapPost("/sign-out", async (HttpContext ctx, SessionService sessions) =>
+        auth.MapPost("/sign-out", async (HttpContext ctx, SessionService sessions, IAuditLog audit) =>
         {
+            var leaving = await sessions.ResolveAsync(ctx);
             // Revoke whichever credentials were presented: the cookie session and/or the bearer session.
             if (sessions.ReadCookieToken(ctx.Request) is { } cookieToken) await sessions.RevokeAsync(cookieToken);
             if (SessionService.ReadBearer(ctx.Request) is { } bearer) await sessions.RevokeAsync(bearer);
             sessions.ClearCookie(ctx);
+            if (leaving is not null) await audit.RecordForUserAsync(leaving.User.Id, SessionEntry(AuditActions.SessionRevoked, leaving.Session.Id, "sign_out"));
             return Results.Json(new { success = true });
         });
 
@@ -177,6 +184,9 @@ public static class AuthEndpoints
             return Json(404, new { message = "Not found" });
         });
     }
+
+    private static AuditEntry SessionEntry(string action, string sessionId, string how) =>
+        new(action, [new("session", sessionId)], "security", After: new() { ["method"] = how });
 
     private static readonly string DummyHash = Passwords.Hash("dummy-password-for-timing-only");
 
