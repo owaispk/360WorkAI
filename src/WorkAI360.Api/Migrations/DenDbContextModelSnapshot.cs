@@ -2006,6 +2006,486 @@ namespace WorkAI360.Api.Migrations
                     b.ToTable("SigningKeys");
                 });
 
+            modelBuilder.Entity("WorkAI360.Api.Domain.Sso.ExternalAccount", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("AccountId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("ProviderId", "AccountId")
+                        .IsUnique();
+
+                    b.ToTable("ExternalAccount");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Sso.ExternalIdentity", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<bool>("Active")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<string>("DisplayName")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Email")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ExternalId")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime?>("LastScimSyncAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime?>("LastSsoLoginAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("RemoteId")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ScimProviderId")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("SsoProviderId")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("UserName")
+                        .HasColumnType("longtext");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "UserId")
+                        .IsUnique();
+
+                    b.ToTable("ExternalIdentity");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Sso.ScimGroup", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ExternalId")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("TeamId")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("ProviderId", "ExternalId");
+
+                    b.ToTable("ScimGroup");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Sso.ScimGroupMember", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("GroupId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("MemberId")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("RemoteUserId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("TeamMemberId")
+                        .HasColumnType("longtext");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RemoteUserId");
+
+                    b.HasIndex("GroupId", "RemoteUserId")
+                        .IsUnique();
+
+                    b.ToTable("ScimGroupMember");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Sso.ScimProvider", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("CreatedByUserId")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("GroupMappingMode")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId")
+                        .IsUnique();
+
+                    b.HasIndex("ProviderId")
+                        .IsUnique();
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.ToTable("ScimProvider");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Sso.ScimSyncEvent", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime?>("NextRetryAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("PayloadJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime?>("ResolvedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("UserId")
+                        .HasColumnType("longtext");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.ToTable("ScimSyncEvent");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Sso.ScimUserTombstone", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<DateTime>("DeprovisionedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("DeprovisionedUserId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("Email")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("ExternalId")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "DeprovisionedUserId")
+                        .IsUnique();
+
+                    b.HasIndex("OrganizationId", "Email");
+
+                    b.ToTable("ScimUserTombstone");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Sso.SsoAuthState", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("BrowserBindingHash")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("CallbackUrl")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("CodeVerifierProtected")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ConfigRevision")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime?>("ConsumedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("ErrorCallbackUrl")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("NewUserCallbackUrl")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("NonceHash")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("TestIntentId")
+                        .HasColumnType("longtext");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("ProviderId");
+
+                    b.ToTable("SsoAuthState");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Sso.SsoConnection", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("ActiveTestConfigRevision")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime?>("ActiveTestExpiresAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("ActiveTestIntentId")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("ActiveTestProviderId")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime?>("ActiveTestStartedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("ActiveTestUserId")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ClientSecretProtected")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ConfigRevision")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Domain")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime?>("DomainVerificationExpiresAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("DomainVerificationToken")
+                        .HasColumnType("longtext");
+
+                    b.Property<bool>("DomainVerified")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<string>("Issuer")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime?>("LastTestedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("LastTestedRevision")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("OidcConfigJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("SamlConfigJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("SignInPath")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("TestStatus")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ActiveTestIntentId");
+
+                    b.HasIndex("OrganizationId")
+                        .IsUnique();
+
+                    b.HasIndex("ProviderId")
+                        .IsUnique();
+
+                    b.ToTable("SsoConnection");
+                });
+
             modelBuilder.Entity("WorkAI360.Api.Domain.Team", b =>
                 {
                     b.Property<string>("Id")

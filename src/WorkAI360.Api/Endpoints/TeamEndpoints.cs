@@ -4,6 +4,7 @@ using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.Domain;
 using WorkAI360.Api.Features.OrgAdmin;
+using WorkAI360.Api.Features.Scim;
 
 namespace WorkAI360.Api.Endpoints;
 
@@ -118,6 +119,9 @@ public static class TeamEndpoints
 
             var team = await db.Teams.FirstOrDefaultAsync(t => t.Id == teamId && t.OrganizationId == context!.Organization.Id);
             if (team is null) return Results.Json(new { error = "team_not_found" }, statusCode: 404);
+            // A team the identity provider projects (SCIM group mapping) is changed there, not here.
+            if ((input!.Name is not null || input.MemberIds is not null) && await ScimTeams.IsManagedAsync(db, context!.Organization.Id, team.Id))
+                return Results.Json(new { error = "scim_managed_team", message = "Manage this team through the SCIM identity provider." }, statusCode: 409);
 
             // Anything that changes who is admin through an Admin team needs the right to manage Admin teams.
             var touchesAdminTeam = input!.GrantsAdmin is not null || (team.GrantsOrganizationAdmin && input.MemberIds is not null);
@@ -175,6 +179,8 @@ public static class TeamEndpoints
             if (MemberEndpoints.ValidateTypeId(teamId, "tem", "teamId") is { } malformed) return malformed;
             var team = await db.Teams.FirstOrDefaultAsync(t => t.Id == teamId && t.OrganizationId == context!.Organization.Id);
             if (team is null) return Results.Json(new { error = "team_not_found" }, statusCode: 404);
+            if (await ScimTeams.IsManagedAsync(db, context!.Organization.Id, team.Id))
+                return Results.Json(new { error = "scim_managed_team", message = "Disable SCIM team mapping before deleting this team." }, statusCode: 409);
             if (team.GrantsOrganizationAdmin)
             {
                 if (access.Require(context!, "teams.manage_admin") is { } adminDenied) return adminDenied;

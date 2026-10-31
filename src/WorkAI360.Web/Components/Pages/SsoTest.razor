@@ -1,0 +1,49 @@
+@page "/sso/test"
+@inject IJSRuntime Js
+@inject NavigationManager Nav
+
+<PageTitle>Testing SSO · OpenWork Cloud</PageTitle>
+
+<section class="den-card" data-testid="sso-test">
+    @if (_error is null)
+    {
+        <h1>Testing your SSO connection</h1>
+        <p class="den-muted">This test does not enable SSO or replace your current OpenWork session.</p>
+        <p class="den-muted" data-testid="sso-test-status">Preparing your organization’s sign-in page…</p>
+    }
+    else
+    {
+        <h1>We couldn’t start the test</h1>
+        <p class="den-error" role="alert" data-testid="sso-test-error">@_error</p>
+    }
+</section>
+
+@code {
+    private string? _error;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var query = System.Web.HttpUtility.ParseQueryString(new Uri(Nav.Uri).Query);
+        var intentId = query["intentId"]?.Trim() ?? "";
+        var organizationId = query["organizationId"]?.Trim() ?? "";
+        var module = await Js.InvokeAsync<IJSObjectReference>("import", "./js/sso.js");
+        if (intentId.Length == 0 || organizationId.Length == 0)
+        {
+            _error = "This SSO authentication test link is invalid. Return to SSO settings and start a new test.";
+            StateHasChanged();
+            return;
+        }
+        var raw = await module.InvokeAsync<DenRaw>("post", $"/api/browser/v1/sso/test/{Uri.EscapeDataString(intentId)}/start", new Dictionary<string, string> { ["x-openwork-org-id"] = organizationId }, "{}");
+        var response = new DenResponse(raw.Status, raw.Text);
+        if (!response.Ok || response.String("url") is not { Length: > 0 } url)
+        {
+            _error = "The SSO authentication test could not be started. Return to SSO settings and try again.";
+            StateHasChanged();
+            await Task.Delay(1200);
+            await module.InvokeVoidAsync("go", $"/sso/test/complete?openworkSsoTest={Uri.EscapeDataString(intentId)}&failed=1");
+            return;
+        }
+        await module.InvokeVoidAsync("go", url);
+    }
+}

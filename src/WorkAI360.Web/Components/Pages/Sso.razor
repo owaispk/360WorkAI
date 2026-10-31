@@ -1,0 +1,221 @@
+@page "/dashboard/sso"
+@inherits ActionPage
+@inject IJSRuntime Js
+@using System.Text.Json
+
+<PageTitle>Single sign-on · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="sso-page">
+    @if (_loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>Single sign-on</h1>
+        <p class="den-muted">@_orgName · let people sign in with your company’s identity provider (OpenID Connect).</p>
+
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @if (NeedsReauth)
+        {
+            <ReauthForm @bind-Password="ReauthPassword" Busy="Busy" OnConfirm="ConfirmItsYouAsync" OnCancel="CancelReauth" />
+        }
+
+        @if (!Can("sso.view"))
+        {
+            <p class="den-muted">You don’t have permission to view single sign-on settings.</p>
+        }
+        else
+        {
+            @if (_connection is { } c)
+            {
+                <ul class="den-members" data-testid="sso-summary">
+                    <li><span>Status</span><strong data-testid="sso-status">@c.Status</strong></li>
+                    <li><span>Domain</span><span data-testid="sso-domain">@c.Domain</span><span class="den-badge @(c.DomainVerified ? "den-badge-admin" : "den-badge-pending")" data-testid="sso-domain-verified">@(c.DomainVerified ? "Verified" : "Not verified")</span></li>
+                    <li><span>Test</span><strong data-testid="sso-test-state">@c.TestStatus</strong></li>
+                    <li><span>Provider</span><span class="den-muted">@c.Issuer</span></li>
+                    <li><span>Redirect URL for your provider</span><code data-testid="sso-redirect-url">@c.RedirectUrl</code></li>
+                    <li><span>People sign in at</span><code data-testid="sso-signin-url">@c.SignInUrl</code></li>
+                </ul>
+                @if (c.TestStatus == "failed" && c.LastError is not null) { <p class="den-error" data-testid="sso-test-failure">@c.LastError</p> }
+
+                @if (!c.DomainVerified)
+                {
+                    <div class="den-panel" data-testid="sso-domain-panel">
+                        <strong>Prove you own @c.Domain</strong>
+                        <p class="den-muted">Add this TXT record to your DNS, then check it. Until then nobody can sign in with SSO.</p>
+                        <label>Name</label><code data-testid="sso-dns-name">@c.DnsName</code>
+                        @if (_domainToken is not null) { <label>Value</label><code data-testid="sso-dns-value">@c.DnsHost=@_domainToken</code> }
+                        @if (Can("sso.manage"))
+                        {
+                            <button type="button" class="den-button den-secondary" disabled="@Busy" @onclick="ShowTokenAsync" data-testid="sso-show-record">Show the record to add</button>
+                            <button type="button" class="den-button" disabled="@Busy" @onclick="VerifyDomainAsync" data-testid="sso-verify-domain">Check my domain</button>
+                        }
+                    </div>
+                }
+
+                @if (Can("sso.manage"))
+                {
+                    <div class="den-inline">
+                        @if (c.Status == "enabled")
+                        {
+                            <button type="button" class="den-button den-secondary" disabled="@Busy" @onclick="DisableAsync" data-testid="sso-disable">Turn off SSO</button>
+                        }
+                        else
+                        {
+                            <button type="button" class="den-button den-secondary" disabled="@(Busy || !c.DomainVerified)" @onclick="TestAsync" data-testid="sso-test">Test the connection</button>
+                            <button type="button" class="den-button" disabled="@(Busy || c.TestStatus != "succeeded")" @onclick="EnableAsync" data-testid="sso-enable">Turn on SSO</button>
+                        }
+                    </div>
+                    @if (c.TestStatus == "testing") { <p class="den-muted" data-testid="sso-testing">Waiting for you to finish signing in at your identity provider…</p> }
+                }
+            }
+
+            @if (Can("sso.manage"))
+            {
+                <h2>@(_connection is null ? "Connect your identity provider" : "Change the connection")</h2>
+                <p class="den-muted">Saving replaces the current setup: SSO is turned off and has to be proven and tested again.</p>
+                <form @onsubmit="SaveAsync" novalidate data-testid="sso-form">
+                    <label for="sso-issuer">Issuer URL</label>
+                    <input id="sso-issuer" autocomplete="off" @bind="_issuer" @bind:event="oninput" placeholder="https://login.example.com" />
+                    <label for="sso-domain-input">Email domain</label>
+                    <input id="sso-domain-input" autocomplete="off" @bind="_domain" @bind:event="oninput" placeholder="example.com" />
+                    <label for="sso-client-id">Client ID</label>
+                    <input id="sso-client-id" autocomplete="off" @bind="_clientId" @bind:event="oninput" />
+                    <label for="sso-client-secret">Client secret</label>
+                    <input id="sso-client-secret" type="password" autocomplete="new-password" @bind="_clientSecret" @bind:event="oninput" placeholder="@(_connection is null ? "" : "Enter it again to save")" />
+                    <label class="den-check"><input id="sso-manual" type="checkbox" checked="@_manual" @onchange="e => _manual = e.Value is true" /> <span>Enter the endpoints myself (skip discovery)</span></label>
+                    @if (_manual)
+                    {
+                        <label for="sso-authz">Authorization endpoint</label><input id="sso-authz" @bind="_authz" @bind:event="oninput" />
+                        <label for="sso-token">Token endpoint</label><input id="sso-token" @bind="_token" @bind:event="oninput" />
+                        <label for="sso-jwks">Keys (JWKS) endpoint</label><input id="sso-jwks" @bind="_jwks" @bind:event="oninput" />
+                    }
+                    <button type="submit" class="den-button" disabled="@Busy" data-testid="sso-save">Save connection</button>
+                </form>
+                @if (_connection is not null)
+                {
+                    <button type="button" class="den-link den-danger" @onclick="DeleteAsync" data-testid="sso-delete">@(_confirmDelete ? "Confirm: delete this connection" : "Delete connection")</button>
+                }
+            }
+        }
+        <a class="den-link" href="/dashboard">Back to dashboard</a>
+    }
+</section>
+
+@code {
+    private sealed record Connection(string Status, string Domain, bool DomainVerified, string TestStatus, string? LastError, string Issuer, string RedirectUrl, string SignInUrl, string DnsName, string DnsHost);
+
+    private bool _loading = true, _manual, _confirmDelete;
+    private string _orgName = "", _orgId = "";
+    private HashSet<string> _permissions = [];
+    private Connection? _connection;
+    private string? _domainToken;
+    private string _issuer = "", _domain = "", _clientId = "", _clientSecret = "", _authz = "", _token = "", _jwks = "";
+
+    private bool Can(string permission) => _permissions.Contains(permission);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var me = await Den.RequestAsync("/api/browser/v1/me");
+        if (!me.Ok) { Nav.NavigateTo("/"); return; }
+        MyEmail = me.String("user", "email") ?? "";
+        if (!await LoadAsync()) return;
+        _loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync() => await LoadAsync();
+
+    private async Task<bool> LoadAsync()
+    {
+        var org = await Den.RequestAsync("/api/browser/v1/org");
+        if (org.Status is 404 or 403) { Nav.NavigateTo("/organization"); return false; }
+        if (org.Json is not { ValueKind: JsonValueKind.Object } root) return false;
+        _orgName = org.String("organization", "name") ?? "";
+        _orgId = org.String("organization", "id") ?? "";
+        _permissions = root.GetProperty("currentMember").GetProperty("permissions").EnumerateArray().Select(p => p.GetString() ?? "").ToHashSet();
+        if (!Can("sso.view")) return true;
+        var sso = await Den.RequestAsync("/api/browser/v1/sso");
+        _connection = null;
+        if (sso.Ok && sso.Json is { ValueKind: JsonValueKind.Object } body && body.TryGetProperty("connection", out var c) && c.ValueKind == JsonValueKind.Object)
+        {
+            string? S(string name) => c.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+            _connection = new Connection(S("status") ?? "disabled", S("domain") ?? "", c.GetProperty("domainVerified").GetBoolean(), S("testStatus") ?? "untested", S("lastError"), S("issuer") ?? "", S("redirectUrl") ?? "", S("signInUrl") ?? "", S("domainVerificationDnsName") ?? "", S("domainVerificationHost") ?? "");
+            if (_domain.Length == 0) { _domain = _connection.Domain; _issuer = _connection.Issuer; }
+        }
+        return true;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_issuer) || string.IsNullOrWhiteSpace(_domain) || string.IsNullOrWhiteSpace(_clientId) || string.IsNullOrEmpty(_clientSecret))
+        {
+            Error = "Fill in the issuer, domain, client ID and client secret.";
+            return;
+        }
+        var body = new Dictionary<string, object?> { ["issuer"] = _issuer.Trim(), ["domain"] = _domain.Trim(), ["clientId"] = _clientId.Trim(), ["clientSecret"] = _clientSecret };
+        if (_manual) { body["skipDiscovery"] = true; body["authorizationEndpoint"] = _authz.Trim(); body["tokenEndpoint"] = _token.Trim(); body["jwksEndpoint"] = _jwks.Trim(); }
+        _domainToken = null;
+        await RunAsync(async () =>
+        {
+            var r = await Den.RequestAsync("/api/browser/v1/sso/oidc", "POST", body);
+            if (r.Ok) { _domainToken = r.String("domainVerificationToken"); _clientSecret = ""; }
+            return r;
+        }, "Connection saved. Prove your domain, then test it.", r => Explain(r));
+    }
+
+    private static string? Explain(DenResponse r) =>
+        r.Json is { ValueKind: JsonValueKind.Object } root && root.TryGetProperty("details", out var d) && d.ValueKind == JsonValueKind.Array && d.GetArrayLength() > 0
+            ? string.Join(" ", d.EnumerateArray().Select(x => x.TryGetProperty("message", out var m) ? m.GetString() : null).Where(m => m is not null))
+            : null;
+
+    private async Task ShowTokenAsync() => await RunAsync(async () =>
+    {
+        var r = await Den.RequestAsync("/api/browser/v1/sso/request-domain-verification", "POST", new { });
+        if (r.Ok) _domainToken = r.String("domainVerificationToken");
+        return r;
+    }, "Add the record below to your DNS.", Explain);
+
+    private async Task VerifyDomainAsync() => await RunAsync(() => Den.RequestAsync("/api/browser/v1/sso/verify-domain", "POST", new { }), "Domain verified.", Explain);
+
+    private async Task EnableAsync() => await RunAsync(() => Den.RequestAsync("/api/browser/v1/sso/enable", "POST", new { }), "Single sign-on is on.", r => r.String("message"));
+
+    private async Task DisableAsync() => await RunAsync(() => Den.RequestAsync("/api/browser/v1/sso/disable", "POST", new { }), "Single sign-on is off. People use their other sign-in methods.");
+
+    private async Task DeleteAsync()
+    {
+        if (!_confirmDelete) { _confirmDelete = true; return; }
+        _confirmDelete = false;
+        await RunAsync(() => Den.RequestAsync("/api/browser/v1/sso", "DELETE"), "Connection deleted.");
+    }
+
+    // The test opens the provider's sign-in in a small window and this page watches for the result.
+    private async Task TestAsync()
+    {
+        Error = Notice = null;
+        Busy = true;
+        var made = await Den.RequestAsync("/api/browser/v1/sso/test", "POST", new { });
+        Busy = false;
+        if (made.String("error") == "reauth") { AskToConfirm(TestAsync); return; }
+        if (!made.Ok || made.String("testUrl") is not { Length: > 0 } testUrl || made.String("intentId") is not { Length: > 0 } intent) { Error = made.Message("The test could not be started."); return; }
+        var module = await Js.InvokeAsync<IJSObjectReference>("import", "./js/sso.js");
+        if (!await module.InvokeAsync<bool>("openTestWindow", testUrl))
+        {
+            await Den.RequestAsync($"/api/browser/v1/sso/test/{intent}/cancel", "POST", new { });
+            Error = "OpenWork could not open the test window. Allow pop-ups, then try again.";
+            return;
+        }
+        await LoadAsync();
+        StateHasChanged();
+        for (var i = 0; i < 300 && _connection?.TestStatus == "testing"; i++)
+        {
+            await Task.Delay(1000);
+            await LoadAsync();
+            StateHasChanged();
+        }
+        if (_connection?.TestStatus == "succeeded") Notice = "The test worked. You can turn on single sign-on.";
+    }
+}

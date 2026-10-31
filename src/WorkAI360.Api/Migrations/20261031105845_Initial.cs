@@ -359,6 +359,47 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "ExternalAccount",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    UserId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ProviderId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    AccountId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_ExternalAccount", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "ExternalIdentity",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    UserId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Source = table.Column<string>(type: "longtext", nullable: false),
+                    SsoProviderId = table.Column<string>(type: "longtext", nullable: true),
+                    ScimProviderId = table.Column<string>(type: "longtext", nullable: true),
+                    RemoteId = table.Column<string>(type: "longtext", nullable: true),
+                    ExternalId = table.Column<string>(type: "longtext", nullable: true),
+                    UserName = table.Column<string>(type: "longtext", nullable: true),
+                    Email = table.Column<string>(type: "longtext", nullable: true),
+                    DisplayName = table.Column<string>(type: "longtext", nullable: true),
+                    Active = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    LastSsoLoginAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    LastScimSyncAt = table.Column<DateTime>(type: "datetime(6)", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_ExternalIdentity", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "ExternalMcpConnection",
                 columns: table => new
                 {
@@ -788,6 +829,103 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "ScimGroup",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ProviderId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ExternalId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: true),
+                    DisplayName = table.Column<string>(type: "longtext", nullable: false),
+                    TeamId = table.Column<string>(type: "longtext", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_ScimGroup", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "ScimGroupMember",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    GroupId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "longtext", nullable: false),
+                    ProviderId = table.Column<string>(type: "longtext", nullable: false),
+                    RemoteUserId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    MemberId = table.Column<string>(type: "longtext", nullable: true),
+                    TeamMemberId = table.Column<string>(type: "longtext", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_ScimGroupMember", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "ScimProvider",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ProviderId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    TokenHash = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    CreatedByUserId = table.Column<string>(type: "longtext", nullable: true),
+                    GroupMappingMode = table.Column<string>(type: "longtext", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_ScimProvider", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "ScimSyncEvent",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ProviderId = table.Column<string>(type: "longtext", nullable: false),
+                    UserId = table.Column<string>(type: "longtext", nullable: true),
+                    Action = table.Column<string>(type: "longtext", nullable: false),
+                    Status = table.Column<string>(type: "longtext", nullable: false),
+                    Attempts = table.Column<int>(type: "int", nullable: false),
+                    LastError = table.Column<string>(type: "longtext", nullable: true),
+                    PayloadJson = table.Column<string>(type: "longtext", nullable: true),
+                    NextRetryAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    ResolvedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_ScimSyncEvent", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "ScimUserTombstone",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ProviderId = table.Column<string>(type: "longtext", nullable: false),
+                    DeprovisionedUserId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ExternalId = table.Column<string>(type: "longtext", nullable: true),
+                    Email = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: true),
+                    DeprovisionedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_ScimUserTombstone", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "Sessions",
                 columns: table => new
                 {
@@ -822,6 +960,68 @@ namespace WorkAI360.Api.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_SigningKeys", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "SsoAuthState",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ProviderId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ConfigRevision = table.Column<string>(type: "longtext", nullable: false),
+                    BrowserBindingHash = table.Column<string>(type: "longtext", nullable: false),
+                    NonceHash = table.Column<string>(type: "longtext", nullable: false),
+                    CodeVerifierProtected = table.Column<string>(type: "longtext", nullable: false),
+                    CallbackUrl = table.Column<string>(type: "longtext", nullable: false),
+                    ErrorCallbackUrl = table.Column<string>(type: "longtext", nullable: true),
+                    NewUserCallbackUrl = table.Column<string>(type: "longtext", nullable: true),
+                    TestIntentId = table.Column<string>(type: "longtext", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    ExpiresAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    ConsumedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_SsoAuthState", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "SsoConnection",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ProviderId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Kind = table.Column<string>(type: "longtext", nullable: false),
+                    Issuer = table.Column<string>(type: "longtext", nullable: false),
+                    Domain = table.Column<string>(type: "longtext", nullable: false),
+                    Status = table.Column<string>(type: "longtext", nullable: false),
+                    SignInPath = table.Column<string>(type: "longtext", nullable: false),
+                    ConfigRevision = table.Column<string>(type: "longtext", nullable: false),
+                    TestStatus = table.Column<string>(type: "longtext", nullable: false),
+                    LastTestedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    LastTestedRevision = table.Column<string>(type: "longtext", nullable: true),
+                    LastError = table.Column<string>(type: "longtext", nullable: true),
+                    DomainVerified = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    DomainVerificationToken = table.Column<string>(type: "longtext", nullable: true),
+                    DomainVerificationExpiresAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    OidcConfigJson = table.Column<string>(type: "longtext", nullable: true),
+                    ClientSecretProtected = table.Column<string>(type: "longtext", nullable: true),
+                    SamlConfigJson = table.Column<string>(type: "longtext", nullable: true),
+                    ActiveTestIntentId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: true),
+                    ActiveTestUserId = table.Column<string>(type: "longtext", nullable: true),
+                    ActiveTestProviderId = table.Column<string>(type: "longtext", nullable: true),
+                    ActiveTestConfigRevision = table.Column<string>(type: "longtext", nullable: true),
+                    ActiveTestExpiresAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    ActiveTestStartedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_SsoConnection", x => x.Id);
                 })
                 .Annotation("MySQL:Charset", "utf8mb4");
 
@@ -1146,6 +1346,23 @@ namespace WorkAI360.Api.Migrations
                 columns: new[] { "Email", "Type" });
 
             migrationBuilder.CreateIndex(
+                name: "IX_ExternalAccount_ProviderId_AccountId",
+                table: "ExternalAccount",
+                columns: new[] { "ProviderId", "AccountId" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ExternalAccount_UserId",
+                table: "ExternalAccount",
+                column: "UserId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ExternalIdentity_OrganizationId_UserId",
+                table: "ExternalIdentity",
+                columns: new[] { "OrganizationId", "UserId" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
                 name: "IX_ExternalMcpConnection_OrganizationId",
                 table: "ExternalMcpConnection",
                 column: "OrganizationId");
@@ -1332,6 +1549,61 @@ namespace WorkAI360.Api.Migrations
                 column: "FamilyId");
 
             migrationBuilder.CreateIndex(
+                name: "IX_ScimGroup_OrganizationId",
+                table: "ScimGroup",
+                column: "OrganizationId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ScimGroup_ProviderId_ExternalId",
+                table: "ScimGroup",
+                columns: new[] { "ProviderId", "ExternalId" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ScimGroupMember_GroupId_RemoteUserId",
+                table: "ScimGroupMember",
+                columns: new[] { "GroupId", "RemoteUserId" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ScimGroupMember_RemoteUserId",
+                table: "ScimGroupMember",
+                column: "RemoteUserId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ScimProvider_OrganizationId",
+                table: "ScimProvider",
+                column: "OrganizationId",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ScimProvider_ProviderId",
+                table: "ScimProvider",
+                column: "ProviderId",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ScimProvider_TokenHash",
+                table: "ScimProvider",
+                column: "TokenHash",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ScimSyncEvent_OrganizationId",
+                table: "ScimSyncEvent",
+                column: "OrganizationId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ScimUserTombstone_OrganizationId_DeprovisionedUserId",
+                table: "ScimUserTombstone",
+                columns: new[] { "OrganizationId", "DeprovisionedUserId" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ScimUserTombstone_OrganizationId_Email",
+                table: "ScimUserTombstone",
+                columns: new[] { "OrganizationId", "Email" });
+
+            migrationBuilder.CreateIndex(
                 name: "IX_Sessions_TokenHash",
                 table: "Sessions",
                 column: "TokenHash",
@@ -1341,6 +1613,33 @@ namespace WorkAI360.Api.Migrations
                 name: "IX_Sessions_UserId",
                 table: "Sessions",
                 column: "UserId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_SsoAuthState_ExpiresAt",
+                table: "SsoAuthState",
+                column: "ExpiresAt");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_SsoAuthState_ProviderId",
+                table: "SsoAuthState",
+                column: "ProviderId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_SsoConnection_ActiveTestIntentId",
+                table: "SsoConnection",
+                column: "ActiveTestIntentId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_SsoConnection_OrganizationId",
+                table: "SsoConnection",
+                column: "OrganizationId",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_SsoConnection_ProviderId",
+                table: "SsoConnection",
+                column: "ProviderId",
+                unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "IX_TeamMembers_MemberId",
@@ -1424,6 +1723,12 @@ namespace WorkAI360.Api.Migrations
                 name: "EmailOtps");
 
             migrationBuilder.DropTable(
+                name: "ExternalAccount");
+
+            migrationBuilder.DropTable(
+                name: "ExternalIdentity");
+
+            migrationBuilder.DropTable(
                 name: "ExternalMcpConnection");
 
             migrationBuilder.DropTable(
@@ -1493,10 +1798,31 @@ namespace WorkAI360.Api.Migrations
                 name: "RefreshTokens");
 
             migrationBuilder.DropTable(
+                name: "ScimGroup");
+
+            migrationBuilder.DropTable(
+                name: "ScimGroupMember");
+
+            migrationBuilder.DropTable(
+                name: "ScimProvider");
+
+            migrationBuilder.DropTable(
+                name: "ScimSyncEvent");
+
+            migrationBuilder.DropTable(
+                name: "ScimUserTombstone");
+
+            migrationBuilder.DropTable(
                 name: "Sessions");
 
             migrationBuilder.DropTable(
                 name: "SigningKeys");
+
+            migrationBuilder.DropTable(
+                name: "SsoAuthState");
+
+            migrationBuilder.DropTable(
+                name: "SsoConnection");
 
             migrationBuilder.DropTable(
                 name: "TeamMembers");

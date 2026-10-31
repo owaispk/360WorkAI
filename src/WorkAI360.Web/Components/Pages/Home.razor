@@ -115,6 +115,12 @@
         _busy = false;
         if (!options.Ok) { _error = options.Status == 400 ? "Enter a valid email address." : options.Message("Could not check this email. Try again."); return; }
         _email = email;
+        // A workspace that requires single sign-on for this address: continue at its sign-in page (only paths on this site).
+        if (options.String("nextStep") == "sso" && options.String("signInPath") is { } ssoPath && ssoPath.StartsWith("/sso/") && !ssoPath.Contains("//"))
+        {
+            Nav.NavigateTo($"{ssoPath}?loginHint={Uri.EscapeDataString(email)}", forceLoad: true);
+            return;
+        }
         _step = options.String("nextStep") == "password" ? Step.SignIn : Step.SignUp;
     }
 
