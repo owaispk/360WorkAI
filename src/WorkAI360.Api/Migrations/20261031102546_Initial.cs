@@ -15,6 +15,116 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "ApiKey",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    MemberId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    UserId = table.Column<string>(type: "longtext", nullable: false),
+                    Name = table.Column<string>(type: "longtext", nullable: false),
+                    Prefix = table.Column<string>(type: "longtext", nullable: false),
+                    Start = table.Column<string>(type: "longtext", nullable: false),
+                    KeyHash = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Enabled = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    RateLimitEnabled = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    RateLimitMax = table.Column<int>(type: "int", nullable: false),
+                    RateLimitTimeWindow = table.Column<int>(type: "int", nullable: false),
+                    LastRequestAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    ExpiresAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_ApiKey", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "AuditEvent",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OperationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Action = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    RequestId = table.Column<string>(type: "longtext", nullable: true),
+                    RecordedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    EnvelopeJson = table.Column<string>(type: "longtext", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_AuditEvent", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "AuditEventResource",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OperationId = table.Column<string>(type: "longtext", nullable: false),
+                    EventId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ResourceType = table.Column<string>(type: "longtext", nullable: false),
+                    ResourceId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Relationship = table.Column<string>(type: "longtext", nullable: false),
+                    Label = table.Column<string>(type: "longtext", nullable: true),
+                    Position = table.Column<int>(type: "int", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_AuditEventResource", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "AuditOperation",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Kind = table.Column<string>(type: "longtext", nullable: false),
+                    Scope = table.Column<string>(type: "longtext", nullable: false),
+                    Origin = table.Column<string>(type: "longtext", nullable: false),
+                    OriginTrust = table.Column<string>(type: "longtext", nullable: false),
+                    InitiatingActorJson = table.Column<string>(type: "longtext", nullable: false),
+                    InitiatingActorType = table.Column<string>(type: "longtext", nullable: true),
+                    InitiatingActorId = table.Column<string>(type: "longtext", nullable: true),
+                    FirstRecordedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    Outcome = table.Column<string>(type: "longtext", nullable: false),
+                    EventCount = table.Column<int>(type: "int", nullable: false),
+                    LogicalBytes = table.Column<long>(type: "bigint", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_AuditOperation", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "AuditPolicy",
+                columns: table => new
+                {
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Revision = table.Column<int>(type: "int", nullable: false),
+                    Source = table.Column<string>(type: "longtext", nullable: false),
+                    Enabled = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    CategoriesJson = table.Column<string>(type: "longtext", nullable: false),
+                    Allowance = table.Column<long>(type: "bigint", nullable: false),
+                    ExcessMode = table.Column<string>(type: "longtext", nullable: false),
+                    EffectiveAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    CaptureStartedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    AttachmentWindowSeconds = table.Column<int>(type: "int", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_AuditPolicy", x => x.OrganizationId);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "AuthorizationCodes",
                 columns: table => new
                 {
@@ -32,6 +142,24 @@ namespace WorkAI360.Api.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_AuthorizationCodes", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "BrandAsset",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(192)", maxLength: 192, nullable: false),
+                    Kind = table.Column<string>(type: "varchar(192)", maxLength: 192, nullable: false),
+                    Version = table.Column<string>(type: "varchar(192)", maxLength: 192, nullable: false),
+                    Extension = table.Column<string>(type: "varchar(192)", maxLength: 192, nullable: false),
+                    Bytes = table.Column<byte[]>(type: "longblob", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_BrandAsset", x => x.Id);
                 })
                 .Annotation("MySQL:Charset", "utf8mb4");
 
@@ -330,6 +458,38 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "OrganizationSettings",
+                columns: table => new
+                {
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    AllowedEmailDomainsJson = table.Column<string>(type: "longtext", nullable: true),
+                    MetadataJson = table.Column<string>(type: "longtext", nullable: true),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_OrganizationSettings", x => x.OrganizationId);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "OrganizationWebOrigin",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Origin = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    CreatedByMemberId = table.Column<string>(type: "longtext", nullable: true),
+                    CreatedByName = table.Column<string>(type: "longtext", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_OrganizationWebOrigin", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "PasswordResetTokens",
                 columns: table => new
                 {
@@ -555,6 +715,48 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateIndex(
+                name: "IX_ApiKey_KeyHash",
+                table: "ApiKey",
+                column: "KeyHash",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ApiKey_OrganizationId_MemberId",
+                table: "ApiKey",
+                columns: new[] { "OrganizationId", "MemberId" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_AuditEvent_OrganizationId_Action",
+                table: "AuditEvent",
+                columns: new[] { "OrganizationId", "Action" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_AuditEvent_OrganizationId_OperationId_RecordedAt_Id",
+                table: "AuditEvent",
+                columns: new[] { "OrganizationId", "OperationId", "RecordedAt", "Id" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_AuditEventResource_EventId",
+                table: "AuditEventResource",
+                column: "EventId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_AuditEventResource_OrganizationId_ResourceId",
+                table: "AuditEventResource",
+                columns: new[] { "OrganizationId", "ResourceId" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_AuditOperation_OrganizationId_FirstRecordedAt_Id",
+                table: "AuditOperation",
+                columns: new[] { "OrganizationId", "FirstRecordedAt", "Id" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_BrandAsset_OrganizationId_Kind_Version_Extension",
+                table: "BrandAsset",
+                columns: new[] { "OrganizationId", "Kind", "Version", "Extension" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
                 name: "IX_ConfigObject_OrganizationId_UpdatedAt_Id",
                 table: "ConfigObject",
                 columns: new[] { "OrganizationId", "UpdatedAt", "Id" });
@@ -656,6 +858,12 @@ namespace WorkAI360.Api.Migrations
                 name: "IX_Organizations_Slug",
                 table: "Organizations",
                 column: "Slug",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_OrganizationWebOrigin_OrganizationId_Origin",
+                table: "OrganizationWebOrigin",
+                columns: new[] { "OrganizationId", "Origin" },
                 unique: true);
 
             migrationBuilder.CreateIndex(
@@ -766,7 +974,25 @@ namespace WorkAI360.Api.Migrations
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(
+                name: "ApiKey");
+
+            migrationBuilder.DropTable(
+                name: "AuditEvent");
+
+            migrationBuilder.DropTable(
+                name: "AuditEventResource");
+
+            migrationBuilder.DropTable(
+                name: "AuditOperation");
+
+            migrationBuilder.DropTable(
+                name: "AuditPolicy");
+
+            migrationBuilder.DropTable(
                 name: "AuthorizationCodes");
+
+            migrationBuilder.DropTable(
+                name: "BrandAsset");
 
             migrationBuilder.DropTable(
                 name: "ConfigObject");
@@ -812,6 +1038,12 @@ namespace WorkAI360.Api.Migrations
 
             migrationBuilder.DropTable(
                 name: "Organizations");
+
+            migrationBuilder.DropTable(
+                name: "OrganizationSettings");
+
+            migrationBuilder.DropTable(
+                name: "OrganizationWebOrigin");
 
             migrationBuilder.DropTable(
                 name: "PasswordResetTokens");

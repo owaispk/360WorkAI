@@ -31,11 +31,12 @@ public class ApiFactory : WebApplicationFactory<Program>
             {
                 admin.Open();
                 using var create = admin.CreateCommand();
-                create.CommandText = $"CREATE DATABASE `{_mysqlDatabase}` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci";
+                create.CommandText = $"CREATE DATABASE IF NOT EXISTS `{_mysqlDatabase}` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci";
                 create.ExecuteNonQuery();
             }
             builder.UseSetting("Database:Provider", "mysql");
-            builder.UseSetting("ConnectionStrings:Default", $"{MySqlServer};Database={_mysqlDatabase}");
+            // A small pool each: dozens of factories run at once and the server only allows so many connections in total.
+            builder.UseSetting("ConnectionStrings:Default", $"{MySqlServer};Database={_mysqlDatabase};Maximum Pool Size=6;Connection Lifetime=30");
         }
         builder.UseSetting("environment", "Development");
     }

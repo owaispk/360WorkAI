@@ -84,18 +84,35 @@ public sealed class DenDbContext(DbContextOptions<DenDbContext> options) : DbCon
         b.Entity<PermissionSetTeam>().HasIndex(p => p.TeamId);
         b.Entity<PermissionSetTeam>().HasIndex(p => p.PermissionSetId);
 
-        // MySQL cannot index unbounded text. Every key, foreign key and indexed text column gets a length (ids are 29 characters).
+        // MySQL cannot index unbounded text, and an index may be at most 3072 bytes (4 per character in utf8mb4). Every key, foreign-key and
+        // indexed text column that has no length gets 255; where an index would then be too long (several text columns together), the
+        // columns we defaulted share what is left. Columns with an explicit length are left alone.
         if (!this.IsSqlite())
         {
+            const int IndexBytes = 3072, BytesPerCharacter = 4, DefaultLength = 255;
+            var defaulted = new HashSet<Microsoft.EntityFrameworkCore.Metadata.IMutableProperty>();
             foreach (var entity in b.Model.GetEntityTypes())
             {
                 var indexed = entity.GetKeys().SelectMany(k => k.Properties)
                     .Concat(entity.GetIndexes().SelectMany(i => i.Properties))
                     .Concat(entity.GetForeignKeys().SelectMany(f => f.Properties))
                     .Where(p => p.ClrType == typeof(string) && p.GetMaxLength() is null).Distinct();
-                foreach (var property in indexed) property.SetMaxLength(255);
+                foreach (var property in indexed) { property.SetMaxLength(DefaultLength); defaulted.Add(property); }
                 // A named SQLite collation does not exist elsewhere; MySQL's default is already case-insensitive.
                 foreach (var property in entity.GetProperties().Where(p => p.GetCollation() == "NOCASE")) property.SetCollation(null);
+            }
+            foreach (var entity in b.Model.GetEntityTypes())
+            {
+                var constraints = entity.GetIndexes().Select(i => i.Properties).Concat(entity.GetKeys().Select(k => k.Properties));
+                foreach (var columns in constraints)
+                {
+                    var text = columns.Where(p => p.ClrType == typeof(string)).ToList();
+                    var fixedBytes = text.Where(p => !defaulted.Contains(p)).Sum(p => (p.GetMaxLength() ?? DefaultLength) * BytesPerCharacter);
+                    var flexible = text.Where(defaulted.Contains).ToList();
+                    if (flexible.Count == 0 || fixedBytes + flexible.Sum(p => p.GetMaxLength()!.Value) * BytesPerCharacter <= IndexBytes) continue;
+                    var each = Math.Max(32, (IndexBytes - fixedBytes) / BytesPerCharacter / flexible.Count);
+                    foreach (var property in flexible) property.SetMaxLength(Math.Min(property.GetMaxLength()!.Value, each));
+                }
             }
         }
     }

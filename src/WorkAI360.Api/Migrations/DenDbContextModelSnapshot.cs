@@ -780,6 +780,357 @@ namespace WorkAI360.Api.Migrations
                     b.ToTable("OAuthConsents");
                 });
 
+            modelBuilder.Entity("WorkAI360.Api.Domain.OrgAdmin.ApiKey", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("KeyHash")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<DateTime?>("LastRequestAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("MemberId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("Prefix")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<bool>("RateLimitEnabled")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<int>("RateLimitMax")
+                        .HasColumnType("int");
+
+                    b.Property<int>("RateLimitTimeWindow")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Start")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("KeyHash")
+                        .IsUnique();
+
+                    b.HasIndex("OrganizationId", "MemberId");
+
+                    b.ToTable("ApiKey");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.OrgAdmin.AuditEvent", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("EnvelopeJson")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("OperationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<DateTime>("RecordedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("RequestId")
+                        .HasColumnType("longtext");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "Action");
+
+                    b.HasIndex("OrganizationId", "OperationId", "RecordedAt", "Id");
+
+                    b.ToTable("AuditEvent");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.OrgAdmin.AuditEventResource", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("EventId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("Label")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("OperationId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Relationship")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ResourceId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("ResourceType")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EventId");
+
+                    b.HasIndex("OrganizationId", "ResourceId");
+
+                    b.ToTable("AuditEventResource");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.OrgAdmin.AuditOperation", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<int>("EventCount")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("FirstRecordedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("InitiatingActorId")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("InitiatingActorJson")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("InitiatingActorType")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<long>("LogicalBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("Origin")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("OriginTrust")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "FirstRecordedAt", "Id");
+
+                    b.ToTable("AuditOperation");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.OrgAdmin.AuditPolicy", b =>
+                {
+                    b.Property<string>("OrganizationId")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<long>("Allowance")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("AttachmentWindowSeconds")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("CaptureStartedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("CategoriesJson")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("EffectiveAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<string>("ExcessMode")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.HasKey("OrganizationId");
+
+                    b.ToTable("AuditPolicy");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.OrgAdmin.BrandAsset", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<byte[]>("Bytes")
+                        .IsRequired()
+                        .HasColumnType("longblob");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Extension")
+                        .IsRequired()
+                        .HasMaxLength(192)
+                        .HasColumnType("varchar(192)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(192)
+                        .HasColumnType("varchar(192)");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(192)
+                        .HasColumnType("varchar(192)");
+
+                    b.Property<string>("Version")
+                        .IsRequired()
+                        .HasMaxLength(192)
+                        .HasColumnType("varchar(192)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "Kind", "Version", "Extension")
+                        .IsUnique();
+
+                    b.ToTable("BrandAsset");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.OrgAdmin.OrganizationSettings", b =>
+                {
+                    b.Property<string>("OrganizationId")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("AllowedEmailDomainsJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("MetadataJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("OrganizationId");
+
+                    b.ToTable("OrganizationSettings");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.OrgAdmin.OrganizationWebOrigin", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("CreatedByMemberId")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("CreatedByName")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("Origin")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "Origin")
+                        .IsUnique();
+
+                    b.ToTable("OrganizationWebOrigin");
+                });
+
             modelBuilder.Entity("WorkAI360.Api.Domain.Organization", b =>
                 {
                     b.Property<string>("Id")
