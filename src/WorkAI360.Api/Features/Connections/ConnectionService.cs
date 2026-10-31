@@ -82,11 +82,12 @@ public sealed class ConnectionService(DenDbContext db, SecretBox box, McpClient 
     /// <summary>Replaces who may use a connection, atomically. Org-wide stands alone (it already covers everyone). Unknown people or teams are refused by the caller first.</summary>
     public async Task ReplaceAccessAsync(string orgId, string connectionId, AccessInput access, string byMemberId)
     {
-        await using var tx = await db.Database.BeginTransactionAsync();
+        // Inside a caller's transaction (an edit) the grants join it; otherwise this is one transaction of its own.
+        await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync() : null;
         await db.Set<ConnectionAccessGrant>().Where(g => g.ConnectionId == connectionId).ExecuteDeleteAsync();
         AddGrants(orgId, connectionId, access, byMemberId);
         await db.SaveChangesAsync();
-        await tx.CommitAsync();
+        if (tx is not null) await tx.CommitAsync();
     }
 
     public void AddGrants(string orgId, string connectionId, AccessInput access, string byMemberId)

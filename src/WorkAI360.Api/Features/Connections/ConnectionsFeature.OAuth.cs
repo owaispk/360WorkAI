@@ -68,6 +68,9 @@ public sealed partial class ConnectionsFeature
             else if (!await service.CanUseAsync(c, caller.MemberId, caller.TeamIds) && !caller.Has("connections.manage")) return Forbidden("You have not been granted access to this connection.");
             if (c.AuthType != "oauth") return Bad("This connection does not sign in with OAuth.");
 
+            // Already signed in (for this person, or for the organization): nothing to open. Disconnect first to sign in again.
+            if ((await service.ResolveCredentialAsync(c, caller.MemberId, ctx.RequestAborted)).Ok) return Ok(new { status = "connected", authorizeUrl = (string?)null });
+
             var (url, failure) = await service.StartOAuthAsync(c, caller, ctx.RequestAborted);
             if (url is not null) return Ok(new { status = "needs_auth", authorizeUrl = url });
             switch (failure!.Code)

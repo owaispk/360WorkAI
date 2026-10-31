@@ -53,7 +53,7 @@ public sealed class McpClient(GuardedHttp http)
                 var text = error["message"]?.GetValueKind() == JsonValueKind.String ? error["message"]!.GetValue<string>() : null;
                 throw new McpException(McpFailure.Tool, "The server returned an error.", reply.Status == 0 ? null : (int)reply.Status, code, text);
             }
-            return parsed["result"] as JsonObject ?? throw new McpException(McpFailure.Protocol, "The server's answer had no result.");
+            return parsed["result"]?.DeepClone() as JsonObject ?? throw new McpException(McpFailure.Protocol, "The server's answer had no result.");
         }
 
         public async Task NotifyAsync(string method) => await PostAsync(new JsonObject { ["jsonrpc"] = "2.0", ["method"] = method }, expectBody: false);

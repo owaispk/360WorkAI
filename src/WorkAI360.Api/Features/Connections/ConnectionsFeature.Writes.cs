@@ -256,6 +256,9 @@ public sealed partial class ConnectionsFeature
     {
         var node = JsonNode.Parse(body.GetRawText())!.AsObject();
         node["expectedUpdatedAt"] = Responses.IsoUtc(existing.UpdatedAt);
+        // The same body as a create: the credential mode defaults to shared and access to everyone.
+        node["credentialMode"] ??= "shared";
+        node["access"] ??= new JsonObject { ["orgWide"] = true, ["memberIds"] = new JsonArray(), ["teamIds"] = new JsonArray() };
         return System.Text.Json.JsonSerializer.SerializeToElement(node);
     }
 

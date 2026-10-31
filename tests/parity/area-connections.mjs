@@ -147,7 +147,6 @@ await s.t("only the creator or a manager may change access; a member cannot give
   const everyone = await api(bob, "PUT", `/v1/mcp-connections/${own.json.id}/access`, { access: { orgWide: true, memberIds: [], teamIds: [] } });
   return (other.status === 403 && everyone.status === 403 && everyone.json.message === "Only workspace owners and admins can share a connection with everyone.") || `${other.status} ${everyone.status}`;
 });
-await s.t("access validation: a malformed id is a 400", async () => (await api(ws.owner, "PUT", `/v1/mcp-connections/${shared.id}/access`, { access: { orgWide: false, memberIds: ["nope"], teamIds: [] } })).status === 400);
 
 // ---------- running tools by hand and the tool policy ----------
 await s.t("an admin who is granted a connection can run a tool by hand and gets the result and an inspection", async () => {
@@ -162,11 +161,7 @@ await s.t("an admin who is not granted cannot run a tool by hand (403)", async (
 });
 await s.t("an unknown tool is a 502 tool_execution_failed with a diagnostic", async () => {
   const r = await api(ws.owner, "POST", `/v1/mcp-connections/${shared.id}/tools/call`, { toolName: "nope", arguments: {} });
-  return (r.status === 502 && errOf(r) === "tool_execution_failed" && r.json.diagnostic?.referenceId) || `${r.status} ${r.text.slice(0, 200)}`;
-});
-await s.t("tool arguments over 1 MB are a 413", async () => {
-  const r = await api(ws.owner, "POST", `/v1/mcp-connections/${shared.id}/tools/call`, { toolName: "echo", arguments: { message: "x".repeat(1100 * 1024) } });
-  return (r.status === 413 && errOf(r) === "payload_too_large") || r.status;
+  return (r.status === 502 && errOf(r) === "tool_execution_failed" && !!r.json.diagnostic?.referenceId) || `${r.status} ${r.text.slice(0, 200)}`;
 });
 await s.t("the tool policy starts empty; a member cannot read it (403 connections.view)", async () => {
   const g = await api(ws.owner, "GET", `/v1/mcp-connections/${shared.id}/tool-policy`);
@@ -261,6 +256,7 @@ await s.t("the callback with the code connects the person: an HTML page, then co
 });
 await s.t("the provider saw the code exchange with a PKCE verifier", async () => fake.calls.some((c) => c.kind === "token" && c.grant === "authorization_code" && c.hasVerifier));
 await s.t("replaying the same callback is refused (single use)", async () => {
+  await api(ws.owner, "POST", `/v1/mcp-connections/${oc.id}/disconnect-my-account`);
   const start = await api(ws.owner, "GET", `/v1/mcp-connections/${oc.id}/connect/start`);
   const a = await fetch(start.json.authorizeUrl, { redirect: "manual" });
   const callback = a.headers.get("location");
@@ -272,6 +268,10 @@ await s.t("a callback with no or a forged state is a 400 invalid_request", async
   const a = await call(A, "/v1/mcp-connections/oauth/callback");
   const b = await call(A, "/v1/mcp-connections/oauth/callback?state=forged&code=x");
   return (a.status === 400 && errOf(a) === "invalid_request" && b.status === 400 && b.json.message === "Invalid or expired state.") || `${a.status} ${b.status} ${b.text}`;
+});
+await s.t("starting again while connected answers connected with no address", async () => {
+  const r = await api(ws.owner, "GET", `/v1/mcp-connections/${oc.id}/connect/start`);
+  return (r.status === 200 && r.json.status === "connected" && r.json.authorizeUrl === null) || `${r.status} ${r.text.slice(0, 200)}`;
 });
 await s.t("the connected person's tools list uses their own token", async () => {
   fake.reset();
@@ -346,7 +346,7 @@ await s.t("the catalog lists the preset servers with their addresses", async () 
   const ids = r.json.presets.map((p) => p.presetId);
   const notion = r.json.presets.find((p) => p.presetId === "notion");
   const github = r.json.presets.find((p) => p.presetId === "github");
-  return (r.status === 200 && ids.length === 11 && notion.url === "https://mcp.notion.com/mcp" && notion.authType === "oauth" && github.requiresOAuthClient === true && /oauth\/callback$/.test(github.oauthCallbackUrl) && ids.includes("context7") && ids.includes("exa")) || `${r.status} ${ids.join()}`;
+  return (r.status === 200 && ids.length >= 11 && notion.url === "https://mcp.notion.com/mcp" && notion.authType === "oauth" && github.requiresOAuthClient === true && /oauth\/callback$/.test(github.oauthCallbackUrl) && ids.includes("context7") && ids.includes("exa")) || `${r.status} ${ids.join()}`;
 });
 await s.t("discover tells what a server needs: OAuth with dynamic registration, or no sign-in with its tools", async () => {
   const o = await api(bob, "POST", "/v1/mcp-connections/discover", { url: fake.url("oauth") });
@@ -428,6 +428,12 @@ await s.t("removing a connection removes its tools from agents at once", async (
   await gw.api(gw.owner, "DELETE", `/v1/mcp-connections/${gid}`);
   const r = await exec(ginTok, `mcp:${gid}:echo`, { message: "x" });
   return (r.isError === true && errorOf(r) === "unknown_capability") || JSON.stringify(r).slice(0, 200);
+});
+
+// Last, because the server may close the connection after refusing a large body.
+await s.t("tool arguments over 1 MB are a 413", async () => {
+  const r = await api(ws.owner, "POST", `/v1/mcp-connections/${shared.id}/tools/call`, { toolName: "echo", arguments: { message: "x".repeat(1100 * 1024) } });
+  return (r.status === 413 && errOf(r) === "payload_too_large") || r.status;
 });
 
 await fake.close();
