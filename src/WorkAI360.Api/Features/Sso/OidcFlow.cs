@@ -138,7 +138,7 @@ public sealed class OidcFlow(
         var identity = new SsoIdentity(Claim("sub")!, email, Claim("name"));
 
         var testing = state.TestIntentId is not null;
-        var resolution = await provisioning.ResolveUserAsync(c, identity, mayCreate: !testing, ct);
+        var resolution = await provisioning.ResolveUserAsync(c, identity, readOnly: testing, ct);
         if (resolution.User is null) return await Fail(resolution.ErrorCode!, resolution.ErrorMessage);
         var user = resolution.User;
 

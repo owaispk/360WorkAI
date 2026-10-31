@@ -127,3 +127,13 @@ public sealed class ExternalIdentityConfiguration : IEntityTypeConfiguration<Ext
         b.HasIndex(i => new { i.OrganizationId, i.UserId }).IsUnique();
     }
 }
+
+public sealed class SsoAuthStateConfiguration : IEntityTypeConfiguration<SsoAuthState>
+{
+    public void Configure(EntityTypeBuilder<SsoAuthState> b)
+    {
+        b.HasKey(s => s.Id);
+        b.HasIndex(s => s.ProviderId);
+        b.HasIndex(s => s.ExpiresAt);
+    }
+}

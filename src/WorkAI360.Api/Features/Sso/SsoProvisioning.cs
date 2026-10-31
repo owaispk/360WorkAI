@@ -26,7 +26,8 @@ public sealed class SsoProvisioning(DenDbContext db)
     public const string DeprovisionedMessage = "This user was deprovisioned by SCIM. Reactivate them in the identity provider before signing in.";
     public const string UnusablePassword = "sso-only";
 
-    public async Task<Resolution> ResolveUserAsync(SsoConnection c, SsoIdentity identity, bool mayCreate, CancellationToken ct)
+    /// <param name="readOnly">An administrator's connection test: recognise the person (by link or email) but change nothing, create nobody.</param>
+    public async Task<Resolution> ResolveUserAsync(SsoConnection c, SsoIdentity identity, bool readOnly, CancellationToken ct)
     {
         var email = identity.Email.Trim().ToLowerInvariant();
         var domain = SsoService.EmailDomain(email);
@@ -47,6 +48,7 @@ public sealed class SsoProvisioning(DenDbContext db)
 
         var now = DateTime.UtcNow;
         var user = await db.Users.FirstOrDefaultAsync(u => u.Email == email, ct);
+        if (readOnly) return user is null ? Resolution.Refused("access_denied", "This sign-in does not belong to an existing account.") : Resolution.Found(user);
         if (user is not null)
         {
             if (!user.EmailVerified)
@@ -61,7 +63,6 @@ public sealed class SsoProvisioning(DenDbContext db)
         }
         else
         {
-            if (!mayCreate) return Resolution.Refused("access_denied", "This sign-in does not belong to an existing account.");
             user = new User
             {
                 Id = Ids.New("usr"), Email = email, Name = string.IsNullOrWhiteSpace(identity.Name) ? email.Split('@')[0] : identity.Name.Trim(),
