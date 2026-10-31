@@ -28,6 +28,12 @@ public sealed class AuthOptions
     public bool RequireEmailVerification { get; set; }
 
     /// <summary>How recent a sign-in must be for sensitive workspace actions (changing roles, removing people, inviting). Default 120.</summary>
+    /// <summary>A new OAuth signing key is created when the newest one is this many days old (default 90).</summary>
+    public int SigningKeyRotationDays { get; set; } = 90;
+
+    /// <summary>A replaced key keeps being published for this many hours after its successor appeared, so tokens it signed still verify (default 48; access tokens last 45 minutes).</summary>
+    public int SigningKeyGraceHours { get; set; } = 48;
+
     public int PrivilegedSessionMinutes { get; set; } = 120;
 
     /// <summary>Extra origins a reset link may return to, besides the web origin.</summary>

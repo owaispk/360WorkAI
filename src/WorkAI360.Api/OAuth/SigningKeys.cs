@@ -17,24 +17,37 @@ public sealed record LoadedKey(string Kid, ECDsa Key, string X, string Y);
 /// </summary>
 public sealed class SigningKeyStore(IServiceScopeFactory scopes, IOptions<AuthOptions> options)
 {
+    private static readonly TimeSpan ReloadEvery = TimeSpan.FromMinutes(5);
     private readonly SemaphoreSlim _gate = new(1, 1);
     private List<LoadedKey>? _keys;
+    private DateTime _loadedAt;
+
+    /// <summary>Forces the next call to read the keys again (used after a rotation elsewhere, and in tests).</summary>
+    public void Invalidate() => _keys = null;
 
     public async Task<IReadOnlyList<LoadedKey>> KeysAsync()
     {
-        if (_keys is not null) return _keys;
+        if (_keys is not null && DateTime.UtcNow - _loadedAt < ReloadEvery) return _keys;
         await _gate.WaitAsync();
         try
         {
-            if (_keys is not null) return _keys;
+            if (_keys is not null && DateTime.UtcNow - _loadedAt < ReloadEvery) return _keys;
             using var scope = scopes.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DenDbContext>();
             var rows = await db.SigningKeys.Where(k => k.RetiredAt == null).OrderBy(k => k.CreatedAt).ToListAsync();
-            if (rows.Count == 0)
+            var now = DateTime.UtcNow;
+            // Rotation: a new key appears when the newest is old enough; a key stops being published once its successor has been around for
+            // the grace period (long enough for every token it signed to expire). Keys are never deleted, so the history stays.
+            if (rows.Count == 0 || now - rows[^1].CreatedAt >= TimeSpan.FromDays(options.Value.SigningKeyRotationDays)) rows.Add(await CreateAsync(db));
+            var grace = TimeSpan.FromHours(options.Value.SigningKeyGraceHours);
+            foreach (var old in rows.Take(rows.Count - 1).Where(k => k.RetiredAt is null && now - rows[rows.IndexOf(k) + 1].CreatedAt >= grace).ToList())
             {
-                rows.Add(await CreateAsync(db));
+                old.RetiredAt = now;
+                rows.Remove(old);
             }
+            await db.SaveChangesAsync();
             _keys = rows.Select(Load).ToList();
+            _loadedAt = now;
             return _keys;
         }
         finally { _gate.Release(); }
