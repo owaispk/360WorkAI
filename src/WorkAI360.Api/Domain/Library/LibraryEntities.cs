@@ -1,10 +1,11 @@
+using WorkAI360.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace WorkAI360.Api.Domain.Library;
 
 /// <summary>A bundle of skills and other pieces an agent can use. Shared with people through grants.</summary>
-public sealed class Plugin
+public sealed class Plugin : IDerivedKeys
 {
     public required string Id { get; set; }
     public required string OrganizationId { get; set; }
@@ -19,6 +20,15 @@ public sealed class Plugin
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
     public DateTime? DeletedAt { get; set; }
+
+    /// <summary>
+    /// Set while the plugin is active, to a hash of its workspace, creator and lowercased name; empty otherwise. A plain unique index on it is
+    /// "one active plugin per creator and name, ignoring case" on every database (filtered indexes are not available on all of them).
+    /// </summary>
+    public string? ActiveKey { get; set; }
+
+    public void RefreshKeys() =>
+        ActiveKey = Status == "active" ? Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{OrganizationId}|{CreatedByMemberId}|{Name.ToLowerInvariant()}"))) : null;
 }
 
 /// <summary>One skill, command, agent or other thing a plugin holds. Its text lives in versions.</summary>
@@ -142,8 +152,7 @@ public sealed class PluginConfiguration : IEntityTypeConfiguration<Plugin>
     {
         b.HasIndex(p => new { p.OrganizationId, p.UpdatedAt, p.Id });
         // One active plugin per creator and name, ignoring case, even when two requests race (the reference compares in a case-insensitive collation).
-        b.Property(p => p.Name).UseCollation("NOCASE");
-        b.HasIndex(p => new { p.OrganizationId, p.CreatedByMemberId, p.Name }).IsUnique().HasFilter("\"Status\" = 'active'");
+        b.HasIndex(p => p.ActiveKey).IsUnique();
     }
 }
 
@@ -162,7 +171,7 @@ public sealed class MarketplaceConfiguration : IEntityTypeConfiguration<Marketpl
     public void Configure(EntityTypeBuilder<Marketplace> b)
     {
         b.HasIndex(m => m.OrganizationId);
-        b.HasIndex(m => new { m.OrganizationId, m.ExternalKey }).IsUnique().HasFilter("\"ExternalKey\" IS NOT NULL");
+        b.HasIndex(m => new { m.OrganizationId, m.ExternalKey }).IsUnique();   // marketplaces without a key have none, and empty values are distinct
     }
 }
 

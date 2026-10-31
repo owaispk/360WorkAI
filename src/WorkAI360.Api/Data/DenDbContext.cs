@@ -3,8 +3,31 @@ using WorkAI360.Api.Domain;
 
 namespace WorkAI360.Api.Data;
 
+/// <summary>An entity that keeps a derived column up to date (for example a unique "active" key), refreshed just before every save.</summary>
+public interface IDerivedKeys
+{
+    void RefreshKeys();
+}
+
 public sealed class DenDbContext(DbContextOptions<DenDbContext> options) : DbContext(options)
 {
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        RefreshDerivedKeys();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        RefreshDerivedKeys();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    private void RefreshDerivedKeys()
+    {
+        foreach (var entry in ChangeTracker.Entries<IDerivedKeys>().Where(e => e.State is EntityState.Added or EntityState.Modified)) entry.Entity.RefreshKeys();
+    }
+
     public DbSet<User> Users => Set<User>();
     public DbSet<Session> Sessions => Set<Session>();
     public DbSet<Organization> Organizations => Set<Organization>();
@@ -71,6 +94,8 @@ public sealed class DenDbContext(DbContextOptions<DenDbContext> options) : DbCon
                     .Concat(entity.GetForeignKeys().SelectMany(f => f.Properties))
                     .Where(p => p.ClrType == typeof(string) && p.GetMaxLength() is null).Distinct();
                 foreach (var property in indexed) property.SetMaxLength(255);
+                // A named SQLite collation does not exist elsewhere; MySQL's default is already case-insensitive.
+                foreach (var property in entity.GetProperties().Where(p => p.GetCollation() == "NOCASE")) property.SetCollation(null);
             }
         }
     }
