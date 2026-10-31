@@ -388,6 +388,10 @@ public sealed class LibraryTests : IClassFixture<LibraryFactory>
             var r = await other.CallAsync(other.Owner, method, url, body);
             Assert.True(r.Status == HttpStatusCode.NotFound, $"{method} {url}: {r.Status} {r.Body}");
         }
+        // The bulk read says "not found", never "forbidden" and never contents, for another workspace's plugin.
+        var bulk = await other.CallAsync(other.Owner, HttpMethod.Get, $"/v1/resolved-plugins?pluginIds={plugin}");
+        Assert.Equal(404, bulk.Body.GetProperty("failures").GetProperty(plugin).GetProperty("status").GetInt32());
+        Assert.Empty(bulk.Body.GetProperty("plugins").EnumerateObject());
         Assert.Empty(await other.IdsAsync(other.Owner, "/v1/plugins"));
         Assert.Empty(await other.IdsAsync(other.Owner, "/v1/config-objects"));
         Assert.Empty(await other.IdsAsync(other.Owner, "/v1/marketplaces"));

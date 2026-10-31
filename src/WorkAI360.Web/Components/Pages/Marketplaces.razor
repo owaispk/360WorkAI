@@ -1,0 +1,85 @@
+@page "/dashboard/marketplaces"
+@inherits LibraryPage
+@using System.Text.Json
+
+<PageTitle>Marketplaces · OpenWork Cloud</PageTitle>
+
+<LibraryStyles />
+
+<section class="den-card den-wide lib-page" data-testid="marketplaces-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>Marketplaces</h1>
+        <p class="den-muted">@OrgName · shelves of plugins. Share a marketplace and people see every plugin on it.</p>
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @if (_markets.Count == 0) { <p class="den-muted" data-testid="no-marketplaces">No marketplace has been shared with you yet.</p> }
+        <ul class="den-members" data-testid="marketplace-list">
+            @foreach (var m in _markets)
+            {
+                <li data-testid="marketplace-row" data-name="@m.Name">
+                    <div class="den-member-main">
+                        <a class="lib-row-title" href="/dashboard/marketplaces/@m.Id">@m.Name</a>
+                        @if (!string.IsNullOrWhiteSpace(m.Description)) { <span class="den-muted">@m.Description</span> }
+                        <div class="lib-tags"><span class="lib-tag">@m.Count @(m.Count == 1 ? "plugin" : "plugins")</span>@if (m.Status != "active") { <span class="lib-tag">@m.Status</span> }</div>
+                    </div>
+                    <div class="den-member-actions"><a class="den-link" href="/dashboard/marketplaces/@m.Id">Open</a></div>
+                </li>
+            }
+        </ul>
+
+        @if (Can("marketplaces.manage"))
+        {
+            <h2>New marketplace</h2>
+            <form @onsubmit="CreateAsync" novalidate data-testid="marketplace-form">
+                <label for="market-name">Name</label>
+                <input id="market-name" autocomplete="off" @bind="_name" @bind:event="oninput" />
+                <label for="market-description">Description (optional)</label>
+                <input id="market-description" autocomplete="off" @bind="_description" @bind:event="oninput" />
+                <button type="submit" class="den-button" disabled="@Busy" data-testid="create-marketplace">Create marketplace</button>
+            </form>
+        }
+        <div class="lib-actions">
+            <a class="den-link" href="/dashboard/plugins">Plugins</a>
+            <a class="den-link" href="/dashboard">Back to dashboard</a>
+        </div>
+    }
+</section>
+
+@code {
+    private sealed record Row(string Id, string Name, string? Description, string Status, int Count);
+
+    private List<Row> _markets = [];
+    private string _name = "", _description = "";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await LoadOrgAsync()) return;
+        await ReloadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync()
+    {
+        var r = await Api("/marketplaces?limit=100");
+        _markets = [];
+        if (r.Json is not { ValueKind: JsonValueKind.Object } body) return;
+        foreach (var m in body.GetProperty("items").EnumerateArray())
+            _markets.Add(new Row(Str(m, "id") ?? "", Str(m, "name") ?? "", Str(m, "description"), Str(m, "status") ?? "", Int(m, "pluginCount")));
+    }
+
+    private async Task CreateAsync()
+    {
+        var name = _name.Trim();
+        if (name.Length == 0) { Error = "Give the marketplace a name."; return; }
+        var description = _description.Trim();
+        var r = await Api("/marketplaces", "POST", description.Length > 0 ? new { name, description } : new { name });
+        if (!r.Ok) { Error = r.Message("That did not work. Try again."); return; }
+        Nav.NavigateTo($"/dashboard/marketplaces/{r.String("item", "id")}");
+    }
+}

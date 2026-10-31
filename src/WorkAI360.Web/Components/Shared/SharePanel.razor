@@ -1,0 +1,133 @@
+@using System.Text.Json
+@inject DenClient Den
+
+<div class="share-panel" data-testid="share-panel">
+    <h2>Who can use it</h2>
+    @if (_denied)
+    {
+        <p class="den-muted" data-testid="share-denied">Only a manager can change who this is shared with.</p>
+    }
+    else if (_loaded)
+    {
+        @if (_error is not null) { <p class="den-error" role="alert" data-testid="share-error">@_error</p> }
+        @if (_notice is not null) { <p class="den-notice" role="status" data-testid="share-notice">@_notice</p> }
+        @if (_grants.Count == 0)
+        {
+            <p class="den-muted" data-testid="share-empty">Nobody has access yet.</p>
+        }
+        <ul class="den-members" data-testid="grant-list">
+            @foreach (var grant in _grants)
+            {
+                <li data-testid="grant-row" data-who="@grant.Who" data-role="@grant.Role">
+                    <div class="den-member-main">
+                        <strong>@grant.Who</strong>
+                        <span class="den-muted">@grant.Kind</span>
+                    </div>
+                    <div class="den-member-actions">
+                        <select aria-label="Role for @grant.Who" value="@grant.Role" @onchange="e => ChangeRoleAsync(grant, e.Value?.ToString() ?? grant.Role)">
+                            @foreach (var role in Roles) { <option value="@role" selected="@(role == grant.Role)">@Label(role)</option> }
+                        </select>
+                        <button type="button" class="den-link" @onclick="() => RevokeAsync(grant)" data-testid="revoke-button">Stop sharing</button>
+                    </div>
+                </li>
+            }
+        </ul>
+
+        <form class="share-form" @onsubmit="ShareAsync" data-testid="share-form">
+            <label for="share-who">Share with</label>
+            <select id="share-who" @onchange="e => _who = e.Value?.ToString() ?? string.Empty" data-testid="share-who">
+                <option value="">Choose…</option>
+                @if (CanShareWithEveryone) { <option value="org" selected="@(_who == "org")">Everyone in the workspace</option> }
+                @foreach (var team in Teams) { <option value="t:@team.Id" selected="@(_who == "t:" + team.Id)">Team: @team.Name</option> }
+                @foreach (var person in People) { <option value="m:@person.Id" selected="@(_who == "m:" + person.Id)">@person.Name (@person.Email)</option> }
+            </select>
+            <label for="share-role">Can</label>
+            <select id="share-role" @onchange="e => _role = e.Value?.ToString() ?? _role" data-testid="share-role">
+                @foreach (var role in Roles) { <option value="@role" selected="@(role == _role)">@Label(role)</option> }
+            </select>
+            <button type="submit" class="den-button" disabled="@_busy" data-testid="share-button">Share</button>
+        </form>
+    }
+</div>
+
+@code {
+    private sealed record Grant(string Id, string Who, string Kind, string Role, string? MemberId, string? TeamId, bool OrgWide);
+
+    private static readonly string[] Roles = ["viewer", "editor", "manager"];
+
+    [Parameter, EditorRequired] public string Kind { get; set; } = "";
+    [Parameter, EditorRequired] public string ResourceId { get; set; } = "";
+    [Parameter] public List<LibraryPerson> People { get; set; } = [];
+    [Parameter] public List<LibraryTeam> Teams { get; set; } = [];
+    [Parameter] public bool CanShareWithEveryone { get; set; }
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private List<Grant> _grants = [];
+    private bool _loaded, _denied, _busy;
+    private string _who = "", _role = "viewer";
+    private string? _error, _notice;
+
+    private static string Label(string role) => role switch { "viewer" => "View", "editor" => "Edit", _ => "Manage" };
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loaded && !_denied) return;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        var r = await Den.RequestAsync($"/api/browser/v1/{Kind}/{ResourceId}/access");
+        _loaded = true;
+        if (r.Status == 403) { _denied = true; return; }
+        _denied = false;
+        _grants = [];
+        if (r.Json is not { ValueKind: JsonValueKind.Object } body) return;
+        foreach (var item in body.GetProperty("items").EnumerateArray())
+        {
+            if (item.GetProperty("removedAt").ValueKind != JsonValueKind.Null) continue;
+            var member = item.GetProperty("orgMembershipId").GetString();
+            var team = item.GetProperty("teamId").GetString();
+            var orgWide = item.GetProperty("orgWide").GetBoolean();
+            var (who, kind) = orgWide ? ("Everyone in the workspace", "Everyone") : team is not null ? (Teams.FirstOrDefault(t => t.Id == team)?.Name ?? "A team", "Team") : (People.FirstOrDefault(p => p.Id == member)?.Name ?? "A person", "Person");
+            _grants.Add(new Grant(item.GetProperty("id").GetString() ?? "", who, kind, item.GetProperty("role").GetString() ?? "viewer", member, team, orgWide));
+        }
+    }
+
+    private async Task<bool> PostAsync(string? member, string? team, bool orgWide, string role)
+    {
+        object body = orgWide ? new { orgWide = true, role } : team is not null ? new { teamId = team, role } : new { orgMembershipId = member, role };
+        var r = await Den.RequestAsync($"/api/browser/v1/{Kind}/{ResourceId}/access", "POST", body);
+        if (!r.Ok) { _error = r.Message("That did not work. Try again."); return false; }
+        await LoadAsync();
+        await OnChanged.InvokeAsync();
+        return true;
+    }
+
+    private async Task ShareAsync()
+    {
+        _error = _notice = null;
+        if (_who.Length == 0) { _error = "Choose who to share with."; return; }
+        _busy = true;
+        var ok = _who == "org" ? await PostAsync(null, null, true, _role)
+            : _who.StartsWith("t:") ? await PostAsync(null, _who[2..], false, _role) : await PostAsync(_who[2..], null, false, _role);
+        _busy = false;
+        if (ok) { _notice = "Shared."; _who = ""; }
+    }
+
+    private async Task ChangeRoleAsync(Grant grant, string role)
+    {
+        _error = _notice = null;
+        if (await PostAsync(grant.MemberId, grant.TeamId, grant.OrgWide, role)) _notice = $"{grant.Who} can now {Label(role).ToLowerInvariant()}.";
+    }
+
+    private async Task RevokeAsync(Grant grant)
+    {
+        _error = _notice = null;
+        var r = await Den.RequestAsync($"/api/browser/v1/{Kind}/{ResourceId}/access/{grant.Id}", "DELETE");
+        if (!r.Ok) { _error = r.Message("That did not work. Try again."); return; }
+        _notice = $"{grant.Who} no longer has access.";
+        await LoadAsync();
+        await OnChanged.InvokeAsync();
+    }
+}
