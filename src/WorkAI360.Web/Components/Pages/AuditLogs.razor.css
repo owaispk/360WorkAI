@@ -6,7 +6,8 @@
 .audit-list li { flex-direction: column; align-items: stretch; }
 .audit-detail { margin-top: 8px; }
 .audit-event { display: flex; flex-direction: column; gap: 4px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
-.audit-change { font-size: 13px; }
+.audit-change { font-size: 13px; overflow-wrap: anywhere; }
+.audit-detail { min-width: 0; }
 .audit-before { color: var(--err); } .audit-after { color: #166534; }
 .audit-tech { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 12px; word-break: break-all; }
 .audit-tech dt { color: var(--muted); } .audit-tech dd { margin: 0; }

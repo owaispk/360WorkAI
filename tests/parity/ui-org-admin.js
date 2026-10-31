@@ -30,6 +30,7 @@ const shot = async (page, name) => { if (shots) await page.screenshot({ path: `$
   const page = await ctx.newPage();
   page.on('pageerror', (e) => errors.push(String(e).slice(0, 160)));
   await signIn(page, ws.owner.email);
+  await page.getByTestId('api-keys-link').waitFor({ timeout: 30000 });
   const dashboard = await text(page);
   check('the dashboard offers the four admin pages to the owner', (await Promise.all(['org-settings-link', 'brand-link', 'api-keys-link', 'audit-link'].map((id) => page.getByTestId(id).count()))).every((n) => n === 1), dashboard.slice(0, 200));
 
@@ -53,7 +54,8 @@ const shot = async (page, name) => { if (shots) await page.screenshot({ path: `$
   check('the list shows the key by its first characters, never the secret', row.includes(secret.slice(0, 6)) && !row.includes(secret) && /never used/.test(row), row);
   await shot(page, 'org-admin-api-keys');
   await page.getByTestId('dismiss-key').click();
-  check('dismissing hides the secret for good', (await page.getByTestId('new-key').count()) === 0 && !(await text(page)).includes(secret));
+  await until(async () => (await page.getByTestId('new-key').count()) === 0);
+  check('dismissing hides the secret for good', (await page.getByTestId('new-key').count()) === 0 && !(await page.content()).includes(secret));
   await page.reload({ waitUntil: 'networkidle' });
   await page.getByTestId('key-list').waitFor({ timeout: 15000 });
   check('after a reload the secret is nowhere on the page', !(await page.content()).includes(secret));
