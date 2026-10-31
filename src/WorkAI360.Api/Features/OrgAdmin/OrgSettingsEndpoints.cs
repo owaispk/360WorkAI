@@ -116,7 +116,9 @@ public static class OrgSettingsEndpoints
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
             if (access.RequireOwner(context!) is { } denied) return denied;
-            var organizationId = context!.Organization.Id;
+            // Deleting a workspace needs a person: unlike the reference, an API key (which could be leaked or scripted) is refused.
+            if (context!.ApiKeyId is not null) return Results.Json(new { error = "forbidden", message = "Use a signed-in user session for this operation." }, statusCode: 403);
+            var organizationId = context.Organization.Id;
             var name = context.Organization.Name;
             if (!await PurgeAsync(db, organizationId)) return Results.Json(new { error = "organization_not_found" }, statusCode: 404);
             return Results.Json(new { ok = true, organization = new { id = organizationId, name } });

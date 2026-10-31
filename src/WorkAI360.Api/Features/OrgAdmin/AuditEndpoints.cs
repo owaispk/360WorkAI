@@ -167,7 +167,8 @@ public static partial class AuditEndpoints
                 if (expected == 0 && before is not null && !initialized) return Conflict("audit_policy_changed");
                 if (initialized && expected != 0) return Conflict("audit_policy_changed");
                 var expectedRevision = initialized && expected == 0 ? 1 : expected;
-                if (before is null) return Conflict("audit_policy_not_configured");
+                // No policy yet (audit not available to this workspace): "off, from nothing" changes nothing; any other revision is stale.
+                if (before is null) { if (expected == 0 && !captureOn) { await tx.CommitAsync(); return Results.Json(await UsageAsync(db, policies, context.Organization.Id)); } return Conflict("audit_policy_changed"); }
                 if (before.Revision != expectedRevision) return Conflict("audit_policy_changed");
                 after = before;
                 if (before.Enabled != captureOn)
