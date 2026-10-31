@@ -363,7 +363,7 @@ await t("web origins: approving normalizes (case, default port, trailing slash),
   const list = await api(owner, "GET", "/v1/org/web-origins");
   return r.status === 201 && keys(r.json) === "createdAt,createdByName,id,origin" && r.json.origin === "https://work.example.com" && r.json.createdByName === "Owner Person" && originId.startsWith("owo_")
     && dup.status === 409 && dup.json.error === "web_origin_already_approved" && port.status === 201
-    && list.status === 200 && keys(list.json) === "limit,origins" && list.json.limit === 20 && list.json.origins.length === 2 || JSON.stringify([r.text, dup.text, list.text]);
+    && list.status === 200 && keys(list.json) === "limit,origins" && list.json.limit === 20 && ["https://work.example.com", "https://work.example.com:8443"].every((o) => list.json.origins.some((x) => x.origin === o)) || JSON.stringify([r.text, dup.text, list.text]);
 });
 await t("web origins: viewing is for admins, managing is the owner's", async () => {
   const a = await api(plain, "GET", "/v1/org/web-origins");
@@ -381,7 +381,7 @@ await t("web origins: removing answers 204, then 404 web_origin_not_found; a mal
   const again = await api(owner, "DELETE", `/v1/org/web-origins/${originId}`);
   const still = await other.api(other.owner, "GET", "/v1/org/web-origins");
   return foreign.status === 404 && foreign.json.error === "web_origin_not_found" && bad.status === 400 && bad.json.error === "invalid_request" && removed.status === 204
-    && again.status === 404 && still.json.origins.length === 1 || JSON.stringify([foreign.status, bad.status, removed.status, again.status]);
+    && again.status === 404 && still.json.origins.length === 1 && still.json.origins[0].id === theirs.json.id || JSON.stringify([foreign.status, bad.status, removed.status, again.status]);
 });
 await t("web origins: at most 20 per workspace", async () => {
   const current = (await api(owner, "GET", "/v1/org/web-origins")).json.origins.length;
