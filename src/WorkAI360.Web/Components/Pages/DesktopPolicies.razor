@@ -4,7 +4,14 @@
 
 <PageTitle>Desktop app policies · OpenWork Cloud</PageTitle>
 
-<section class="den-card den-wide" data-testid="desktop-policies-page">
+<style>
+    .den-policy .den-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+    .den-policy .den-member-main { flex: 1 1 320px; }
+    .den-policy .den-member-actions select { min-width: 110px; }
+    .den-policy h3 { margin: 20px 0 0; font-size: 15px; }
+</style>
+
+<section class="den-card den-wide den-policy" data-testid="desktop-policies-page">
     @if (_loading)
     {
         <p class="den-muted">Loading…</p>
@@ -56,8 +63,9 @@
             <button type="button" class="den-link" data-testid="new-policy" @onclick="StartNew">New policy</button>
         }
 
-        @if (_editing is { } e)
+        @if (_editing is not null)
         {
+            var e = _editing;
             <h2 data-testid="editor-title">@(e.Id is null ? "New policy" : e.Name)</h2>
             <fieldset disabled="@(!Can("desktop_policies.manage"))" class="den-fieldset">
                 @if (!e.IsDefault)
@@ -88,7 +96,7 @@
                 {
                     <h3>Who it applies to</h3>
                     <p class="den-muted">Leave everything empty to keep the policy ready without applying it to anyone.</p>
-                    @foreach (var r in new[] { "owner", "admin", "member" })
+                    @foreach (var r in RoleNames)
                     {
                         <label class="den-check"><input type="checkbox" data-role="@r" checked="@e.Roles.Contains(r)" @onchange="ev => Toggle(e.Roles, r, ev.Value is true)" /> <span>Everyone with the @r role@(r == "member" ? " (all members)" : r == "admin" ? " (admins and owners)" : "")</span></label>
                     }
@@ -128,7 +136,6 @@
     private sealed record Def(string Id, string Name, string Description);
     private sealed record Team(string Id, string Name);
     private sealed record Person(string Id, string Name, string Email);
-    private sealed record Assignment(string? MemberId, string? TeamId, string? Role);
     private sealed class Policy
     {
         public string? Id { get; set; }
@@ -137,9 +144,12 @@
         public bool IsEnabled { get; set; } = true;
         public int Priority { get; set; }
         public Dictionary<string, string> Values { get; set; } = [];
-        public List<string> Roles { get; set; } = [], TeamIds { get; set; } = [], MemberIds { get; set; } = [];
+        public List<string> Roles { get; set; } = [];
+        public List<string> TeamIds { get; set; } = [];
+        public List<string> MemberIds { get; set; } = [];
     }
 
+    private static readonly string[] RoleNames = ["owner", "admin", "member"];
     private bool _loading = true;
     private HashSet<string> _permissions = [];
     private List<Def> _definitions = [];
