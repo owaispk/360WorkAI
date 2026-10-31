@@ -14,7 +14,7 @@ namespace WorkAI360.Api.Features.Scim;
 public static partial class ScimProtocolEndpoints
 {
     public static readonly AuthLimitPolicy BadTokenLimit = new("scim-token", TimeSpan.FromMinutes(5), 60, 60);
-    private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web) { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull };
+    private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web) { PropertyNamingPolicy = null, DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull };
 
     private static IResult Scim(object body, int status = 200, string? location = null) =>
         Results.Content(JsonSerializer.Serialize(body, Web), "application/scim+json", System.Text.Encoding.UTF8, status);
@@ -88,7 +88,7 @@ public static partial class ScimProtocolEndpoints
             ["emails"] = new[] { new { primary = true, value = user.Email } },
             ["schemas"] = new[] { ScimService.UserSchema },
         };
-        if (groups.Count > 0) resource["groups"] = groups.Select(g => new { value = g.Id, @ref = $"{Base(urls)}/Groups/{g.Id}", display = g.DisplayName }).ToArray();
+        if (groups.Count > 0) resource["groups"] = groups.Select(g => new Dictionary<string, string> { ["value"] = g.Id, ["$ref"] = $"{Base(urls)}/Groups/{g.Id}", ["display"] = g.DisplayName }).ToArray();
         return resource;
     }
 

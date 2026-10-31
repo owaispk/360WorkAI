@@ -68,6 +68,7 @@ public sealed class ScimConnectionTests(SsoFactory factory) : ScimBase(factory)
     [Fact]
     public async Task The_token_is_shown_once_and_only_its_hash_is_kept()
     {
+        await W.Owner(HttpMethod.Delete, "/v1/scim");
         var state = await W.Owner(HttpMethod.Get, "/v1/scim");
         Assert.Equal(JsonValueKind.Null, state.Body.GetProperty("connection").ValueKind);
         Assert.True(state.Body.GetProperty("ssoReady").GetBoolean());

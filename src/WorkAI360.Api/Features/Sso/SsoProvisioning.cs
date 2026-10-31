@@ -57,7 +57,8 @@ public sealed class SsoProvisioning(DenDbContext db)
                 user.PasswordHash = UnusablePassword;
                 user.EmailVerified = true;
                 user.UpdatedAt = now;
-                await db.Set<ExternalAccount>().Where(a => a.UserId == user.Id && a.ProviderId != c.ProviderId).ExecuteDeleteAsync(ct);
+                // (SCIM links are not sign-in methods: they say who the identity provider provisioned, so they stay.)
+                await db.Set<ExternalAccount>().Where(a => a.UserId == user.Id && a.ProviderId != c.ProviderId && !a.ProviderId.StartsWith("openwork-scim-")).ExecuteDeleteAsync(ct);
                 await db.Sessions.Where(s => s.UserId == user.Id).ExecuteDeleteAsync(ct);
             }
         }

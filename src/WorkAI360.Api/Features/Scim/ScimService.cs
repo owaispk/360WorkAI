@@ -117,6 +117,7 @@ public sealed class ScimService(DenDbContext db, CredentialRevocation revocation
         var user = await db.Users.FirstOrDefaultAsync(u => u.Email == email);
         if (user is not null)
         {
+            if (await db.Set<ExternalAccount>().AnyAsync(a => a.UserId == user.Id && a.ProviderId == provider.ProviderId)) return (null, null, new ScimFailure(409, "User already exists", "uniqueness"));
             // An existing account is only adopted when it already belongs to this workspace: SCIM must not be able to take over anyone else's account.
             if (!await db.Members.AnyAsync(m => m.OrganizationId == provider.OrganizationId && m.UserId == user.Id)) return (null, null, new ScimFailure(409, "User already exists", "uniqueness"));
         }
@@ -280,7 +281,7 @@ public sealed class ScimService(DenDbContext db, CredentialRevocation revocation
         var exact = await db.Teams.Where(t => t.OrganizationId == organizationId && t.Name == displayName).Select(t => t.Id).FirstOrDefaultAsync();
         if (exact is null || exact == currentTeamId) return displayName;
         var suffixed = $"{displayName} (SCIM)";
-        if (!await db.Teams.AnyAsync(t => t.OrganizationId == organizationId && t.Name == suffixed)) return suffixed;
+        if (!await db.Teams.AnyAsync(t => t.OrganizationId == organizationId && t.Name == suffixed && t.Id != currentTeamId)) return suffixed;
         return $"{displayName} (SCIM {Ids.New("tem")[^6..]})";
     }
 
