@@ -33,11 +33,7 @@ public sealed class OrgAccess(DenDbContext db, SessionService sessions, Permissi
     public async Task<(OrgContext? Context, IResult? Failure)> ResolveAsync(HttpContext ctx)
     {
         var (principal, retryAfter) = await apiKeys.ResolveAsync(ctx);
-        if (retryAfter is { } wait)
-        {
-            ctx.Response.Headers.RetryAfter = ((int)Math.Ceiling(wait.TotalSeconds)).ToString();
-            return (null, Results.Json(new { error = "rate_limited", message = "This API key sent too many requests. Try again shortly." }, statusCode: 429));
-        }
+        if (retryAfter is { } wait) return (null, RateLimited(ctx, wait));
 
         var auth = principal is null ? await sessions.ResolveAsync(ctx) : AsAuth(principal);
         if (auth is null) return (null, Responses.Unauthorized());
@@ -67,12 +63,19 @@ public sealed class OrgAccess(DenDbContext db, SessionService sessions, Permissi
     }
 
     /// <summary>For routes about the person rather than a workspace (/v1/me): a signed-in session, or an API key (then <c>Session</c> is null, as in the reference).</summary>
-    public async Task<UserPrincipal?> ResolveUserAsync(HttpContext ctx)
+    public async Task<(UserPrincipal? User, IResult? Failure)> ResolveUserAsync(HttpContext ctx)
     {
-        var (principal, _) = await apiKeys.ResolveAsync(ctx);
-        if (principal is not null) return new UserPrincipal(principal.User, null, "", principal.Key.OrganizationId);
+        var (principal, retryAfter) = await apiKeys.ResolveAsync(ctx);
+        if (retryAfter is { } wait) return (null, RateLimited(ctx, wait));
+        if (principal is not null) return (new UserPrincipal(principal.User, null, "", principal.Key.OrganizationId), null);
         var auth = await sessions.ResolveAsync(ctx);
-        return auth is null ? null : new UserPrincipal(auth.User, auth.Session, auth.PresentedToken, auth.Session.ActiveOrganizationId);
+        return auth is null ? (null, Responses.Unauthorized()) : (new UserPrincipal(auth.User, auth.Session, auth.PresentedToken, auth.Session.ActiveOrganizationId), null);
+    }
+
+    private static IResult RateLimited(HttpContext ctx, TimeSpan wait)
+    {
+        ctx.Response.Headers.RetryAfter = ((int)Math.Ceiling(wait.TotalSeconds)).ToString();
+        return Results.Json(new { error = "rate_limited", message = "This API key sent too many requests. Try again shortly." }, statusCode: 429);
     }
 
     private static IResult NotFound() => Results.Json(new { error = "organization_not_found" }, statusCode: 404);

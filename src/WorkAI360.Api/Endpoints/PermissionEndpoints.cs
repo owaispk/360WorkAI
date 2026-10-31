@@ -186,6 +186,10 @@ public static class PermissionEndpoints
                 await db.SaveChangesAsync();
             }
             await tx.CommitAsync();
+            if (plan.Changes.Count > 0)
+                await audit.RecordAsync(context, new AuditEntry(AuditActions.PermissionSetPermissionsChanged, [new("permission_set", set.Id, "target", set.Name), new("organization", org, "parent")],
+                    Before: new(plan.Changes.Select(c => KeyValuePair.Create(c.Key, (System.Text.Json.Nodes.JsonNode?)System.Text.Json.Nodes.JsonValue.Create(PermissionEdits.StatusOf(current, c.Key))))),
+                    After: new(plan.Changes.Select(c => KeyValuePair.Create(c.Key, (System.Text.Json.Nodes.JsonNode?)System.Text.Json.Nodes.JsonValue.Create(c.Status))))));
             return Results.Json(new { set = await SetBody.DetailAsync(db, permissions, context, set) });
         });
 

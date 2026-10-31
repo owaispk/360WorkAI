@@ -38,8 +38,8 @@ public static class OrgEndpoints
         // /v1/me and /v1/me/orgs also answer an organization API key (then there is no web session: "session" is null, as in the reference).
         v1.MapGet("/me", async (HttpContext ctx, OrgAccess access) =>
         {
-            var current = await access.ResolveUserAsync(ctx);
-            if (current is null) return Responses.Unauthorized();
+            var (current, failure) = await access.ResolveUserAsync(ctx);
+            if (current is null) return failure!;
             var user = (IDictionary<string, object?>)ToDictionary(Responses.UserJson(current.User));
             user["authProviders"] = new[] { "email" };
             return Results.Json(new { user, session = current.Session is null ? null : Responses.SessionJson(current.Session, current.Token) });
@@ -47,8 +47,8 @@ public static class OrgEndpoints
 
         v1.MapGet("/me/orgs", async (HttpContext ctx, OrgAccess access, DenDbContext db) =>
         {
-            var current = await access.ResolveUserAsync(ctx);
-            if (current is null) return Responses.Unauthorized();
+            var (current, failure) = await access.ResolveUserAsync(ctx);
+            if (current is null) return failure!;
 
             var rows = await (from m in db.Members
                               join o in db.Organizations on m.OrganizationId equals o.Id

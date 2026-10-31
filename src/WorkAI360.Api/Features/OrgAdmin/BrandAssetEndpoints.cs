@@ -55,9 +55,13 @@ public static class BrandAssetEndpoints
             if (ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } limit) limit.MaxRequestBodySize = MaxRequestBytes;
             IFormCollection form;
             try { form = await ctx.Request.ReadFormAsync(); }
-            catch (Exception e) when (e is InvalidDataException or BadHttpRequestException or IOException)
+            catch (BadHttpRequestException e) when (e.StatusCode == StatusCodes.Status413PayloadTooLarge)
             {
                 return Results.Json(new { error = "invalid_brand_asset", kind = (string?)null, reason = "too-large", message = "Upload PNG or JPEG images under 2 MB each." }, statusCode: 413);
+            }
+            catch (Exception e) when (e is InvalidDataException or BadHttpRequestException or IOException)
+            {
+                return Results.Json(new { error = "invalid_brand_asset", kind = (string?)null, reason = "invalid-request", message = "Upload brand assets as multipart form data." }, statusCode: 400);
             }
             var logo = form.Files.GetFile("logo");
             var icon = form.Files.GetFile("icon");
