@@ -135,7 +135,13 @@ if (verified) {
   const hop = (url, jar) => fetch(url, { redirect: "manual", headers: jar ? { cookie: jar } : {} });
   const jarOf = (r) => (r.headers.getSetCookie?.() ?? []).map((c) => c.split(";")[0]).join("; ");
   // A fresh workspace so the earlier steps cannot interfere.
-  const w2 = await workspace("SSO Flow"); const dom2 = w2.owner.email.split("@")[1];
+  // (Its own email domain, so the connection it enables claims no domain other tests use.)
+  const dom2 = `flow-${Date.now()}.test`;
+  const o2 = { email: `owner@${dom2}` };
+  const su = await call(W, "/api/auth/sign-up/email", { method: "POST", body: { name: "Flow Owner", email: o2.email, password: PW } });
+  o2.token = su.json.token;
+  const org2 = await call(A, "/v1/org", { method: "POST", bearer: o2.token, body: { name: "SSO Flow" } });
+  const w2 = { owner: o2, orgId: org2.json.organization.id, api: (u, method, path, body) => call(A, path, { method, bearer: u.token, headers: { "x-openwork-org-id": org2.json.organization.id }, body }) };
   idp.identity = { sub: "owner-sub", email: w2.owner.email, email_verified: true, name: "Owner" };
   const r2 = await w2.api(w2.owner, "POST", "/v1/sso/oidc", { issuer: idp.issuer, domain: dom2, clientId: idp.clientId, clientSecret: idp.clientSecret });
   await s.t("loopback issuer is proven and the connection test works end to end", async () => {
