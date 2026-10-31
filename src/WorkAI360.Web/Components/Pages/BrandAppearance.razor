@@ -1,0 +1,140 @@
+@page "/dashboard/brand-appearance"
+@inherits ActionPage
+@using System.Text.Json
+
+<PageTitle>Brand and appearance · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="brand-page">
+    @if (_loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>Brand and appearance</h1>
+        <p class="den-muted">@_orgName · how the desktop app looks for people in this workspace.</p>
+
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @if (NeedsReauth)
+        {
+            <ReauthForm @bind-Password="ReauthPassword" Busy="Busy" OnConfirm="ConfirmItsYouAsync" OnCancel="CancelReauth" />
+        }
+
+        <h2>Name and colour</h2>
+        <form @onsubmit="SaveTextAsync" novalidate data-testid="brand-text-form">
+            <label for="brand-app-name">App name</label>
+            <input id="brand-app-name" autocomplete="off" placeholder="OpenWork" maxlength="64" disabled="@(!Can("organization.update"))" @bind="_appName" @bind:event="oninput" />
+            <label for="brand-accent">Accent colour</label>
+            <input id="brand-accent" autocomplete="off" placeholder="#0f172a" maxlength="32" disabled="@(!Can("organization.update"))" @bind="_accent" @bind:event="oninput" />
+            @if (Can("organization.update")) { <button type="submit" class="den-button" disabled="@Busy">Save name and colour</button> }
+            else { <p class="den-muted" data-testid="text-locked">You don't have permission to edit organization settings.</p> }
+        </form>
+
+        <h2>Images</h2>
+        <p class="den-muted">PNG or JPEG under 2 MB. The wordmark is wide (between 1.5:1 and 8:1, at least 128×32); the app icon is square (at least 64×64).</p>
+        <div class="brand-images">
+            <div class="brand-image" data-testid="brand-logo-field">
+                <strong>Wordmark</strong>
+                @if (_logoUrl is not null) { <img src="@_logoUrl" alt="Wordmark preview" data-testid="brand-logo-preview" class="brand-logo" /> }
+                else { <span class="den-muted">Default OpenWork wordmark</span> }
+                <span class="den-muted" data-testid="brand-logo-status">@(_logoInfo ?? (_logoUrl is null ? "No custom image saved." : "Hosted image (typed in as a link)."))</span>
+                @if (Can("branding.update"))
+                {
+                    <input id="brand-logo-upload" type="file" accept="image/png,image/jpeg" aria-label="Wordmark image" />
+                    @if (_logoUrl is not null) { <button type="button" class="den-link" @onclick='() => RemoveAsync("brandLogoUrl", "wordmark")'>Use the default wordmark</button> }
+                }
+            </div>
+            <div class="brand-image" data-testid="brand-icon-field">
+                <strong>App icon</strong>
+                @if (_iconUrl is not null) { <img src="@_iconUrl" alt="App icon preview" data-testid="brand-icon-preview" class="brand-icon" /> }
+                else { <span class="den-muted">Default OpenWork icon</span> }
+                <span class="den-muted" data-testid="brand-icon-status">@(_iconInfo ?? (_iconUrl is null ? "No custom image saved." : "Hosted image (typed in as a link)."))</span>
+                @if (Can("branding.update"))
+                {
+                    <input id="brand-icon-upload" type="file" accept="image/png,image/jpeg" aria-label="App icon image" />
+                    @if (_iconUrl is not null) { <button type="button" class="den-link" @onclick='() => RemoveAsync("brandIconUrl", "icon")'>Use the default icon</button> }
+                }
+            </div>
+        </div>
+        @if (Can("branding.update"))
+        {
+            <button type="button" class="den-button" disabled="@Busy" @onclick="UploadAsync" data-testid="brand-upload">Upload images</button>
+        }
+        else
+        {
+            <p class="den-muted" data-testid="images-locked">You don't have permission to change branding. Ask the organization owner.</p>
+        }
+        <a class="den-link" href="/dashboard">Back to dashboard</a>
+    }
+</section>
+
+@code {
+    private bool _loading = true;
+    private string _orgName = "", _appName = "", _accent = "";
+    private string? _logoUrl, _iconUrl, _logoInfo, _iconInfo;
+    private HashSet<string> _permissions = [];
+
+    private bool Can(string permission) => _permissions.Contains(permission);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var me = await Den.RequestAsync("/api/browser/v1/me");
+        if (!me.Ok) { Nav.NavigateTo("/"); return; }
+        MyEmail = me.String("user", "email") ?? "";
+        if (!await LoadAsync()) return;
+        _loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync() => await LoadAsync();
+
+    private async Task<bool> LoadAsync()
+    {
+        var org = await Den.RequestAsync("/api/browser/v1/org");
+        if (org.Status is 404 or 403) { Nav.NavigateTo("/organization"); return false; }
+        if (org.Json is not { ValueKind: JsonValueKind.Object } root) return false;
+        _orgName = org.String("organization", "name") ?? "";
+        _permissions = root.GetProperty("currentMember").GetProperty("permissions").EnumerateArray().Select(p => p.GetString() ?? "").ToHashSet();
+        var metadata = JsonDocument.Parse(root.GetProperty("organization").GetProperty("metadata").GetString() ?? "{}").RootElement;
+        string? Text(string name) => metadata.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        _appName = Text("brandAppName") ?? "";
+        _accent = Text("brandAccentColor") ?? "";
+        _logoUrl = Text("brandLogoUrl");
+        _iconUrl = Text("brandIconUrl");
+        _logoInfo = Describe(metadata, "brandLogoAsset");
+        _iconInfo = Describe(metadata, "brandIconAsset");
+        return true;
+    }
+
+    private static string? Describe(JsonElement metadata, string name) =>
+        metadata.TryGetProperty(name, out var asset) && asset.ValueKind == JsonValueKind.Object
+            ? $"Stored in OpenWork · {asset.GetProperty("width").GetInt32()}×{asset.GetProperty("height").GetInt32()} · version {asset.GetProperty("version").GetString()?[..10]}"
+            : null;
+
+    private async Task SaveTextAsync()
+    {
+        var name = _appName.Trim();
+        var accent = _accent.Trim();
+        await RunAsync(() => Den.RequestAsync("/api/browser/v1/org", "PATCH", new { brandAppName = name.Length == 0 ? null : name, brandAccentColor = accent.Length == 0 ? null : accent }), "Name and colour saved.");
+    }
+
+    private async Task RemoveAsync(string field, string what)
+    {
+        var body = new Dictionary<string, string?> { [field] = null };
+        await RunAsync(() => Den.RequestAsync("/api/browser/v1/org", "PATCH", body), $"The default {what} is back.");
+    }
+
+    private async Task UploadAsync()
+    {
+        Error = Notice = null;
+        Busy = true;
+        var result = await Den.UploadAsync("/api/browser/v1/org/brand-assets", [("logo", "brand-logo-upload"), ("icon", "brand-icon-upload")]);
+        Busy = false;
+        if (result.String("error") == "reauth") { AskToConfirm(UploadAsync); return; }
+        if (!result.Ok) { Error = result.Message("That image could not be saved. Try another."); return; }
+        Notice = "Images saved.";
+        await LoadAsync();
+    }
+}

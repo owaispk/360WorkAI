@@ -1,0 +1,267 @@
+@page "/dashboard/audit-logs"
+@inherits ActionPage
+@using System.Text.Json
+
+<PageTitle>Audit logs · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="audit-page">
+    @if (_loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>Audit logs</h1>
+        <p class="den-muted">@_orgName · who changed what, and when.</p>
+
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @if (NeedsReauth)
+        {
+            <ReauthForm @bind-Password="ReauthPassword" Busy="Busy" OnConfirm="ConfirmItsYouAsync" OnCancel="CancelReauth" />
+        }
+
+        @if (!_available)
+        {
+            <p class="den-muted" data-testid="audit-unavailable">Audit logs are not available in this deployment.</p>
+        }
+        else if (!Can("audit.view"))
+        {
+            <p class="den-muted" data-testid="audit-locked">You don't have permission to view the audit log. Ask an admin to change your permissions.</p>
+        }
+        else
+        {
+            <form class="audit-filters" @onsubmit="ApplyAsync" data-testid="audit-filters" aria-label="Filter audit operations">
+                <label for="audit-action">Event type</label>
+                <select id="audit-action" @bind="_action">
+                    <option value="">All event types</option>
+                    @foreach (var type in _eventTypes) { <option value="@type">@Humanize(type)</option> }
+                </select>
+                <label for="audit-outcome">Result</label>
+                <select id="audit-outcome" @bind="_outcome">
+                    <option value="">All results</option>
+                    @foreach (var outcome in new[] { "succeeded", "failed", "partial", "running", "unknown" }) { <option value="@outcome">@Humanize(outcome)</option> }
+                </select>
+                <label for="audit-search">Search IDs</label>
+                <input id="audit-search" placeholder="Exact ID" maxlength="255" @bind="_search" @bind:event="oninput" />
+                <div class="den-inline">
+                    <button type="submit" class="den-button audit-apply" disabled="@Busy">Apply filters</button>
+                    <button type="button" class="den-link" @onclick="ClearAsync">Clear filters</button>
+                </div>
+            </form>
+
+            @if (_operations.Count == 0)
+            {
+                <p class="den-muted" data-testid="audit-empty">@(HasFilters ? "No operations match these filters." : "No retained audit operations yet.")</p>
+            }
+            <ul class="den-members audit-list" data-testid="audit-list">
+                @foreach (var op in _operations)
+                {
+                    <li data-testid="audit-row" data-action="@op.Action" data-id="@op.Id">
+                        <button type="button" class="audit-summary" aria-expanded="@(_expanded == op.Id)" @onclick="() => ToggleAsync(op)">
+                            <span class="den-member-main">
+                                <strong>@ActorLabel(op) @Humanize(op.Action).ToLowerInvariant()</strong>
+                                <span class="den-muted">@op.Targets</span>
+                            </span>
+                            <span class="audit-meta">
+                                <span class="den-badge @(op.Outcome == "succeeded" ? "" : "den-badge-pending")">@Humanize(op.Outcome)</span>
+                                <span class="den-muted" title="@op.StartedAt">@Short(op.StartedAt)</span>
+                            </span>
+                        </button>
+                        @if (_expanded == op.Id)
+                        {
+                            <div class="den-panel audit-detail" data-testid="audit-detail">
+                                @if (_events is null) { <span class="den-muted">Loading…</span> }
+                                else
+                                {
+                                    @foreach (var ev in _events)
+                                    {
+                                        <div class="audit-event" data-testid="audit-event">
+                                            <strong>@Humanize(ev.Action)</strong> <span class="den-muted">@ev.Category · @ev.Outcome · @Short(ev.At)</span>
+                                            @foreach (var change in ev.Changes)
+                                            {
+                                                <div class="audit-change" data-testid="audit-change"><code>@change.Field</code>: <span class="audit-before">@change.Before</span> → <span class="audit-after">@change.After</span></div>
+                                            }
+                                        </div>
+                                    }
+                                    <details>
+                                        <summary class="den-muted">Technical details</summary>
+                                        <dl class="audit-tech">
+                                            <dt>Operation</dt><dd><code>@op.Id</code></dd>
+                                            <dt>Action</dt><dd><code>@op.Action</code></dd>
+                                            <dt>Actor</dt><dd><code>@(op.ActorId ?? "unknown")</code></dd>
+                                            <dt>Recorded events</dt><dd>@op.EventCount</dd>
+                                        </dl>
+                                    </details>
+                                }
+                            </div>
+                        }
+                    </li>
+                }
+            </ul>
+            @if (_next is not null)
+            {
+                <button type="button" class="den-button den-secondary" disabled="@Busy" @onclick="MoreAsync" data-testid="audit-more">Load more operations</button>
+            }
+
+            <h2>Capture and storage</h2>
+            @if (_usage is { } usage)
+            {
+                <div class="audit-capture" data-testid="audit-usage">
+                    <p>Capture is <strong data-testid="capture-state">@(usage.CaptureOn ? "on" : "off")</strong>@(usage.CaptureOn && !usage.Entitled ? " (not available)" : "").
+                        <span class="den-muted">@usage.Operations operations, @usage.Events events kept.</span></p>
+                    @if (Can("audit.manage") && usage.Entitled)
+                    {
+                        <button type="button" class="den-button den-secondary" disabled="@Busy" @onclick="() => SetCaptureAsync(!usage.CaptureOn)" data-testid="toggle-capture">@(usage.CaptureOn ? "Turn capture off" : "Turn capture on")</button>
+                    }
+                    @if (!usage.Entitled) { <p class="den-muted">Audit logs are not enabled for this installation.</p> }
+                </div>
+            }
+            <p class="den-inline">
+                <a class="den-link" href="/api/browser/v1/audit/export?format=csv" download data-testid="export-csv">Download CSV</a>
+                <a class="den-link" href="/api/browser/v1/audit/export?format=ndjson" download data-testid="export-ndjson">Download NDJSON</a>
+            </p>
+        }
+        <a class="den-link" href="/dashboard">Back to dashboard</a>
+    }
+</section>
+
+@code {
+    private sealed record Operation(string Id, string Action, string Outcome, string StartedAt, string? ActorType, string? ActorId, string Targets, int EventCount);
+    private sealed record Change(string Field, string Before, string After);
+    private sealed record Event(string Action, string Category, string Outcome, string At, List<Change> Changes);
+    private sealed record Usage(bool CaptureOn, bool Entitled, int Revision, long Operations, long Events);
+
+    private bool _loading = true, _available;
+    private string _orgName = "";
+    private HashSet<string> _permissions = [];
+    private Dictionary<string, string> _people = [];
+    private List<string> _eventTypes = [];
+    private List<Operation> _operations = [];
+    private string? _next, _expanded;
+    private List<Event>? _events;
+    private Usage? _usage;
+    private string _action = "", _outcome = "", _search = "";
+    private string _appliedQuery = "";
+
+    private bool Can(string permission) => _permissions.Contains(permission);
+    private bool HasFilters => _appliedQuery.Length > 0;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var me = await Den.RequestAsync("/api/browser/v1/me");
+        if (!me.Ok) { Nav.NavigateTo("/"); return; }
+        MyEmail = me.String("user", "email") ?? "";
+        var org = await Den.RequestAsync("/api/browser/v1/org");
+        if (org.Status is 404 or 403) { Nav.NavigateTo("/organization"); return; }
+        if (org.Json is not { ValueKind: JsonValueKind.Object } root) return;
+        _orgName = org.String("organization", "name") ?? "";
+        _permissions = root.GetProperty("currentMember").GetProperty("permissions").EnumerateArray().Select(p => p.GetString() ?? "").ToHashSet();
+        _available = root.TryGetProperty("capabilities", out var caps) && caps.TryGetProperty("auditLogs", out var on) && on.ValueKind == JsonValueKind.True;
+        _people = root.GetProperty("members").EnumerateArray().Where(m => m.GetProperty("userId").ValueKind == JsonValueKind.String)
+            .ToDictionary(m => m.GetProperty("userId").GetString() ?? "", m => m.GetProperty("user").GetProperty("name").GetString() ?? "", StringComparer.Ordinal);
+        if (_available && Can("audit.view"))
+        {
+            var types = await Den.RequestAsync("/api/browser/v1/audit/event-types");
+            if (types.Json is { ValueKind: JsonValueKind.Object } typesBody) _eventTypes = typesBody.GetProperty("eventTypes").EnumerateArray().Select(e => e.GetString() ?? "").ToList();
+            await LoadAsync(reset: true);
+            await LoadUsageAsync();
+        }
+        _loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync() { await LoadAsync(reset: true); await LoadUsageAsync(); }
+
+    private string Query()
+    {
+        var parts = new List<string>();
+        if (_action.Length > 0) parts.Add("action=" + Uri.EscapeDataString(_action));
+        if (_outcome.Length > 0) parts.Add("outcome=" + Uri.EscapeDataString(_outcome));
+        if (_search.Trim().Length > 0) parts.Add("searchId=" + Uri.EscapeDataString(_search.Trim()));
+        return string.Join('&', parts);
+    }
+
+    private async Task ApplyAsync() { _appliedQuery = Query(); _expanded = null; await LoadAsync(reset: true); }
+
+    private async Task ClearAsync() { _action = _outcome = _search = _appliedQuery = ""; _expanded = null; await LoadAsync(reset: true); }
+
+    private Task MoreAsync() => LoadAsync(reset: false);
+
+    private async Task LoadAsync(bool reset)
+    {
+        Busy = true;
+        Error = null;
+        var url = "/api/browser/v1/audit/operations?limit=25" + (_appliedQuery.Length > 0 ? "&" + _appliedQuery : "") + (!reset && _next is not null ? "&cursor=" + Uri.EscapeDataString(_next) : "");
+        var result = await Den.RequestAsync(url);
+        Busy = false;
+        if (!result.Ok || result.Json is not { ValueKind: JsonValueKind.Object } body) { Error = result.Status == 403 ? "You can't view the audit log." : "Could not load the audit log. Try again."; return; }
+        var rows = body.GetProperty("operations").EnumerateArray().Select(o =>
+        {
+            var actor = o.GetProperty("initiatingActor");
+            var targets = string.Join(", ", o.GetProperty("resources").EnumerateArray().Where(r => r.GetProperty("relationship").GetString() == "target")
+                .Select(r => r.TryGetProperty("label", out var label) ? label.GetString() : r.GetProperty("id").GetString()).Distinct());
+            return new Operation(o.GetProperty("id").GetString() ?? "", o.GetProperty("action").GetString() ?? "", o.GetProperty("outcome").GetString() ?? "", o.GetProperty("startedAt").GetString() ?? "",
+                actor.GetProperty("type").GetString(), actor.GetProperty("id").ValueKind == JsonValueKind.String ? actor.GetProperty("id").GetString() : null, targets, o.GetProperty("eventCount").GetInt32());
+        }).ToList();
+        _operations = reset ? rows : [.. _operations, .. rows];
+        _next = body.GetProperty("nextCursor").ValueKind == JsonValueKind.String ? body.GetProperty("nextCursor").GetString() : null;
+    }
+
+    private async Task LoadUsageAsync()
+    {
+        var usage = await Den.RequestAsync("/api/browser/v1/audit/usage");
+        if (usage.Json is not { ValueKind: JsonValueKind.Object } u) return;
+        var policy = u.GetProperty("policy");
+        _usage = new Usage(u.GetProperty("captureOn").GetBoolean(), u.GetProperty("entitlement").GetProperty("enabled").GetBoolean(),
+            policy.ValueKind == JsonValueKind.Object ? policy.GetProperty("revision").GetInt32() : 0, u.GetProperty("retainedOperations").GetInt64(), u.GetProperty("eventCount").GetInt64());
+    }
+
+    private async Task ToggleAsync(Operation op)
+    {
+        if (_expanded == op.Id) { _expanded = null; return; }
+        _expanded = op.Id;
+        _events = null;
+        var result = await Den.RequestAsync($"/api/browser/v1/audit/operations/{op.Id}/events?limit=100");
+        if (!result.Ok || result.Json is not { ValueKind: JsonValueKind.Object } body) { Error = "Could not load the details of that operation."; return; }
+        _events = body.GetProperty("events").EnumerateArray().Select(e =>
+        {
+            var changes = new List<Change>();
+            if (e.TryGetProperty("changes", out var c))
+            {
+                var before = c.GetProperty("before");
+                var after = c.GetProperty("after");
+                foreach (var field in c.GetProperty("changedFields").EnumerateArray().Select(f => f.GetString() ?? ""))
+                    changes.Add(new Change(field, Show(before, field), Show(after, field)));
+            }
+            return new Event(e.GetProperty("action").GetString() ?? "", e.GetProperty("category").GetString() ?? "", e.GetProperty("outcome").GetString() ?? "", e.GetProperty("recordedAt").GetString() ?? "", changes);
+        }).ToList();
+    }
+
+    private async Task SetCaptureAsync(bool on)
+    {
+        var revision = _usage?.Revision ?? 0;
+        await RunAsync(() => Den.RequestAsync("/api/browser/v1/audit/settings", "PATCH", new { captureOn = on, expectedRevision = revision }), on ? "Audit capture is on." : "Audit capture is off.",
+            r => r.String("error") == "audit_policy_changed" ? "The setting was changed by someone else. Refresh and try again." : null);
+    }
+
+    private static string Show(JsonElement node, string field) =>
+        node.ValueKind == JsonValueKind.Object && node.TryGetProperty(field, out var v) ? (v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : v.ToString()) : "(none)";
+
+    private string ActorLabel(Operation op) => op.ActorType switch
+    {
+        "user" when op.ActorId is not null && _people.TryGetValue(op.ActorId, out var name) => name,
+        "user" => "Someone who left",
+        "system" => "OpenWork",
+        _ => "Someone",
+    };
+
+    private static string Humanize(string value)
+    {
+        var text = value.Replace('.', ' ').Replace('_', ' ').Trim();
+        return text.Length == 0 ? text : char.ToUpperInvariant(text[0]) + text[1..];
+    }
+
+    private static string Short(string iso) => DateTime.TryParse(iso, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out var at) ? at.ToString("d MMM yyyy HH:mm") + " UTC" : iso;
+}

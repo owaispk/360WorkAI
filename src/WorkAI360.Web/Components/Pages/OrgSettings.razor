@@ -1,0 +1,162 @@
+@page "/dashboard/org-settings"
+@inherits ActionPage
+@using System.Text.Json
+
+<PageTitle>Organization settings · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="org-settings-page">
+    @if (_loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>Organization settings</h1>
+        <p class="den-muted">@_orgName · name, who may join, and approved websites.</p>
+
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @if (NeedsReauth)
+        {
+            <ReauthForm @bind-Password="ReauthPassword" Busy="Busy" OnConfirm="ConfirmItsYouAsync" OnCancel="CancelReauth" />
+        }
+
+        <h2>General</h2>
+        <form @onsubmit="SaveAsync" novalidate data-testid="settings-form">
+            <label for="org-name">Organization name</label>
+            <input id="org-name" autocomplete="off" disabled="@(!Can("organization.update"))" @bind="_name" @bind:event="oninput" />
+            <label for="org-domains">Allowed email domains</label>
+            <input id="org-domains" autocomplete="off" placeholder="company.com, other.org (empty: anyone can join)" disabled="@(!Can("organization.update"))" @bind="_domains" @bind:event="oninput" />
+            <span class="den-muted">Only people with an address on one of these domains can be invited or accept an invitation.</span>
+            @if (Can("organization.update"))
+            {
+                <button type="submit" class="den-button" disabled="@Busy">Save settings</button>
+            }
+            else
+            {
+                <p class="den-muted" data-testid="settings-locked">You don't have permission to edit organization settings.</p>
+            }
+        </form>
+
+        @if (Can("web_origins.view"))
+        {
+            <h2>Approved web origins</h2>
+            <p class="den-muted">Websites that may embed or call this workspace. Up to @_limit.</p>
+            @if (_origins.Count == 0) { <p class="den-muted" data-testid="no-origins">No origins are approved yet.</p> }
+            <ul class="den-members" data-testid="origin-list">
+                @foreach (var origin in _origins)
+                {
+                    <li data-testid="origin-row" data-origin="@origin.Value">
+                        <div class="den-member-main"><strong>@origin.Value</strong><span class="den-muted">Approved by @origin.By</span></div>
+                        <div class="den-member-actions">
+                            @if (Can("web_origins.manage"))
+                            {
+                                <button type="button" class="den-link" @onclick="() => RemoveOriginAsync(origin)">Remove</button>
+                            }
+                        </div>
+                    </li>
+                }
+            </ul>
+            @if (Can("web_origins.manage"))
+            {
+                <form class="den-inline" @onsubmit="AddOriginAsync" novalidate data-testid="origin-form">
+                    <input id="origin-input" aria-label="Web origin" autocomplete="off" placeholder="https://workspace.example.com" @bind="_origin" @bind:event="oninput" />
+                    <button type="submit" class="den-link" disabled="@Busy">Approve origin</button>
+                </form>
+            }
+        }
+
+        @if (_isOwner)
+        {
+            <h2 class="den-danger">Delete this workspace</h2>
+            <p class="den-muted">This removes the workspace, its people, teams, keys, settings and audit history for good. It cannot be undone.</p>
+            <form @onsubmit="DeleteAsync" novalidate data-testid="delete-form">
+                <label for="delete-confirm">Type the workspace name (@_orgName) to confirm</label>
+                <input id="delete-confirm" autocomplete="off" @bind="_confirmName" @bind:event="oninput" />
+                <button type="submit" class="den-button den-secondary den-danger" disabled="@(Busy || _confirmName.Trim() != _orgName)" data-testid="delete-workspace">Delete workspace</button>
+            </form>
+        }
+        <a class="den-link" href="/dashboard">Back to dashboard</a>
+    }
+</section>
+
+@code {
+    private sealed record ApprovedOrigin(string Id, string Value, string By);
+
+    private bool _loading = true, _isOwner;
+    private string _orgName = "", _name = "", _domains = "", _origin = "", _confirmName = "";
+    private int _limit = 20;
+    private HashSet<string> _permissions = [];
+    private List<ApprovedOrigin> _origins = [];
+
+    private bool Can(string permission) => _permissions.Contains(permission);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var me = await Den.RequestAsync("/api/browser/v1/me");
+        if (!me.Ok) { Nav.NavigateTo("/"); return; }
+        MyEmail = me.String("user", "email") ?? "";
+        if (!await LoadAsync()) return;
+        _loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync() => await LoadAsync();
+
+    private async Task<bool> LoadAsync()
+    {
+        var org = await Den.RequestAsync("/api/browser/v1/org");
+        if (org.Status is 404 or 403) { Nav.NavigateTo("/organization"); return false; }
+        if (org.Json is not { ValueKind: JsonValueKind.Object } root) return false;
+        _orgName = org.String("organization", "name") ?? "";
+        _name = _orgName;
+        var domains = root.GetProperty("organization").GetProperty("allowedEmailDomains");
+        _domains = domains.ValueKind == JsonValueKind.Array ? string.Join(", ", domains.EnumerateArray().Select(d => d.GetString())) : "";
+        _permissions = root.GetProperty("currentMember").GetProperty("permissions").EnumerateArray().Select(p => p.GetString() ?? "").ToHashSet();
+        _isOwner = root.GetProperty("currentMember").GetProperty("isOwner").GetBoolean();
+        _origins = [];
+        if (Can("web_origins.view"))
+        {
+            var list = await Den.RequestAsync("/api/browser/v1/org/web-origins");
+            if (list.Ok && list.Json is { ValueKind: JsonValueKind.Object } body)
+            {
+                _limit = body.GetProperty("limit").GetInt32();
+                _origins = body.GetProperty("origins").EnumerateArray().Select(o => new ApprovedOrigin(o.GetProperty("id").GetString() ?? "", o.GetProperty("origin").GetString() ?? "", o.GetProperty("createdByName").GetString() ?? "someone")).ToList();
+            }
+        }
+        return true;
+    }
+
+    private async Task SaveAsync()
+    {
+        var name = _name.Trim();
+        if (name.Length < 2) { Error = "Give the organization a name of at least 2 characters."; Notice = null; return; }
+        var domains = _domains.Split([',', ' ', ';', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        await RunAsync(() => Den.RequestAsync("/api/browser/v1/org", "PATCH", new { name, allowedEmailDomains = domains }), "Settings saved.",
+            r => r.String("error") == "invalid_email_domain" ? "Enter valid email domains like company.com." : null);
+    }
+
+    private async Task AddOriginAsync()
+    {
+        var origin = _origin.Trim();
+        if (origin.Length == 0) { Error = "Enter an origin like https://workspace.example.com."; Notice = null; return; }
+        await RunAsync(() => Den.RequestAsync("/api/browser/v1/org/web-origins", "POST", new { origin }), $"{origin} approved.");
+        if (Error is null && !NeedsReauth) _origin = "";
+    }
+
+    private async Task RemoveOriginAsync(ApprovedOrigin origin) =>
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/org/web-origins/{origin.Id}", "DELETE"), $"{origin.Value} removed.");
+
+    private async Task DeleteAsync()
+    {
+        if (_confirmName.Trim() != _orgName) return;
+        Error = Notice = null;
+        Busy = true;
+        var result = await Den.RequestAsync("/api/browser/v1/org", "DELETE");
+        Busy = false;
+        if (result.String("error") == "reauth") { AskToConfirm(DeleteAsync); return; }
+        if (!result.Ok) { Error = result.Message("That did not work. Try again."); return; }
+        Nav.NavigateTo("/", forceLoad: true);
+    }
+}

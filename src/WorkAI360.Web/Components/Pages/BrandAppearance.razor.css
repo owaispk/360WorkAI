@@ -1,0 +1,5 @@
+.brand-images { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin: 12px 0; }
+.brand-image { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line); border-radius: 14px; padding: 14px; min-width: 0; word-break: break-word; }
+.brand-image input[type="file"] { padding: 8px; font-size: 13px; }
+.brand-logo { max-height: 72px; max-width: 100%; object-fit: contain; align-self: flex-start; }
+.brand-icon { width: 72px; height: 72px; border-radius: 16px; object-fit: contain; }

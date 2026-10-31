@@ -1,0 +1,161 @@
+@page "/dashboard/api-keys"
+@inherits ActionPage
+@using System.Text.Json
+
+<PageTitle>API keys · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="api-keys-page">
+    @if (_loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>API keys</h1>
+        <p class="den-muted">@_orgName · keys let scripts and tools act as you in this workspace. A key has the same access as the person who made it, and stops working when that person loses access.</p>
+
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @if (NeedsReauth)
+        {
+            <ReauthForm @bind-Password="ReauthPassword" Busy="Busy" OnConfirm="ConfirmItsYouAsync" OnCancel="CancelReauth" />
+        }
+
+        @if (_newKey is not null)
+        {
+            <div class="den-panel keys-new" data-testid="new-key-panel">
+                <strong>Copy your new key for “@_newKeyName” now</strong>
+                <span class="den-muted">It is shown only once. We keep a fingerprint, not the key, so it cannot be shown again.</span>
+                <input readonly class="den-link-input" value="@_newKey" data-testid="new-key" aria-label="New API key" />
+                <div class="den-inline">
+                    <button type="button" class="den-link" @onclick="CopyAsync" data-testid="copy-key">@(_copied ? "Copied" : "Copy key")</button>
+                    <button type="button" class="den-link" @onclick="() => _newKey = null" data-testid="dismiss-key">I have saved it</button>
+                </div>
+            </div>
+        }
+
+        @if (!Can("api_keys.view"))
+        {
+            <p class="den-muted" data-testid="no-access">You don't have permission to view API keys. Ask an admin to change your permissions.</p>
+        }
+        else
+        {
+            @if (_keys.Count == 0)
+            {
+                <p class="den-muted" data-testid="no-keys">There are no API keys yet.</p>
+            }
+            <ul class="den-members" data-testid="key-list">
+                @foreach (var key in _keys)
+                {
+                    <li data-testid="key-row" data-name="@key.Name">
+                        <div class="den-member-main">
+                            <strong>@key.Name @if (!key.Enabled) { <span class="den-badge den-badge-pending">Turned off</span> }</strong>
+                            <span class="den-muted" data-testid="key-start">@key.Start…  ·  made by @key.Owner</span>
+                            <span class="den-muted">Created @Short(key.CreatedAt) · @(key.LastRequest is null ? "never used" : "last used " + Short(key.LastRequest)) · expires @Short(key.ExpiresAt)</span>
+                        </div>
+                        <div class="den-member-actions">
+                            @if (Can("api_keys.manage"))
+                            {
+                                @if (_confirmDelete == key.Id)
+                                {
+                                    <button type="button" class="den-link den-danger" @onclick="() => DeleteAsync(key)" data-testid="confirm-delete">Confirm delete</button>
+                                    <button type="button" class="den-link" @onclick="() => _confirmDelete = null">Cancel</button>
+                                }
+                                else { <button type="button" class="den-link" @onclick="() => _confirmDelete = key.Id" data-testid="delete-key">Delete</button> }
+                            }
+                        </div>
+                    </li>
+                }
+            </ul>
+        }
+
+        @if (Can("api_keys.manage"))
+        {
+            <h2>New key</h2>
+            <form @onsubmit="CreateAsync" novalidate data-testid="key-form">
+                <label for="key-name">Name</label>
+                <input id="key-name" autocomplete="off" placeholder="For example: build server" @bind="_name" @bind:event="oninput" />
+                <button type="submit" class="den-button" disabled="@Busy">Create key</button>
+            </form>
+        }
+        <a class="den-link" href="/dashboard">Back to dashboard</a>
+    }
+</section>
+
+@code {
+    private sealed record KeyRow(string Id, string Name, string Start, bool Enabled, string Owner, string CreatedAt, string? LastRequest, string ExpiresAt);
+
+    private bool _loading = true;
+    private string _orgName = "";
+    private HashSet<string> _permissions = [];
+    private List<KeyRow> _keys = [];
+    private string _name = "";
+    private string? _newKey, _newKeyName, _confirmDelete;
+    private bool _copied;
+
+    private bool Can(string permission) => _permissions.Contains(permission);
+
+    private static string Short(string? iso) => DateTime.TryParse(iso, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out var at) ? at.ToString("d MMM yyyy") : "";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var me = await Den.RequestAsync("/api/browser/v1/me");
+        if (!me.Ok) { Nav.NavigateTo("/"); return; }
+        MyEmail = me.String("user", "email") ?? "";
+        if (!await LoadAsync()) return;
+        _loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync() => await LoadAsync();
+
+    private async Task<bool> LoadAsync()
+    {
+        var org = await Den.RequestAsync("/api/browser/v1/org");
+        if (org.Status is 404 or 403) { Nav.NavigateTo("/organization"); return false; }
+        if (org.Json is not { ValueKind: JsonValueKind.Object } root) return false;
+        _orgName = org.String("organization", "name") ?? "";
+        _permissions = root.GetProperty("currentMember").GetProperty("permissions").EnumerateArray().Select(p => p.GetString() ?? "").ToHashSet();
+        _keys = [];
+        if (Can("api_keys.view"))
+        {
+            var list = await Den.RequestAsync("/api/browser/v1/api-keys");
+            if (list.Ok && list.Json is { ValueKind: JsonValueKind.Object } body)
+            {
+                _keys = body.GetProperty("apiKeys").EnumerateArray().Select(k => new KeyRow(
+                    k.GetProperty("id").GetString() ?? "", k.GetProperty("name").GetString() ?? "", k.GetProperty("start").GetString() ?? "", k.GetProperty("enabled").GetBoolean(),
+                    k.GetProperty("owner").GetProperty("name").GetString() ?? "", k.GetProperty("createdAt").GetString() ?? "",
+                    k.GetProperty("lastRequest").ValueKind == JsonValueKind.String ? k.GetProperty("lastRequest").GetString() : null, k.GetProperty("expiresAt").GetString() ?? "")).ToList();
+            }
+            else if (!list.Ok) Error = list.Message("Could not load the API keys.");
+        }
+        return true;
+    }
+
+    private async Task CreateAsync()
+    {
+        var name = _name.Trim();
+        if (name.Length < 2) { Error = "Give the key a name of at least 2 characters."; Notice = null; return; }
+        Error = Notice = null;
+        Busy = true;
+        var result = await Den.RequestAsync("/api/browser/v1/api-keys", "POST", new { name });
+        Busy = false;
+        if (result.String("error") == "reauth") { AskToConfirm(CreateAsync); return; }
+        if (!result.Ok) { Error = result.Message("That did not work. Try again."); return; }
+        _newKey = result.String("key");
+        _newKeyName = name;
+        _copied = false;
+        _name = "";
+        Notice = $"Key “{name}” created.";
+        await LoadAsync();
+    }
+
+    private async Task DeleteAsync(KeyRow key)
+    {
+        _confirmDelete = null;
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/api-keys/{key.Id}", "DELETE"), $"Key “{key.Name}” was deleted. Anything using it stops working.");
+    }
+
+    private async Task CopyAsync() => _copied = _newKey is not null && await Den.CopyAsync(_newKey);
+}

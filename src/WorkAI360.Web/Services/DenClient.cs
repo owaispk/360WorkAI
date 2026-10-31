@@ -48,6 +48,14 @@ public sealed class DenClient(IJSRuntime js) : IAsyncDisposable
         return new DenResponse(raw.Status, raw.Text);
     }
 
+    /// <summary>Posts the files chosen in the given file inputs as multipart form data. <paramref name="fields"/> pairs a form field name with an input element id.</summary>
+    public async Task<DenResponse> UploadAsync(string path, IEnumerable<(string Name, string InputId)> fields)
+    {
+        _module ??= await js.InvokeAsync<IJSObjectReference>("import", "./js/den.js");
+        var raw = await _module.InvokeAsync<DenRaw>("upload", path, fields.Select(f => new { name = f.Name, inputId = f.InputId }).ToArray());
+        return new DenResponse(raw.Status, raw.Text);
+    }
+
     public async Task<bool> CopyAsync(string text)
     {
         _module ??= await js.InvokeAsync<IJSObjectReference>("import", "./js/den.js");
