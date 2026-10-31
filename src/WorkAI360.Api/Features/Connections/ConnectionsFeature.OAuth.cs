@@ -9,12 +9,12 @@ public sealed partial class ConnectionsFeature
     private static string E(string value) => WebUtility.HtmlEncode(value);
 
     /// <summary>The small page the provider's browser tab lands on. It carries no token and never says why a sign-in failed beyond our own words.</summary>
-    private static IResult CallbackPage(ConnectionService.CallbackResult r)
+    private static IResult CallbackPage(ConnectionService.CallbackResult r, string webUrl)
     {
         var title = r.Ok ? "You're connected" : "Connection failed";
         var body = r.Ok
-            ? $"""<div class="status-row success"><span class="status-icon" aria-hidden="true">✓</span><span><strong data-testid="callback-name">{E(r.Name)} is connected to OpenWork.</strong><small>Connection complete</small></span></div><p>You can close this window and return to OpenWork.</p>"""
-            : $"""<div class="status-row failure"><span class="status-icon" aria-hidden="true">!</span><span><strong data-testid="callback-name">{E(r.Name)}</strong><small>{E(r.Message ?? "")}</small></span></div>{(r.ReferenceId is null ? "" : $"<p class=\"reference\">Diagnostic reference: <code>{E(r.ReferenceId)}</code></p>")}<p>Return to OpenWork to try connecting again. You can close this window.</p>""";
+            ? $"""<div class="status-row success"><span class="status-icon" aria-hidden="true">✓</span><span><strong data-testid="callback-name">{E(r.Name)} is connected to OpenWork.</strong><small>Connection complete</small></span></div><p>You can close this window and return to OpenWork, or <a href="{E(webUrl)}/dashboard/your-connections">open Your connections</a>.</p>"""
+            : $"""<div class="status-row failure"><span class="status-icon" aria-hidden="true">!</span><span><strong data-testid="callback-name">{E(r.Name)}</strong><small>{E(r.Message ?? "")}</small></span></div>{(r.ReferenceId is null ? "" : $"<p class=\"reference\">Diagnostic reference: <code>{E(r.ReferenceId)}</code></p>")}<p>Return to OpenWork to try connecting again. You can close this window, or <a href="{E(webUrl)}/dashboard/your-connections">open Your connections</a>.</p>""";
         var html = $$"""
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light"><title>{{E(title)}} — OpenWork</title>
@@ -31,7 +31,7 @@ public sealed partial class ConnectionsFeature
         var result = await service.CompleteOAuthAsync(q["state"].ToString(), q["code"].ToString().Length > 0 ? q["code"].ToString() : null, q["error"].ToString().Length > 0 ? q["error"].ToString() : null,
             q.ContainsKey("iss") ? q["iss"].ToString() : null, scopedConnectionId, ctx.RequestAborted);
         ctx.Response.Headers.CacheControl = "no-store";
-        return result.BadRequest ? Results.Json(new { error = "invalid_request", message = result.Message }, statusCode: 400) : CallbackPage(result);
+        return result.BadRequest ? Results.Json(new { error = "invalid_request", message = result.Message }, statusCode: 400) : CallbackPage(result, service.WebUrl);
     }
 
     private static void MapOAuthRoutes(WebApplication app)

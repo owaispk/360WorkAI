@@ -207,6 +207,10 @@ public sealed class ConnectionTests : IClassFixture<ConnectionFactory>, IAsyncLi
         Assert.Contains(bob.MemberId, members); Assert.Contains(carol.MemberId, members);
         Assert.False(own.Body.GetProperty("access").GetProperty("orgWide").GetBoolean());
         var id = own.Body.GetProperty("id").GetString()!;
+        // Left to its default (everyone), a member's connection is refused; nor can they add keys or shared OAuth.
+        Assert.Equal(HttpStatusCode.Forbidden, (await w.Post(bob, new { name = "All", url = _fake.Url("none"), authType = "none" })).Status);
+        Assert.Equal(HttpStatusCode.Forbidden, (await w.Post(bob, new { name = "Key", url = _fake.Url("key"), authType = "apikey", apiKey = FakeMcpServer.Key })).Status);
+        Assert.Equal(HttpStatusCode.Forbidden, (await w.Post(bob, new { name = "Shared", url = _fake.Url("oauth"), authType = "oauth" })).Status);
         // Bob may reshape who can use it, but not make it org-wide, and can drop others but never himself.
         Assert.Equal(HttpStatusCode.Forbidden, (await w.CallAsync(bob, HttpMethod.Put, $"/v1/mcp-connections/{id}/access", new { access = new { orgWide = true } })).Status);
         var narrowed = await w.CallAsync(bob, HttpMethod.Put, $"/v1/mcp-connections/{id}/access", new { access = ConnectionHelpers.Only() });
