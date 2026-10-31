@@ -1,0 +1,265 @@
+@page "/dashboard/desktop-policies"
+@inherits ActionPage
+@using System.Text.Json
+
+<PageTitle>Desktop app policies · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="desktop-policies-page">
+    @if (_loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (!Can("desktop_policies.view"))
+    {
+        <h1>Desktop app policies</h1>
+        <p class="den-muted" data-testid="no-access">You don't have access to desktop policies. Ask an admin to change your permissions.</p>
+        <a class="den-link" href="/dashboard">Back to dashboard</a>
+    }
+    else
+    {
+        <h1>Desktop app policies</h1>
+        <p class="den-muted">Choose what the OpenWork desktop app lets people do. A setting is on for a person when the default policy or any policy given to them turns it on; a policy's access limit then turns settings off.</p>
+
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @if (NeedsReauth)
+        {
+            <ReauthForm @bind-Password="ReauthPassword" Busy="Busy" OnConfirm="ConfirmItsYouAsync" OnCancel="CancelReauth" />
+        }
+
+        <ul class="den-members" data-testid="policy-list">
+            @foreach (var p in _policies)
+            {
+                <li data-testid="policy-row" data-name="@p.Name" data-default="@(p.IsDefault ? "true" : "false")">
+                    <div class="den-member-main">
+                        <strong>@p.Name @if (p.IsDefault) { <span class="den-badge">Default</span> } @if (!p.IsEnabled) { <span class="den-badge den-badge-pending">Off</span> }</strong>
+                        <span class="den-muted" data-testid="policy-who">@Who(p)</span>
+                    </div>
+                    <div class="den-member-actions">
+                        <button type="button" class="den-link" data-testid="edit-policy" @onclick="() => Edit(p)">@(_editing?.Id == p.Id ? "Editing" : (Can("desktop_policies.manage") ? "Edit" : "View"))</button>
+                        @if (Can("desktop_policies.manage") && !p.IsDefault)
+                        {
+                            @if (_confirmDelete == p.Id)
+                            {
+                                <button type="button" class="den-link den-danger" data-testid="confirm-delete" @onclick="() => DeleteAsync(p)">Confirm delete</button>
+                                <button type="button" class="den-link" @onclick="() => _confirmDelete = null">Cancel</button>
+                            }
+                            else { <button type="button" class="den-link" @onclick="() => _confirmDelete = p.Id">Delete</button> }
+                        }
+                    </div>
+                </li>
+            }
+        </ul>
+
+        @if (Can("desktop_policies.manage") && _editing is null)
+        {
+            <button type="button" class="den-link" data-testid="new-policy" @onclick="StartNew">New policy</button>
+        }
+
+        @if (_editing is { } e)
+        {
+            <h2 data-testid="editor-title">@(e.Id is null ? "New policy" : e.Name)</h2>
+            <fieldset disabled="@(!Can("desktop_policies.manage"))" class="den-fieldset">
+                @if (!e.IsDefault)
+                {
+                    <label for="policy-name">Name</label>
+                    <input id="policy-name" autocomplete="off" value="@e.Name" @oninput="ev => e.Name = ev.Value?.ToString() ?? string.Empty" />
+                    <label class="den-check"><input id="policy-enabled" type="checkbox" checked="@e.IsEnabled" @onchange="ev => e.IsEnabled = ev.Value is true" /> <span>On</span></label>
+                    <label for="policy-priority">Priority (higher wins when several policies suggest prompts)</label>
+                    <input id="policy-priority" type="number" min="0" max="1000000" value="@e.Priority" @oninput="ev => e.Priority = int.TryParse(ev.Value?.ToString(), out var n) ? n : 0" />
+                }
+                <h3>Settings</h3>
+                <ul class="den-members" data-testid="setting-list">
+                    @foreach (var d in _definitions)
+                    {
+                        <li data-testid="setting-row" data-key="@d.Id">
+                            <div class="den-member-main"><strong>@d.Name</strong><span class="den-muted">@d.Description</span></div>
+                            <div class="den-member-actions">
+                                <select aria-label="@d.Name" value="@e.Values[d.Id]" @onchange="ev => e.Values[d.Id] = ev.Value?.ToString() ?? string.Empty">
+                                    @if (!e.IsDefault) { <option value="">Not set</option> }
+                                    <option value="on">On</option>
+                                    <option value="off">Off</option>
+                                </select>
+                            </div>
+                        </li>
+                    }
+                </ul>
+                @if (!e.IsDefault)
+                {
+                    <h3>Who it applies to</h3>
+                    <p class="den-muted">Leave everything empty to keep the policy ready without applying it to anyone.</p>
+                    @foreach (var r in new[] { "owner", "admin", "member" })
+                    {
+                        <label class="den-check"><input type="checkbox" data-role="@r" checked="@e.Roles.Contains(r)" @onchange="ev => Toggle(e.Roles, r, ev.Value is true)" /> <span>Everyone with the @r role@(r == "member" ? " (all members)" : r == "admin" ? " (admins and owners)" : "")</span></label>
+                    }
+                    @foreach (var t in _teams)
+                    {
+                        <label class="den-check"><input type="checkbox" data-team="@t.Name" checked="@e.TeamIds.Contains(t.Id)" @onchange="ev => Toggle(e.TeamIds, t.Id, ev.Value is true)" /> <span>Team: @t.Name</span></label>
+                    }
+                    @foreach (var m in _people)
+                    {
+                        <label class="den-check"><input type="checkbox" data-email="@m.Email" checked="@e.MemberIds.Contains(m.Id)" @onchange="ev => Toggle(e.MemberIds, m.Id, ev.Value is true)" /> <span>@m.Name <span class="den-muted">@m.Email</span></span></label>
+                    }
+                }
+            </fieldset>
+            <div class="den-inline">
+                @if (Can("desktop_policies.manage"))
+                {
+                    <button type="button" class="den-button" data-testid="save-policy" disabled="@Busy" @onclick="SaveAsync">Save policy</button>
+                }
+                <button type="button" class="den-link" @onclick="() => _editing = null">Close</button>
+            </div>
+        }
+
+        <h2>Automations</h2>
+        <p class="den-muted">Whether members may create and run Automations. Turning one off keeps existing ones and pauses their runs.</p>
+        <label class="den-check"><input id="auto-desktop" type="checkbox" disabled="@(!Can("organization.update"))" checked="@_autoDesktop" @onchange="ev => _autoDesktop = ev.Value is true" /> <span>Desktop Automations (run on a member's computer)</span></label>
+        <label class="den-check"><input id="auto-cloud" type="checkbox" disabled="@(!Can("organization.update") || !_cloudPossible)" checked="@_autoCloud" @onchange="ev => _autoCloud = ev.Value is true" /> <span>Cloud Automations @(_cloudPossible ? "" : "(needs the runner for cloud Automations, which this deployment does not have)")</span></label>
+        @if (Can("organization.update"))
+        {
+            <button type="button" class="den-link" data-testid="save-automations" disabled="@Busy" @onclick="SaveAutomationsAsync">Save Automations</button>
+        }
+
+        <a class="den-link" href="/dashboard">Back to dashboard</a>
+    }
+</section>
+
+@code {
+    private sealed record Def(string Id, string Name, string Description);
+    private sealed record Team(string Id, string Name);
+    private sealed record Person(string Id, string Name, string Email);
+    private sealed record Assignment(string? MemberId, string? TeamId, string? Role);
+    private sealed class Policy
+    {
+        public string? Id { get; set; }
+        public string Name { get; set; } = "";
+        public bool IsDefault { get; set; }
+        public bool IsEnabled { get; set; } = true;
+        public int Priority { get; set; }
+        public Dictionary<string, string> Values { get; set; } = [];
+        public List<string> Roles { get; set; } = [], TeamIds { get; set; } = [], MemberIds { get; set; } = [];
+    }
+
+    private bool _loading = true;
+    private HashSet<string> _permissions = [];
+    private List<Def> _definitions = [];
+    private List<Policy> _policies = [];
+    private List<Team> _teams = [];
+    private List<Person> _people = [];
+    private Policy? _editing;
+    private string? _confirmDelete;
+    private bool _autoDesktop = true, _autoCloud = true, _cloudPossible;
+
+    private bool Can(string permission) => _permissions.Contains(permission);
+
+    private static void Toggle(List<string> list, string value, bool on) { list.Remove(value); if (on) list.Add(value); }
+
+    private string Who(Policy p)
+    {
+        if (p.IsDefault) return "Everyone starts from this policy.";
+        var parts = new List<string>();
+        parts.AddRange(p.Roles.Select(r => $"the {r} role"));
+        parts.AddRange(p.TeamIds.Select(id => _teams.FirstOrDefault(t => t.Id == id)?.Name ?? "a removed team"));
+        parts.AddRange(p.MemberIds.Select(id => _people.FirstOrDefault(m => m.Id == id)?.Name ?? "a removed person"));
+        return parts.Count == 0 ? "Not given to anyone yet." : "Applies to " + string.Join(", ", parts);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var me = await Den.RequestAsync("/api/browser/v1/me");
+        if (!me.Ok) { Nav.NavigateTo("/"); return; }
+        MyEmail = me.String("user", "email") ?? "";
+        if (!await LoadAsync()) return;
+        _loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync() => await LoadAsync();
+
+    private async Task<bool> LoadAsync()
+    {
+        var org = await Den.RequestAsync("/api/browser/v1/org");
+        if (org.Status is 404 or 403) { Nav.NavigateTo("/organization"); return false; }
+        if (org.Json is not { ValueKind: JsonValueKind.Object } root) return false;
+        _permissions = root.GetProperty("currentMember").GetProperty("permissions").EnumerateArray().Select(p => p.GetString() ?? "").ToHashSet();
+        _teams = root.GetProperty("teams").EnumerateArray().Select(t => new Team(t.GetProperty("id").GetString() ?? "", t.GetProperty("name").GetString() ?? "")).OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        _people = root.GetProperty("members").EnumerateArray().Where(m => m.GetProperty("userId").ValueKind != JsonValueKind.Null)
+            .Select(m => new Person(m.GetProperty("id").GetString() ?? "", m.GetProperty("user").GetProperty("name").GetString() ?? "", m.GetProperty("user").GetProperty("email").GetString() ?? "")).ToList();
+        if (Can("desktop_policies.view") && await Den.RequestAsync("/api/browser/v1/desktop-policies") is { Ok: true, Json: { } list })
+        {
+            _definitions = list.GetProperty("definitions").EnumerateArray().Select(d => new Def(d.GetProperty("id").GetString() ?? "", d.GetProperty("name").GetString() ?? "", d.GetProperty("description").GetString() ?? "")).ToList();
+            _policies = list.GetProperty("desktopPolicies").EnumerateArray().Select(Read).ToList();
+            if (_editing?.Id is { } id) _editing = _policies.FirstOrDefault(p => p.Id == id);
+        }
+        if (await Den.RequestAsync("/api/browser/v1/org/automation-settings") is { Ok: true, Json: { } a })
+        {
+            _autoDesktop = a.GetProperty("settings").GetProperty("desktop").GetBoolean();
+            _autoCloud = a.GetProperty("settings").GetProperty("cloud").GetBoolean();
+            _cloudPossible = a.GetProperty("headlessRunnerConfigured").GetBoolean();
+        }
+        return true;
+    }
+
+    private Policy Read(JsonElement p)
+    {
+        var policy = new Policy
+        {
+            Id = p.GetProperty("id").GetString(), Name = p.GetProperty("policyName").GetString() ?? "", IsDefault = p.GetProperty("isDefault").GetBoolean(),
+            IsEnabled = p.GetProperty("isEnabled").GetBoolean(), Priority = p.GetProperty("priority").GetInt32(),
+        };
+        var doc = p.GetProperty("policy");
+        policy.Values = _definitions.ToDictionary(d => d.Id, d => doc.TryGetProperty(d.Id, out var v) ? (v.GetBoolean() ? "on" : "off") : "");
+        foreach (var a in p.GetProperty("assignments").EnumerateArray())
+        {
+            if (a.GetProperty("orgMemberId").GetString() is { } m) policy.MemberIds.Add(m);
+            if (a.GetProperty("teamId").GetString() is { } t) policy.TeamIds.Add(t);
+            if (a.GetProperty("role").GetString() is { } r) policy.Roles.Add(r);
+        }
+        return policy;
+    }
+
+    private void Edit(Policy p)
+    {
+        Error = Notice = null;
+        _editing = new Policy
+        {
+            Id = p.Id, Name = p.Name, IsDefault = p.IsDefault, IsEnabled = p.IsEnabled, Priority = p.Priority, Values = new(p.Values),
+            Roles = [.. p.Roles], TeamIds = [.. p.TeamIds], MemberIds = [.. p.MemberIds],
+        };
+    }
+
+    private void StartNew()
+    {
+        Error = Notice = null;
+        _editing = new Policy { Values = _definitions.ToDictionary(d => d.Id, _ => "") };
+    }
+
+    private Task SaveAsync()
+    {
+        var e = _editing!;
+        var policy = new Dictionary<string, bool>();
+        foreach (var (key, value) in e.Values) if (value is "on" or "off") policy[key] = value == "on";
+        var body = new { policyName = e.IsDefault ? "Default desktop policy" : e.Name, policy, priority = e.Priority, isEnabled = e.IsEnabled, memberIds = e.MemberIds, teamIds = e.TeamIds, roles = e.Roles };
+        var creating = e.Id is null;
+        return RunAsync(
+            async () =>
+            {
+                var r = await Den.RequestAsync(creating ? "/api/browser/v1/desktop-policies" : $"/api/browser/v1/desktop-policies/{e.Id}", creating ? "POST" : "PATCH", body);
+                if (r.Ok && creating) _editing = null;
+                return r;
+            },
+            creating ? $"Policy {e.Name} created." : $"Policy {e.Name} saved.",
+            r => r.Status == 400 ? r.Message("Check the name and settings.") : null);
+    }
+
+    private async Task DeleteAsync(Policy p)
+    {
+        _confirmDelete = null;
+        if (_editing?.Id == p.Id) _editing = null;
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/desktop-policies/{p.Id}", "DELETE"), $"Policy {p.Name} deleted.");
+    }
+
+    private Task SaveAutomationsAsync() =>
+        RunAsync(() => Den.RequestAsync("/api/browser/v1/org/automation-settings", "PUT", _cloudPossible ? new { desktop = _autoDesktop, cloud = _autoCloud } : new { desktop = _autoDesktop }), "Automation settings saved.");
+}
