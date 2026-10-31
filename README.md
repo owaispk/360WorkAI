@@ -4,20 +4,25 @@ A rewrite of the OpenWork Den API (`ee/apps/den-api`, TypeScript, Hono + Better 
 (`ee/apps/den-web`, Next.js) as ASP.NET Core 10 and Blazor. It keeps the **wire contract** the existing clients
 depend on (routes, JSON shapes, cookie name, bearer = session token) and replaces the internals.
 
-Status: **early**. Sign-in, sessions, **email verification and password reset**, organizations, **members, roles and
-invitations**, **teams and permissions**, desktop handoff, device login and the **OAuth provider for MCP clients** (with a working `/mcp/agent`) are built and tested. Most of Den is not built yet (see
-[Not built yet](#not-built-yet)). The route list this follows comes from the S6 spike (which `/api/auth/*` routes real
-clients call).
+Status: **a working core of Den, not all of Den.** Built and tested: sign-in, sessions, email verification and password reset, organizations,
+members, roles and invitations, teams and permissions, desktop handoff, device login, the OAuth provider for MCP clients (with `/mcp/agent`),
+and five larger areas: the **library** (plugins, skills, marketplaces, sharing), **org administration** (API keys, audit log, settings, web origins,
+brand), **connections** (external MCP servers, tool policy, OAuth sign-in), **SSO and SCIM**, and **policy** (desktop policies, agent permissions,
+prompts, default model). It runs on SQLite or MySQL. About 40% of the reference's route registrations and a corresponding share of its web
+pages exist; what is missing is listed honestly in [Not built yet](#not-built-yet), mostly features that need outside services (billing,
+model gateways, cloud sandboxes, Google/Microsoft integrations). Each area has a page under [docs/features](docs/features).
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `src/WorkAI360.Api` | ASP.NET Core minimal API: `/api/auth/*`, `/v1/*`, EF Core (SQLite for now) |
+| `src/WorkAI360.Api` | ASP.NET Core minimal API: `/api/auth/*`, `/v1/*`, EF Core (SQLite or MySQL). Areas live in `Features/<Area>/` and register themselves |
 | `src/WorkAI360.Web` | Blazor (Interactive Server) app and the same-origin reverse proxy (YARP) in front of the API |
 | `tests/WorkAI360.Api.Tests` | xUnit tests, in-process (`WebApplicationFactory`) |
 | `tests/parity` | Contract tests that run unchanged against the **reference** Den and this rewrite |
 | `scripts/dev.sh` | Start / stop the API (`:5080`) and web (`:5081`) |
+| `docs/` | `AREA_GUIDE.md` (how to build an area), `database.md`, and `features/*.md` (what each area implements and how it differs from the reference) |
+| `deploy/` | Dockerfiles, a compose stack (MySQL + migrate + API + web) and a GitHub Actions template |
 
 ## Run
 
@@ -35,7 +40,8 @@ Open `http://localhost:5081`. The API needs `Auth__Secret` (32+ characters). Dev
 ## Test
 
 ```bash
-dotnet test                                                    # 166 in-process API tests (~20 s)
+dotnet test                                                    # 567 in-process API tests (~1 min)
+WORKAI_TEST_MYSQL="Server=127.0.0.1;User=root;Password=..." dotnet test   # the same tests on MySQL (a throwaway database per test class)
 
 # Contract tests against the running rewrite (web is W, API is A):
 W=http://localhost:5081 A=http://localhost:5080 \
@@ -46,6 +52,9 @@ W=http://localhost:5081 node tests/parity/ui-flows.js                       # si
 W=http://localhost:5081 A=http://localhost:5080 node tests/parity/ui-mcp.js  # an agent connecting, end to end
 W=http://localhost:5081 A=http://localhost:5080 node tests/parity/ui-members.js  # invite, join, change role, remove
 W=http://localhost:5081 A=http://localhost:5080 node tests/parity/ui-teams.js    # teams, Admin teams, roles and permissions
+# One contract script and one browser script per area (each header says how to start the server for it; the reference is the default target):
+#   area-library.mjs  area-org-admin.mjs  area-connections.mjs  area-policy.mjs  area-sso.mjs
+#   ui-library.js     ui-org-admin.js     ui-connections.js     ui-policy.js     ui-sso.js
 
 # Email verification and reset (start the rewrite with the setting below; it reads the dev outbox):
 Auth__RequireEmailVerification=true scripts/dev.sh restart
@@ -78,6 +87,11 @@ It is the yardstick for "does the rewrite behave like Den": a route is done when
 | MCP | `POST /mcp/agent` (JSON-RPC: `initialize`, `ping`, `tools/list`, `tools/call`) with the tools `search_capabilities` and `execute_capability`; `POST /v1/mcp/token` (first-party `ow_mcp_at_…` tokens) |
 | Sign-in form helpers | `GET /v1/auth/login-options`, `GET /v1/orgs/sso/resolve` (always "not SSO"), bootstrap status/verify (report "unavailable") |
 | Refusals | the 28 Better Auth mutations the reference refuses answer `403`; every other unknown `/api/auth/*` path is `404` |
+| Library ([docs](docs/features/library.md)) | Plugins, skills (config objects, versioned), marketplaces, sharing with people, teams or everyone, "my library", usage, GitHub import (real HTTP, configurable hosts), `resolved-plugins`, declarative by-key marketplaces; agents find and read the skills shared with them through `search_capabilities` / `execute_capability`. Pages under `/dashboard/plugins`, `/skills`, `/marketplaces`, `/library` |
+| Org administration ([docs](docs/features/org-admin.md)) | API keys (`x-api-key` or `Bearer den_…`, hashed, rate-limited, disabled when a person loses access), the audit log (operations, events, usage, ndjson/csv export, signed cursors, capture switch), `PATCH`/`DELETE /v1/org`, approved web origins, brand assets, features, `GET /v1/org` envelope. Pages `/dashboard/api-keys`, `/audit-logs`, `/org-settings`, `/brand-appearance` |
+| Connections ([docs](docs/features/connections.md)) | `/v1/mcp-connections*`: catalog presets, create/edit/delete, per-person and shared credentials, access grants, tool policy, discovery (incl. server-sent events), a real Streamable-HTTP MCP client, OAuth sign-in with protected servers (PKCE, dynamic registration, refresh), an SSRF-safe outbound guard, and a capability provider that exposes allowed tools to agents. Pages `/dashboard/mcp-connections`, `/your-connections`, `/connect/mcp` |
+| SSO and SCIM ([docs](docs/features/sso-scim.md)) | `/v1/sso*` (OIDC connection, domain proof by DNS TXT, test, enable/disable), `POST /api/auth/sign-in/sso` + callback (state, nonce, PKCE, ID-token validation), SSO-enforced workspaces close password sign-in, SCIM v2 `/Users` and `/Groups` with a hashed bearer token, group-to-team mapping, reconcile, deprovisioning. Pages `/dashboard/sso`, `/scim`, `/sso/{slug}` and the sign-in form's SSO step |
+| Policy ([docs](docs/features/policy.md)) | Desktop policies (default, access/execution limits, assignments by role, team or person, by-key), agent permissions (everyone/team), prompts, default model, Automation and Workbot settings; what a person's desktop receives (`/v1/me/desktop-config`, `/v1/me/prompts`). Pages `/dashboard/policy`, `/desktop-policies` |
 | Web host | `/api/auth/*`, `/api/browser/v1/*` (same-origin guard, cookie filter) proxied to the API; the aliases `login-options`, `sso-resolve`, `desktop-handoff`; `/api/health`, `/api/ready`, `/api/runtime-config`, `/api/auth/clear-session-cookie` |
 | Blazor pages | `/` (email-first sign-in or sign-up; resumes an agent's authorization afterwards), `/organization`, `/dashboard`, `/dashboard/members` (list, invite, change role, remove, make owner, copy or cancel an invitation), `/dashboard/teams` (create, rename, delete, choose people, Admin teams), `/dashboard/permissions` (roles by area, shared roles, give to teams, history), `/join-org` (open an invitation link), `/device`, `/mcp/consent` and `/mcp/select-organization` (allow or deny an agent, choose or create a workspace), `/connect/error`, `/reset-password` (and the verify-code and forgot-password steps on `/`) |
 
@@ -96,6 +110,9 @@ Set with environment variables (`Auth__Secret`) or `appsettings`.
 | `Database__Provider`, `ConnectionStrings__Default`, `Database__AutoMigrate` | `sqlite` (default) or `mysql`; see [docs/database.md](docs/database.md). |
 | `Auth__SigningKeyRotationDays`, `Auth__SigningKeyGraceHours` | A new OAuth signing key after this many days (default 90); the old one stays published for the grace period (default 48 hours). |
 | `OAuth__ClientMetadata__AllowPrivateUrls` | Let Client ID Metadata Documents be fetched from private addresses (self-hosted setups; default off). |
+| `Connections__AllowPrivateUrls`, `__ToolTimeoutSeconds`, `__MaxResponseBytes`, `__ExpandedPresets` | Connections: outbound calls to private addresses are refused unless this is true (local runs and tests only). |
+| `Library__GithubApiBase`, `Library__GithubRawBase` | Where GitHub import reads from (default GitHub). |
+| `Sso__AllowPrivateNetworks` | Let SSO providers and DNS proof use private networks (never in production). |
 | `Auth__RateLimitsEnabled` | Rate limits on the email endpoints. Default: off in Development, on everywhere else. |
 | `Email__Provider` | `smtp`, `resend` (needs `Email__Resend__ApiKey`) or `dev`. `dev` keeps messages in memory and exposes them at `GET /dev/outbox` (**Development only; refused anywhere else**). `smtp` and `resend` send real mail. |
 | `Email__From`, `Email__Smtp__Host`, `__Port`, `__User`, `__Password`, `__Security` | SMTP settings. `Security` is `auto` (default), `starttls`, `ssl` or `none` (local test servers only). |
@@ -136,17 +153,20 @@ Set with environment variables (`Auth__Secret`) or `appsettings`.
 
 ## Not built yet
 
-Roughly in the order to build them:
+The reference has about 400 distinct `/v1` paths and 129 web pages; this covers the core and the five areas above. What is **not** built, and why:
 
-1. **OAuth follow-ups**: a rate limit on registration, `client_credentials`/introspection/`private_key_jwt` (the reference offers them; no client here needs them yet), ID tokens and `userinfo` (the OpenID document is served but no ID tokens are issued), and Workbot's fixed client id. Testing against real clients (Claude Code, Cursor) has not been done: the flows are exercised with a scripted client and a real browser.
-2. **MCP connections**: the capabilities behind `execute_capability` (Google Workspace, Microsoft 365 and other MCP servers), plus streaming responses.
-3. **More email**: the other code types (`sign-in`, `forget-password`, `change-email`), and a shared rate-limit store for more than one instance.
-4. **Members and teams follow-ups**: API keys, invitation limits, invite-into-a-team, declarative `PUT /v1/teams/by-key/{key}`, a leave-workspace action, and a re-sign-in dialog that retries in place (the Members page does ask for the password, but other pages do not).
-5. **Social sign-in** (Google, GitHub), **SSO** (OIDC/SAML) and **SCIM**.
-6. The rest of `/v1/*` (about 550 route registrations in the reference) and the other ~120 web pages.
-7. **Passwords**: the reference's strength score and breached-password screening.
-8. **Operations**: Helm packaging, a shared rate-limit store and cache for more than one instance (limits and signing-key reload are per instance today), and running the container build in CI (no Docker daemon was available here, so the Dockerfiles are written and the publishes verified, but the images were not built).
-9. **Cloud web handoff return URLs** (`returnUrl`) are refused until an approved-origin list exists.
+**Needs outside services that were not available (so it was not faked):**
+- **Billing and plans** (Stripe checkout, plan limits, free seats), the **AI Gateway and model providers** (LiteLLM-style sync, usage limits, provider inventory, `inference*`, `llm-providers*`, the Auto Router), **managed deployments** in customers' clouds, and **cloud sandboxes** (sandbox join, headless/remote sessions, session runners, workers).
+- **Google Workspace, Microsoft 365 and Gmail** integrations (and every connection of kind `native_provider`), the Slack assistant, and the GitHub App install routes.
+
+**Not reached yet (no outside dependency):**
+- **Automations**, workflows and workflow/script runs (`/v1/automations*`, `/v1/automation-runs*`, `/v1/codemode*`), and **telemetry/analytics** (`/v1/telemetry*`).
+- **Platform admin** (`/v1/admin/*`: users, organizations, admins, feature flags, overview and metrics, the `/admin` pages), and the install-link and `/v1/me/*` extras listed in [docs/features/org-admin.md](docs/features/org-admin.md).
+- **SAML** sign-in (the SSO route answers 501), web-origin *enforcement* (the list is stored but nothing reads it), plugin–connection bindings, `/v1/oauth-providers*`, invite-into-a-team, declarative team keys.
+- **OAuth**: `client_credentials`, introspection, `private_key_jwt`, ID tokens and `userinfo`, a rate limit on client registration. **Passwords**: the reference's strength score and breached-password screening. **Email**: the sign-in, forget-password and change-email code types. **Social sign-in** (Google, GitHub).
+- **Operations**: Helm packaging; a shared store for rate limits and caches (they are per instance); the container images were written and the publishes verified, but not built (no Docker daemon here); the CI template is not enabled in the repository's own CI.
+
+Each area's page in [docs/features](docs/features) lists its own gaps and its differences from the reference.
 
 ## Licensing note
 
