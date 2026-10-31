@@ -145,3 +145,8 @@ public sealed class OrgDefaultModelConfiguration : IEntityTypeConfiguration<OrgD
         b.HasOne<Team>().WithMany().HasForeignKey(p => p.TeamId).OnDelete(DeleteBehavior.Cascade);
     }
 }
+
+public sealed class OrgPolicySettingsConfiguration : IEntityTypeConfiguration<OrgPolicySettings>
+{
+    public void Configure(EntityTypeBuilder<OrgPolicySettings> b) => b.HasKey(s => s.Id);
+}
