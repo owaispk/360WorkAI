@@ -23,6 +23,15 @@ public sealed class DenDbContext(DbContextOptions<DenDbContext> options) : DbCon
         return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
 
+    /// <summary>
+    /// Makes concurrent requests for one workspace queue up: call it first inside a transaction and the workspace row stays locked until the
+    /// transaction ends. Needed wherever a rule spans several rows ("at most 20 of these", "replace all of these"), because MySQL lets two
+    /// transactions read the same counts at once. A write that changes nothing takes the row lock on MySQL and the writer lock on SQLite,
+    /// with no result set to leave open.
+    /// </summary>
+    public Task LockOrganizationAsync(string organizationId) =>
+        Database.ExecuteSqlAsync($"UPDATE `Organizations` SET `Name` = `Name` WHERE `Id` = {organizationId}");
+
     private void RefreshDerivedKeys()
     {
         foreach (var entry in ChangeTracker.Entries<IDerivedKeys>().Where(e => e.State is EntityState.Added or EntityState.Modified)) entry.Entity.RefreshKeys();

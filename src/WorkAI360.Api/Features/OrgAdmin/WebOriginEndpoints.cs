@@ -63,6 +63,7 @@ public static class WebOriginEndpoints
             // The limit and the duplicate check run inside one transaction, and a unique index backs the duplicate rule, so concurrent requests cannot exceed either.
             await using (var tx = await db.Database.BeginTransactionAsync())
             {
+                await db.LockOrganizationAsync(organizationId);
                 if (await db.Set<OrganizationWebOrigin>().AnyAsync(o => o.OrganizationId == organizationId && o.Origin == origin)) return AlreadyApproved();
                 if (await db.Set<OrganizationWebOrigin>().CountAsync(o => o.OrganizationId == organizationId) >= Limit) return LimitReached();
                 db.Set<OrganizationWebOrigin>().Add(row);

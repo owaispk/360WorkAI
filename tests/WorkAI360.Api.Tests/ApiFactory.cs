@@ -35,8 +35,9 @@ public class ApiFactory : WebApplicationFactory<Program>
                 create.ExecuteNonQuery();
             }
             builder.UseSetting("Database:Provider", "mysql");
-            // A small pool each: dozens of factories run at once and the server only allows so many connections in total.
-            builder.UseSetting("ConnectionStrings:Default", $"{MySqlServer};Database={_mysqlDatabase};Maximum Pool Size=6;Connection Lifetime=30");
+            // A pool large enough for the concurrency tests (requests waiting on a lock each hold a connection, and the lock holder may need another);
+            // it is released when the factory is disposed, because dozens of factories run in turn and the server only allows so many in total.
+            builder.UseSetting("ConnectionStrings:Default", $"{MySqlServer};Database={_mysqlDatabase};Maximum Pool Size=40");
         }
         builder.UseSetting("environment", "Development");
     }
@@ -84,6 +85,7 @@ public class ApiFactory : WebApplicationFactory<Program>
         {
             try
             {
+                using (var pooled = new MySql.Data.MySqlClient.MySqlConnection($"{MySqlServer};Database={_mysqlDatabase};Maximum Pool Size=40")) MySql.Data.MySqlClient.MySqlConnection.ClearPool(pooled);
                 using var admin = new MySql.Data.MySqlClient.MySqlConnection(MySqlServer);
                 admin.Open();
                 using var drop = admin.CreateCommand();

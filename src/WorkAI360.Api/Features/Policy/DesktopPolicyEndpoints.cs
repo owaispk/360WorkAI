@@ -273,6 +273,7 @@ public static class DesktopPolicyEndpoints
         try
         {
             await using var tx = await db.Database.BeginTransactionAsync();
+            await db.LockOrganizationAsync(c.Organization.Id);
             if (!existing.IsDefault)
             {
                 await db.Set<DesktopPolicyAssignment>().Where(a => a.PolicyId == existing.Id).ExecuteDeleteAsync();
