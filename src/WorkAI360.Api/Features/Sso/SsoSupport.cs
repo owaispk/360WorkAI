@@ -94,7 +94,7 @@ public sealed class SystemDnsTxtResolver(IOptions<SsoOptions> options) : IDnsTxt
         return configured;
     }
 
-    internal static byte[] BuildQuery(string name, ushort id)
+    public static byte[] BuildQuery(string name, ushort id)
     {
         var bytes = new List<byte>();
         bytes.AddRange([(byte)(id >> 8), (byte)id, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0]);
@@ -140,7 +140,7 @@ public sealed class SystemDnsTxtResolver(IOptions<SsoOptions> options) : IDnsTxt
         return ParseTxt(response, id);
     }
 
-    internal static IReadOnlyList<string> ParseTxt(byte[] m, ushort expectedId)
+    public static IReadOnlyList<string> ParseTxt(byte[] m, ushort expectedId)
     {
         if (m.Length < 12 || BinaryPrimitives.ReadUInt16BigEndian(m) != expectedId) throw new InvalidDataException("Unexpected DNS response.");
         var rcode = m[3] & 0x0F;
@@ -202,6 +202,8 @@ public static class OutboundPolicy
     {
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)) return false;
         if (!string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Fragment)) return false;
+        if (!allowPrivate && (uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) || uri.Host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase)
+            || (IPAddress.TryParse(uri.Host.Trim('[', ']'), out var literal) && !IsPublicAddress(literal)))) return false;
         if (uri.Scheme == Uri.UriSchemeHttps) return true;
         return uri.Scheme == Uri.UriSchemeHttp && allowPrivate;
     }

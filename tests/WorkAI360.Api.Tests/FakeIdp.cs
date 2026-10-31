@@ -29,8 +29,8 @@ public sealed class FakeIdp : IAsyncDisposable
     public (string Sub, string Email, string Name) Identity { get; set; } = ("sub-1", "person@example.test", "Person One");
     /// <summary>nonce | no-nonce | aud | iss | exp | sig | alg-none | alg-hs256 | no-sub | no-email | state | error | kid-unknown | azp | nbf | rs-small</summary>
     public string Fault { get; set; } = "";
-    public ConcurrentBag<Dictionary<string, string>> AuthRequests { get; } = [];
-    public ConcurrentBag<Dictionary<string, string>> TokenRequests { get; } = [];
+    public ConcurrentQueue<Dictionary<string, string>> AuthRequests { get; } = new();
+    public ConcurrentQueue<Dictionary<string, string>> TokenRequests { get; } = new();
     public int TokenCalls => TokenRequests.Count;
     private readonly ConcurrentDictionary<string, (Dictionary<string, string> Query, (string Sub, string Email, string Name) Identity, string Fault, bool Used)> _codes = new();
 
@@ -84,7 +84,7 @@ public sealed class FakeIdp : IAsyncDisposable
         app.MapGet("/authorize", (HttpContext ctx) =>
         {
             var q = ctx.Request.Query.ToDictionary(k => k.Key, k => k.Value.ToString());
-            AuthRequests.Add(q);
+            AuthRequests.Enqueue(q);
             if (q.GetValueOrDefault("client_id") != ClientId || q.GetValueOrDefault("response_type") != "code" || !q.ContainsKey("redirect_uri")) return Results.BadRequest("bad authorization request");
             var back = q["redirect_uri"];
             if (Fault == "error") return Results.Redirect($"{back}{(back.Contains('?') ? '&' : '?')}error=access_denied&error_description=No&state={Uri.EscapeDataString(q.GetValueOrDefault("state") ?? "")}");
@@ -104,7 +104,7 @@ public sealed class FakeIdp : IAsyncDisposable
                 f["_auth"] = "basic";
             }
             else { id = f.GetValueOrDefault("client_id"); secret = f.GetValueOrDefault("client_secret"); f["_auth"] = "post"; }
-            TokenRequests.Add(f);
+            TokenRequests.Enqueue(f);
             if (id != ClientId || secret != ClientSecret) return Results.Json(new { error = "invalid_client" }, statusCode: 401);
             if (!f.TryGetValue("code", out var code) || !_codes.TryGetValue(code, out var rec) || rec.Used) return Results.Json(new { error = "invalid_grant" }, statusCode: 400);
             _codes[code] = rec with { Used = true };

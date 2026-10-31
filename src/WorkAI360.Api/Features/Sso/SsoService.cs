@@ -117,7 +117,7 @@ public sealed class SsoService(
         var allowPrivate = AllowPrivateNetworks;
         var scopes = input.Scopes is { Length: > 0 } ? input.Scopes : ["openid", "email", "profile"];
         var authMethod = input.TokenEndpointAuthentication ?? "client_secret_basic";
-        if (!OutboundPolicy.IsAcceptableUrl(input.Issuer, allowPrivate)) return (null, "The issuer must be an https URL.");
+        if (!OutboundPolicy.IsAcceptableUrl(input.Issuer, allowPrivate)) return (null, "The issuer must be a public https URL.");
 
         string? authz = input.AuthorizationEndpoint, token = input.TokenEndpoint, jwks = input.JwksEndpoint, userinfo = input.UserInfoEndpoint;
         if (input.SkipDiscovery)
@@ -146,7 +146,7 @@ public sealed class SsoService(
             }
         }
         foreach (var (label, value) in new[] { ("authorization", authz), ("token", token), ("JWKS", jwks), ("userinfo", userinfo) })
-            if (value is not null && !OutboundPolicy.IsAcceptableUrl(value, allowPrivate)) return (null, $"The {label} endpoint must be an https URL.");
+            if (value is not null && !OutboundPolicy.IsAcceptableUrl(value, allowPrivate)) return (null, $"The {label} endpoint must be a public https URL.");
         return (new OidcSettings(input.ClientId, scopes, authz!, token!, jwks!, userinfo, authMethod), null);
     }
 
