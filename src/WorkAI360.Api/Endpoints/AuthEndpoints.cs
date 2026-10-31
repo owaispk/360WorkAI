@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.Domain;
+using WorkAI360.Api.Features.Sso;
 
 namespace WorkAI360.Api.Endpoints;
 
@@ -46,6 +47,8 @@ public static class AuthEndpoints
         ["/device/deny"] = "Deny command-line sign-ins on the Den device page.",
     };
 
+    private const string SsoManaged = "This account is managed by an organization. Use SSO to sign in.";
+
     public static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
 
     public static bool IsValidEmail(string? email)
@@ -58,7 +61,7 @@ public static class AuthEndpoints
     {
         var auth = app.MapGroup("/api/auth");
 
-        auth.MapPost("/sign-up/email", async (SignUpBody? body, HttpContext ctx, DenDbContext db, SessionService sessions, RateLimiter limiter, IOptions<AuthOptions> options, EmailVerificationService verification) =>
+        auth.MapPost("/sign-up/email", async (SignUpBody? body, HttpContext ctx, DenDbContext db, SessionService sessions, RateLimiter limiter, IOptions<AuthOptions> options, EmailVerificationService verification, SsoRouting sso) =>
         {
             if (body is null || string.IsNullOrWhiteSpace(body.Name) || !IsValidEmail(body.Email) || body.Password is null)
                 return Json(400, new { message = "Invalid name, email or password.", code = "VALIDATION_ERROR" });
@@ -68,6 +71,7 @@ public static class AuthEndpoints
             if (limiter.Hit(RateLimiter.SignUp, NormalizeEmail(body.Email!), ClientIp(ctx)) is { } wait) return TooManyRequests(ctx, wait);
 
             var email = NormalizeEmail(body.Email!);
+            if (await sso.ForExistingUserAsync(email) is not null) return Json(403, new { message = SsoManaged });
             if (await db.Users.AnyAsync(u => u.Email == email))
                 return Json(422, new { message = "User already exists. Use another email.", code = "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL" });
 
@@ -103,7 +107,7 @@ public static class AuthEndpoints
             return Json(200, new { token, user = Responses.UserJson(user) });
         });
 
-        auth.MapPost("/sign-in/email", async (SignInBody? body, HttpContext ctx, DenDbContext db, SessionService sessions, LoginThrottle throttle, RateLimiter limiter, IOptions<AuthOptions> options, EmailVerificationService verification) =>
+        auth.MapPost("/sign-in/email", async (SignInBody? body, HttpContext ctx, DenDbContext db, SessionService sessions, LoginThrottle throttle, RateLimiter limiter, IOptions<AuthOptions> options, EmailVerificationService verification, SsoRouting sso) =>
         {
             if (body is null || !IsValidEmail(body.Email) || string.IsNullOrEmpty(body.Password))
                 return Json(400, new { message = "Invalid email or password.", code = "VALIDATION_ERROR" });
@@ -115,6 +119,9 @@ public static class AuthEndpoints
                 ctx.Response.Headers.RetryAfter = ((int)Math.Ceiling(wait.TotalSeconds)).ToString();
                 return Json(429, new { error = "login_locked", message = "Too many failed sign-in attempts. Try again later." });
             }
+
+            // People in a workspace that enforces single sign-on cannot use a password.
+            if (await sso.ForExistingUserAsync(email) is not null) return Json(403, new { message = SsoManaged });
 
             var user = await db.Users.FirstOrDefaultAsync(u => u.Email == email);
             // Verify against a dummy hash when the user is unknown so timing does not reveal which addresses exist.
