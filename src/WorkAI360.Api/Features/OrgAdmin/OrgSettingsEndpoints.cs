@@ -229,15 +229,15 @@ public static class OrgSettingsEndpoints
     /// </summary>
     public static async Task<string> InventoryRevisionAsync(DenDbContext db, string organizationId)
     {
-        var members = await db.Members.AsNoTracking().Where(m => m.OrganizationId == organizationId).Select(m => m.Id + ":" + m.Role).OrderBy(x => x).ToListAsync();
-        var teams = await db.Teams.AsNoTracking().Where(t => t.OrganizationId == organizationId).Select(t => t.Id + ":" + t.UpdatedAt.Ticks + ":" + t.GrantsOrganizationAdmin).OrderBy(x => x).ToListAsync();
+        var members = (await db.Members.AsNoTracking().Where(m => m.OrganizationId == organizationId).Select(m => new { m.Id, m.Role }).ToListAsync()).Select(m => $"{m.Id}:{m.Role}").Order(StringComparer.Ordinal).ToList();
+        var teams = (await db.Teams.AsNoTracking().Where(t => t.OrganizationId == organizationId).Select(t => new { t.Id, t.UpdatedAt, t.GrantsOrganizationAdmin }).ToListAsync()).Select(t => $"{t.Id}:{t.UpdatedAt.Ticks}:{t.GrantsOrganizationAdmin}").Order(StringComparer.Ordinal).ToList();
         var teamIds = await db.Teams.AsNoTracking().Where(t => t.OrganizationId == organizationId).Select(t => t.Id).ToListAsync();
-        var links = await db.TeamMembers.AsNoTracking().Where(l => teamIds.Contains(l.TeamId)).Select(l => l.TeamId + ":" + l.MemberId).OrderBy(x => x).ToListAsync();
+        var links = (await db.TeamMembers.AsNoTracking().Where(l => teamIds.Contains(l.TeamId)).Select(l => new { l.TeamId, l.MemberId }).ToListAsync()).Select(l => $"{l.TeamId}:{l.MemberId}").Order(StringComparer.Ordinal).ToList();
         var sets = await db.PermissionSets.AsNoTracking().Where(s => s.OrganizationId == organizationId).Select(s => s.Id).ToListAsync();
         var permissions = await db.PermissionSetPermissions.AsNoTracking().Where(p => sets.Contains(p.PermissionSetId)).CountAsync();
         var lastPermission = permissions == 0 ? 0 : (await db.PermissionSetPermissions.AsNoTracking().Where(p => sets.Contains(p.PermissionSetId)).MaxAsync(p => p.CreatedAt)).Ticks;
-        var roleLinks = await db.PermissionSetTeams.AsNoTracking().Where(l => sets.Contains(l.PermissionSetId)).Select(l => l.PermissionSetId + ":" + l.TeamId + ":" + (l.RemovedAt != null)).OrderBy(x => x).ToListAsync();
-        var settings = await db.Set<OrganizationSettings>().AsNoTracking().Where(s => s.OrganizationId == organizationId).Select(s => s.UpdatedAt.Ticks).FirstOrDefaultAsync();
+        var roleLinks = (await db.PermissionSetTeams.AsNoTracking().Where(l => sets.Contains(l.PermissionSetId)).Select(l => new { l.PermissionSetId, l.TeamId, Removed = l.RemovedAt != null }).ToListAsync()).Select(l => $"{l.PermissionSetId}:{l.TeamId}:{l.Removed}").Order(StringComparer.Ordinal).ToList();
+        var settings = (await db.Set<OrganizationSettings>().AsNoTracking().Where(s => s.OrganizationId == organizationId).Select(s => s.UpdatedAt).FirstOrDefaultAsync()).Ticks;
         var text = string.Join('|', members.Concat(teams).Concat(links).Concat(roleLinks).Append($"p{permissions}:{lastPermission}").Append($"s{settings}").Append(sets.Count.ToString()));
         return Convert.ToHexStringLower(MD5.HashData(Encoding.UTF8.GetBytes(text)));
     }

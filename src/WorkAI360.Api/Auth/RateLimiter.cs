@@ -35,6 +35,26 @@ public sealed class RateLimiter(IOptions<AuthOptions> options, IHostEnvironment 
         return worst;
     }
 
+    /// <summary>
+    /// A fixed window on any key. Returns how long to wait when the window is already full; otherwise (when <paramref name="consume"/>) counts
+    /// one use and returns null. With <paramref name="consume"/> false it only reads, so a refused caller does not spend shared budgets.
+    /// </summary>
+    public TimeSpan? Window(string key, int max, TimeSpan window, bool consume)
+    {
+        if (!Enabled) return null;
+        var now = DateTime.UtcNow;
+        if (Interlocked.Increment(ref _sweep) % 500 == 0) Sweep(now);
+        var lockObject = _buckets;
+        lock (lockObject)
+        {
+            _buckets.TryGetValue(key, out var state);
+            if (state.Start == default || now - state.Start >= window) state = (0, now);
+            if (state.Count >= max) { _buckets[key] = state; return state.Start + window - now; }
+            _buckets[key] = consume ? (state.Count + 1, state.Start) : state;
+            return null;
+        }
+    }
+
     private TimeSpan? Count(string key, int max, TimeSpan window, DateTime now)
     {
         var state = _buckets.AddOrUpdate(key, _ => (1, now), (_, s) => now - s.Start >= window ? (1, now) : (s.Count + 1, s.Start));

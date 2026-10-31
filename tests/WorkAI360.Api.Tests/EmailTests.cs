@@ -586,6 +586,95 @@ public sealed class SmtpTests
     }
 }
 
+public sealed class ResendTests
+{
+    private static async Task<(ResendEmailSender Sender, FakeResendServer Server)> SenderAsync(int status = 200)
+    {
+        var server = new FakeResendServer(status);
+        var options = Options.Create(new EmailOptions { Provider = "resend", From = "OpenWork <no-reply@example.com>", Resend = new() { ApiKey = "re_test_key", BaseUrl = server.Url } });
+        await Task.CompletedTask;
+        return (new ResendEmailSender(new HttpClient(), options, Microsoft.Extensions.Logging.Abstractions.NullLogger<ResendEmailSender>.Instance), server);
+    }
+
+    [Fact]
+    public async Task The_Resend_sender_posts_the_message_with_the_key_as_a_bearer_token()
+    {
+        var (sender, server) = await SenderAsync();
+        using var _ = server;
+        await sender.SendAsync(EmailTemplates.Verification("person@example.com", "482913"));
+        var request = await server.Received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal("POST", request.Method);
+        Assert.Equal("/emails", request.Path);
+        Assert.Equal("Bearer re_test_key", request.Authorization);
+        using var body = System.Text.Json.JsonDocument.Parse(request.Body);
+        Assert.Equal("OpenWork <no-reply@example.com>", body.RootElement.GetProperty("from").GetString());
+        Assert.Equal("person@example.com", body.RootElement.GetProperty("to")[0].GetString());
+        Assert.Equal("Your OpenWork verification code is 482913", body.RootElement.GetProperty("subject").GetString());
+        Assert.Contains("482913", body.RootElement.GetProperty("text").GetString());
+        Assert.Contains("<", body.RootElement.GetProperty("html").GetString());
+    }
+
+    [Fact]
+    public async Task A_refused_message_is_an_error_that_does_not_echo_the_key_or_address()
+    {
+        var (sender, server) = await SenderAsync(401);
+        using var _ = server;
+        var error = await Assert.ThrowsAsync<HttpRequestException>(() => sender.SendAsync(EmailTemplates.PasswordReset("secret.person@example.com", "http://localhost/x")));
+        Assert.Contains("401", error.Message);
+        Assert.DoesNotContain("re_test_key", error.Message);
+        Assert.DoesNotContain("secret.person", error.Message);
+    }
+
+    [Fact]
+    public async Task A_missing_key_stops_the_app_from_starting_and_an_unknown_provider_too()
+    {
+        foreach (var settings in new[] { new[] { ("Email:Provider", "resend") }, new[] { ("Email:Provider", "carrier-pigeon") } })
+        {
+            var factory = new ProviderFactory(settings);
+            await Assert.ThrowsAnyAsync<Exception>(async () => { using var client = factory.CreateClient(); await client.GetAsync("/health"); });
+        }
+    }
+
+    private sealed class ProviderFactory((string, string)[] extra) : ApiFactory
+    {
+        protected override IEnumerable<KeyValuePair<string, string>> Settings => extra.Select(e => KeyValuePair.Create(e.Item1, e.Item2));
+    }
+}
+
+/// <summary>A tiny HTTP server that records one request and answers with a fixed status.</summary>
+internal sealed class FakeResendServer : IDisposable
+{
+    private readonly System.Net.HttpListener _listener = new();
+    private readonly int _status;
+    public string Url { get; }
+    public TaskCompletionSource<(string Method, string Path, string? Authorization, string Body)> Received { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public FakeResendServer(int status)
+    {
+        _status = status;
+        var port = new TcpListener(IPAddress.Loopback, 0);
+        port.Start();
+        var number = ((IPEndPoint)port.LocalEndpoint).Port;
+        port.Stop();
+        Url = $"http://127.0.0.1:{number}";
+        _listener.Prefixes.Add(Url + "/");
+        _listener.Start();
+        _ = Task.Run(async () =>
+        {
+            var context = await _listener.GetContextAsync();
+            using var reader = new StreamReader(context.Request.InputStream);
+            Received.TrySetResult((context.Request.HttpMethod, context.Request.Url!.AbsolutePath, context.Request.Headers["Authorization"], await reader.ReadToEndAsync()));
+            context.Response.StatusCode = _status;
+            var bytes = System.Text.Encoding.UTF8.GetBytes(_status == 200 ? "{\"id\":\"x\"}" : "{\"message\":\"nope for secret.person@example.com\"}");
+            await context.Response.OutputStream.WriteAsync(bytes);
+            context.Response.Close();
+        });
+    }
+
+    public void Dispose() => _listener.Close();
+}
+
 /// <summary>A minimal SMTP server that records one message, enough to prove the sender speaks real SMTP.</summary>
 internal sealed class FakeSmtpServer : IDisposable
 {

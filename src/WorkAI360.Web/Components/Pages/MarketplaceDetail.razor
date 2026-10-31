@@ -1,0 +1,155 @@
+@page "/dashboard/marketplaces/{MarketplaceId}"
+@inherits LibraryPage
+@using System.Text.Json
+
+<PageTitle>@(_name.Length > 0 ? _name : "Marketplace") · OpenWork Cloud</PageTitle>
+
+<LibraryStyles />
+
+<section class="den-card den-wide lib-page" data-testid="marketplace-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (_missing is not null)
+    {
+        <h1>Marketplace</h1>
+        <p class="den-error" role="alert" data-testid="marketplace-missing">@_missing</p>
+        <a class="den-link" href="/dashboard/marketplaces">Back to marketplaces</a>
+    }
+    else
+    {
+        <h1 data-testid="marketplace-title">@_name @if (_status != "active") { <span class="den-badge">@_status</span> }</h1>
+        <p class="den-muted">@(string.IsNullOrWhiteSpace(_description) ? "No description yet." : _description)</p>
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+
+        @if (_manager)
+        {
+            <h2>Details</h2>
+            <form @onsubmit="SaveAsync" novalidate data-testid="marketplace-edit-form">
+                <label for="edit-name">Name</label>
+                <input id="edit-name" autocomplete="off" @bind="_editName" @bind:event="oninput" />
+                <label for="edit-description">Description</label>
+                <input id="edit-description" autocomplete="off" @bind="_editDescription" @bind:event="oninput" />
+                <button type="submit" class="den-button" disabled="@Busy" data-testid="save-marketplace">Save details</button>
+            </form>
+        }
+
+        <h2>Plugins on this shelf</h2>
+        @if (_plugins.Count == 0) { <p class="den-muted" data-testid="no-plugins">No plugins yet.</p> }
+        <ul class="den-members" data-testid="shelf-list">
+            @foreach (var p in _plugins)
+            {
+                <li data-testid="shelf-row" data-name="@p.Name">
+                    <div class="den-member-main">
+                        <a class="lib-row-title" href="/dashboard/plugins/@p.Id">@p.Name</a>
+                        <span class="den-muted">@p.Description</span>
+                    </div>
+                    <div class="den-member-actions">
+                        @if (_manager) { <button type="button" class="den-link" @onclick="() => RemovePluginAsync(p)" data-testid="remove-plugin">Remove</button> }
+                    </div>
+                </li>
+            }
+        </ul>
+
+        @if (_manager && _addable.Count > 0)
+        {
+            <form class="den-inline" @onsubmit="AddPluginAsync" data-testid="add-plugin-form">
+                <select aria-label="Plugin to add" @onchange="e => _toAdd = e.Value?.ToString() ?? string.Empty" data-testid="add-plugin-select">
+                    <option value="">Add a plugin…</option>
+                    @foreach (var p in _addable) { <option value="@p.Id" selected="@(_toAdd == p.Id)">@p.Name</option> }
+                </select>
+                <button type="submit" class="den-link" disabled="@Busy" data-testid="add-plugin">Add</button>
+            </form>
+        }
+
+        @if (_manager)
+        {
+            <SharePanel Kind="marketplaces" ResourceId="@MarketplaceId" People="People" Teams="Teams" CanShareWithEveryone="@(Can("sharing.share_org_wide"))" />
+            <div class="lib-actions">
+                @if (_status == "active") { <button type="button" class="den-link" @onclick='() => LifecycleAsync("archive")' data-testid="archive-marketplace">Archive</button> }
+                else { <button type="button" class="den-link" @onclick='() => LifecycleAsync("restore")' data-testid="restore-marketplace">Restore</button> }
+                @if (_confirmDelete) { <button type="button" class="den-link den-danger" @onclick="DeleteAsync" data-testid="confirm-delete-marketplace">Confirm delete</button> }
+                else { <button type="button" class="den-link" @onclick="() => _confirmDelete = true" data-testid="delete-marketplace">Delete marketplace</button> }
+            </div>
+        }
+        <div class="lib-actions"><a class="den-link" href="/dashboard/marketplaces">Back to marketplaces</a></div>
+    }
+</section>
+
+@code {
+    private sealed record Plug(string Id, string Name, string? Description);
+
+    [Parameter] public string MarketplaceId { get; set; } = "";
+
+    private string? _missing;
+    private string _name = "", _description = "", _status = "active", _editName = "", _editDescription = "", _toAdd = "";
+    private bool _manager, _confirmDelete;
+    private List<Plug> _plugins = [], _addable = [];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await LoadOrgAsync()) return;
+        await ReloadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync()
+    {
+        var r = await Api($"/marketplaces/{MarketplaceId}/resolved");
+        if (!r.Ok)
+        {
+            _missing = r.Status == 403 ? "This marketplace has not been shared with you." : r.Status == 404 ? "That marketplace does not exist." : r.Message("The marketplace could not be opened.");
+            return;
+        }
+        _missing = null;
+        var item = r.Json!.Value.GetProperty("item");
+        var m = item.GetProperty("marketplace");
+        _name = Str(m, "name") ?? "";
+        _description = Str(m, "description") ?? "";
+        _status = Str(m, "status") ?? "";
+        _editName = _name;
+        _editDescription = _description;
+        _confirmDelete = false;
+        _plugins = item.GetProperty("plugins").EnumerateArray().Select(p => new Plug(Str(p, "id") ?? "", Str(p, "name") ?? "", Str(p, "description"))).ToList();
+        _manager = (await Api($"/marketplaces/{MarketplaceId}/access")).Ok;
+        _addable = [];
+        if (_manager)
+        {
+            var mine = await Api("/plugins?status=active&limit=100");
+            if (mine.Json is { ValueKind: JsonValueKind.Object } body)
+                _addable = body.GetProperty("items").EnumerateArray().Select(p => new Plug(Str(p, "id") ?? "", Str(p, "name") ?? "", null)).Where(p => _plugins.All(x => x.Id != p.Id)).ToList();
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        var name = _editName.Trim();
+        if (name.Length == 0) { Error = "Give the marketplace a name."; Notice = null; return; }
+        var description = _editDescription.Trim();
+        await RunAsync(() => Api($"/marketplaces/{MarketplaceId}", "PATCH", new { name, description = description.Length == 0 ? null : description }), "Details saved.");
+    }
+
+    private async Task AddPluginAsync()
+    {
+        if (_toAdd.Length == 0) { Error = "Choose a plugin to add."; Notice = null; return; }
+        var id = _toAdd;
+        _toAdd = "";
+        await RunAsync(() => Api($"/marketplaces/{MarketplaceId}/plugins", "POST", new { pluginId = id }), "Plugin added.");
+    }
+
+    private async Task RemovePluginAsync(Plug p) => await RunAsync(() => Api($"/marketplaces/{MarketplaceId}/plugins/{p.Id}", "DELETE"), $"{p.Name} was taken off this shelf.");
+
+    private async Task LifecycleAsync(string action) => await RunAsync(() => Api($"/marketplaces/{MarketplaceId}/{action}", "POST"), action == "archive" ? "Marketplace archived." : "Marketplace restored.");
+
+    private async Task DeleteAsync()
+    {
+        Error = null;
+        var r = await Api($"/marketplaces/{MarketplaceId}/delete", "POST");
+        if (!r.Ok) { Error = r.Message("That did not work. Try again."); return; }
+        Nav.NavigateTo("/dashboard/marketplaces");
+    }
+}

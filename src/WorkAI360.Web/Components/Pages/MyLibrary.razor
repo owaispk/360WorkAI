@@ -1,0 +1,89 @@
+@page "/dashboard/library"
+@inherits LibraryPage
+@using System.Text.Json
+
+<PageTitle>My library · OpenWork Cloud</PageTitle>
+
+<LibraryStyles />
+
+<section class="den-card den-wide lib-page" data-testid="library-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>My library</h1>
+        <p class="den-muted">@OrgName · everything your agents can use for you, and how you got it.</p>
+        @if (_items.Count == 0)
+        {
+            <p class="den-muted" data-testid="library-empty">Nothing has been shared with you yet. Ask the person who made a plugin to share it, or make your own.</p>
+        }
+        <ul class="den-members" data-testid="library-list">
+            @foreach (var item in _items)
+            {
+                <li data-testid="library-row" data-name="@item.Name">
+                    <div class="den-member-main">
+                        <a class="lib-row-title" href="/dashboard/plugins/@item.Id">@item.Name</a>
+                        @if (!string.IsNullOrWhiteSpace(item.Description)) { <span class="den-muted">@item.Description</span> }
+                        <div class="lib-tags">
+                            <span class="lib-tag" data-testid="library-role">You can @item.Role</span>
+                            @foreach (var edge in item.Edges) { <span class="lib-tag" data-testid="library-edge">@edge</span> }
+                        </div>
+                        @if (item.Skills.Count > 0)
+                        {
+                            <ul class="den-list" data-testid="library-skills">
+                                @foreach (var s in item.Skills) { <li>@s</li> }
+                            </ul>
+                        }
+                    </div>
+                </li>
+            }
+        </ul>
+        <div class="lib-actions">
+            <a class="den-link" href="/dashboard/plugins">Manage plugins</a>
+            <a class="den-link" href="/dashboard/marketplaces">Marketplaces</a>
+            <a class="den-link" href="/dashboard">Back to dashboard</a>
+        </div>
+    }
+</section>
+
+@code {
+    private sealed record Item(string Id, string Name, string? Description, string Role, List<string> Edges, List<string> Skills);
+
+    private List<Item> _items = [];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await LoadOrgAsync()) return;
+        await ReloadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync()
+    {
+        _items = [];
+        var r = await Api("/me/library");
+        if (r.Json is not { ValueKind: JsonValueKind.Object } body) return;
+        var plugins = body.GetProperty("items").EnumerateArray().Where(i => Str(i, "type") == "plugin").ToList();
+        var contents = new Dictionary<string, List<string>>();
+        if (plugins.Count > 0)
+        {
+            var ids = string.Join(',', plugins.Take(100).Select(p => Str(p, "id")));
+            var resolved = await Api($"/resolved-plugins?pluginIds={ids}");
+            if (resolved.Json is { ValueKind: JsonValueKind.Object } rb)
+                foreach (var entry in rb.GetProperty("plugins").EnumerateObject())
+                    contents[entry.Name] = entry.Value.GetProperty("items").EnumerateArray()
+                        .Where(m => m.TryGetProperty("configObject", out var o) && Str(o, "objectType") == "skill")
+                        .Select(m => Str(m.GetProperty("configObject"), "title") ?? "").ToList();
+        }
+        foreach (var p in plugins)
+        {
+            var id = Str(p, "id") ?? "";
+            _items.Add(new Item(id, Str(p, "name") ?? "", Str(p, "description"), Str(p, "role") switch { "manager" => "manage it", "editor" => "edit it", _ => "use it" },
+                p.GetProperty("edges").EnumerateArray().Select(EdgeLabel).ToList(), contents.GetValueOrDefault(id) ?? []));
+        }
+    }
+}

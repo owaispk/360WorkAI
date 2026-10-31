@@ -1,0 +1,167 @@
+@page "/dashboard/plugins/{PluginId}"
+@inherits LibraryPage
+@using System.Text.Json
+
+<PageTitle>@(_name.Length > 0 ? _name : "Plugin") · OpenWork Cloud</PageTitle>
+
+<LibraryStyles />
+
+<section class="den-card den-wide lib-page" data-testid="plugin-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (_missing is not null)
+    {
+        <h1>Plugin</h1>
+        <p class="den-error" role="alert" data-testid="plugin-missing">@_missing</p>
+        <a class="den-link" href="/dashboard/plugins">Back to plugins</a>
+    }
+    else
+    {
+        <h1 data-testid="plugin-title">@_name @if (_status != "active") { <span class="den-badge">@_status</span> }</h1>
+        <p class="den-muted" data-testid="plugin-description">@(string.IsNullOrWhiteSpace(_description) ? "No description yet." : _description)</p>
+        <p class="den-muted">Your access: <strong data-testid="my-role">@_role</strong></p>
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+
+        @if (CanEdit)
+        {
+            <h2>Details</h2>
+            <form @onsubmit="SaveAsync" novalidate data-testid="plugin-edit-form">
+                <label for="edit-name">Name</label>
+                <input id="edit-name" autocomplete="off" @bind="_editName" @bind:event="oninput" />
+                <label for="edit-description">Description</label>
+                <input id="edit-description" autocomplete="off" @bind="_editDescription" @bind:event="oninput" />
+                <button type="submit" class="den-button" disabled="@Busy" data-testid="save-plugin">Save details</button>
+            </form>
+        }
+
+        <h2>Skills and other pieces</h2>
+        @if (_items.Count == 0) { <p class="den-muted" data-testid="no-skills">Nothing in this plugin yet.</p> }
+        <ul class="den-members" data-testid="skill-list">
+            @foreach (var item in _items)
+            {
+                <li data-testid="skill-row" data-name="@item.Title">
+                    <div class="den-member-main">
+                        <a class="lib-row-title" href="/dashboard/skills/@item.Id">@item.Title</a>
+                        <span class="den-muted">@item.Description</span>
+                        <div class="lib-tags"><span class="lib-tag">@item.Type</span>@if (item.Status != "active") { <span class="lib-tag">@item.Status</span> }</div>
+                    </div>
+                    <div class="den-member-actions">
+                        <a class="den-link" href="/dashboard/skills/@item.Id">Open</a>
+                        @if (CanEdit) { <button type="button" class="den-link" @onclick="() => RemoveAsync(item)" data-testid="remove-skill">Remove from plugin</button> }
+                    </div>
+                </li>
+            }
+        </ul>
+
+        @if (CanEdit)
+        {
+            <h2>Add a skill</h2>
+            <form @onsubmit="AddSkillAsync" novalidate data-testid="skill-form">
+                <label for="skill-text">SKILL.md</label>
+                <textarea id="skill-text" @bind="_skillText" @bind:event="oninput" data-testid="skill-text"></textarea>
+                <button type="submit" class="den-button" disabled="@Busy" data-testid="add-skill">Add skill</button>
+            </form>
+        }
+
+        @if (_markets.Count > 0)
+        {
+            <h2>Marketplaces</h2>
+            <ul class="den-list" data-testid="plugin-markets">
+                @foreach (var m in _markets) { <li><a href="/dashboard/marketplaces/@m.Id">@m.Name</a></li> }
+            </ul>
+        }
+
+        @if (_role == "manager")
+        {
+            <SharePanel Kind="plugins" ResourceId="@PluginId" People="People" Teams="Teams" CanShareWithEveryone="@(Can("sharing.share_org_wide"))" />
+            <div class="lib-actions">
+                @if (_status == "active") { <button type="button" class="den-link den-danger" @onclick="() => LifecycleAsync(false)" data-testid="archive-plugin">Archive plugin</button> }
+                else { <button type="button" class="den-link" @onclick="() => LifecycleAsync(true)" data-testid="restore-plugin">Restore plugin</button> }
+            </div>
+        }
+        <div class="lib-actions">
+            <a class="den-link" href="/dashboard/plugins">Back to plugins</a>
+        </div>
+    }
+</section>
+
+@code {
+    private sealed record Item(string Id, string Title, string? Description, string Type, string Status);
+    private sealed record Market(string Id, string Name);
+
+    [Parameter] public string PluginId { get; set; } = "";
+
+    private string? _missing;
+    private string _name = "", _description = "", _status = "active", _role = "viewer", _editName = "", _editDescription = "", _skillText = "---\nname: my-skill\ndescription: What this skill helps with\n---\n\nWrite the instructions here.\n";
+    private string _createdBy = "";
+    private List<Item> _items = [];
+    private List<Market> _markets = [];
+
+    private bool CanEdit => _role is "editor" or "manager";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await LoadOrgAsync()) return;
+        await ReloadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync()
+    {
+        var r = await Api($"/plugins/{PluginId}");
+        if (!r.Ok)
+        {
+            _missing = r.Status == 403 ? "This plugin has not been shared with you." : r.Status == 404 ? "That plugin does not exist." : r.Message("The plugin could not be opened.");
+            return;
+        }
+        _missing = null;
+        var p = r.Json!.Value.GetProperty("item");
+        _name = Str(p, "name") ?? "";
+        _description = Str(p, "description") ?? "";
+        _status = Str(p, "status") ?? "active";
+        _createdBy = Str(p, "createdByOrgMembershipId") ?? "";
+        _editName = _name;
+        _editDescription = _description;
+        _markets = p.GetProperty("marketplaces").EnumerateArray().Select(m => new Market(Str(m, "id") ?? "", Str(m, "name") ?? "")).ToList();
+
+        _role = "viewer";
+        var mine = await Api("/me/plugin-access");
+        if (mine.Json is { ValueKind: JsonValueKind.Object } body)
+            foreach (var item in body.GetProperty("items").EnumerateArray().Where(i => Str(i.GetProperty("plugin"), "id") == PluginId)) _role = Str(item, "role") ?? "viewer";
+        if (Can("sharing.manage_all") || _createdBy == MyMemberId) _role = "manager";
+
+        var contents = await Api($"/plugins/{PluginId}/config-objects");
+        _items = [];
+        if (contents.Json is { ValueKind: JsonValueKind.Object } list)
+            foreach (var m in list.GetProperty("items").EnumerateArray())
+            {
+                if (m.GetProperty("removedAt").ValueKind != JsonValueKind.Null || !m.TryGetProperty("configObject", out var o)) continue;
+                _items.Add(new Item(Str(o, "id") ?? "", Str(o, "title") ?? "", Str(o, "description"), Str(o, "objectType") ?? "", Str(o, "status") ?? ""));
+            }
+    }
+
+    private async Task SaveAsync()
+    {
+        var name = _editName.Trim();
+        if (name.Length == 0) { Error = "Give the plugin a name."; Notice = null; return; }
+        var description = _editDescription.Trim();
+        await RunAsync(() => Api($"/plugins/{PluginId}", "PATCH", new { name, description = description.Length == 0 ? null : description }), "Details saved.");
+    }
+
+    private async Task AddSkillAsync()
+    {
+        var text = _skillText;
+        await RunAsync(() => Api("/config-objects", "POST", new { type = "skill", sourceMode = "cloud", pluginIds = new[] { PluginId }, input = new { rawSourceText = text } }), "Skill added.");
+    }
+
+    private async Task RemoveAsync(Item item) =>
+        await RunAsync(() => Api($"/plugins/{PluginId}/config-objects/{item.Id}", "DELETE"), $"{item.Title} was removed from this plugin.");
+
+    private async Task LifecycleAsync(bool restore) =>
+        await RunAsync(() => Api($"/plugins/{PluginId}/{(restore ? "restore" : "archive")}", "POST"), restore ? "Plugin restored." : "Plugin archived.");
+}

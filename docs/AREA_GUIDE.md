@@ -38,6 +38,13 @@ Shared files you may need to touch (keep the edit minimal and additive; say so i
 (if you add a credential type), `Endpoints/OrgPayload.cs` (if `GET /v1/org` must show something new), the Web `Proxy/DenProxyExtensions.cs`
 (only if a path is not already covered by `/api/browser/v1/{**}` and `/api/auth/{**}`).
 
+## Databases (SQLite and MySQL)
+
+Everything must work on both (see `docs/database.md`). Do not use filtered indexes or provider-specific SQL; for "at most one active X" keep a
+nullable key column that is set while active (`IDerivedKeys` on the entity, refreshed before every save: see `Plugin.ActiveKey`) and put a plain
+unique index on it. Do not edit `Migrations/`: the integrator regenerates the single migration after areas are merged. To check your area on MySQL
+(optional, if a MySQL server is reachable): `WORKAI_TEST_MYSQL="Server=127.0.0.1;User=root;Password=..." dotnet test`.
+
 ## Conventions
 
 * Permission checks: `access.Require(context, "<key>")` answers the reference's 403 (and the re-sign-in prompt for sensitive keys). Resolve the

@@ -1,0 +1,110 @@
+@page "/dashboard/plugins"
+@inherits LibraryPage
+@using System.Text.Json
+
+<PageTitle>Plugins · OpenWork Cloud</PageTitle>
+
+<LibraryStyles />
+
+<section class="den-card den-wide lib-page" data-testid="plugins-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>Plugins</h1>
+        <p class="den-muted">@OrgName · bundles of skills your agents can use. You see the ones you made and the ones shared with you.</p>
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+
+        <div class="lib-actions">
+            <input aria-label="Search plugins" placeholder="Search plugins" value="@_search" @oninput="OnSearchAsync" data-testid="plugin-search" />
+            <select aria-label="Show" @onchange="OnStatusAsync" data-testid="plugin-status">
+                <option value="active" selected="@(_status == "active")">Active</option>
+                <option value="archived" selected="@(_status == "archived")">Archived</option>
+            </select>
+        </div>
+
+        @if (_plugins.Count == 0)
+        {
+            <p class="den-muted" data-testid="no-plugins">@(_search.Length > 0 ? "No plugin matches that search." : _status == "archived" ? "Nothing is archived." : "There are no plugins yet. Create one below, or import one from GitHub.")</p>
+        }
+        <ul class="den-members" data-testid="plugin-list">
+            @foreach (var plugin in _plugins)
+            {
+                <li data-testid="plugin-row" data-name="@plugin.Name">
+                    <div class="den-member-main">
+                        <a class="lib-row-title" href="/dashboard/plugins/@plugin.Id">@plugin.Name</a>
+                        @if (!string.IsNullOrWhiteSpace(plugin.Description)) { <span class="den-muted">@plugin.Description</span> }
+                        <div class="lib-tags">
+                            <span class="lib-tag">@plugin.Skills @(plugin.Skills == 1 ? "item" : "items")</span>
+                            @if (plugin.Status != "active") { <span class="lib-tag">@plugin.Status</span> }
+                            @foreach (var market in plugin.Markets) { <span class="lib-tag">In @market</span> }
+                        </div>
+                    </div>
+                    <div class="den-member-actions">
+                        <a class="den-link" href="/dashboard/plugins/@plugin.Id">Open</a>
+                    </div>
+                </li>
+            }
+        </ul>
+
+        <h2>New plugin</h2>
+        <form @onsubmit="CreateAsync" novalidate data-testid="plugin-form">
+            <label for="plugin-name">Name</label>
+            <input id="plugin-name" autocomplete="off" @bind="_name" @bind:event="oninput" />
+            <label for="plugin-description">What is it for? (optional)</label>
+            <input id="plugin-description" autocomplete="off" @bind="_description" @bind:event="oninput" />
+            <button type="submit" class="den-button" disabled="@Busy" data-testid="create-plugin">Create plugin</button>
+        </form>
+        <div class="lib-actions">
+            <a class="den-link" href="/dashboard/plugins/import" data-testid="import-link">Import from GitHub</a>
+            <a class="den-link" href="/dashboard/skills">Skills</a>
+            <a class="den-link" href="/dashboard/marketplaces">Marketplaces</a>
+            <a class="den-link" href="/dashboard/library">My library</a>
+            <a class="den-link" href="/dashboard">Back to dashboard</a>
+        </div>
+    }
+</section>
+
+@code {
+    private sealed record Row(string Id, string Name, string? Description, string Status, int Skills, List<string> Markets);
+
+    private List<Row> _plugins = [];
+    private string _search = "", _status = "active", _name = "", _description = "";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await LoadOrgAsync()) return;
+        await ReloadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync()
+    {
+        var q = _search.Trim().Length > 0 ? $"&q={Uri.EscapeDataString(_search.Trim())}" : "";
+        var r = await Api($"/plugins?status={_status}&limit=100{q}");
+        _plugins = [];
+        if (r.Json is not { ValueKind: JsonValueKind.Object } body) return;
+        foreach (var p in body.GetProperty("items").EnumerateArray())
+            _plugins.Add(new Row(Str(p, "id") ?? "", Str(p, "name") ?? "", Str(p, "description"), Str(p, "status") ?? "", Int(p, "memberCount"),
+                p.GetProperty("marketplaces").EnumerateArray().Select(m => Str(m, "name") ?? "").ToList()));
+    }
+
+    private async Task OnSearchAsync(ChangeEventArgs e) { _search = e.Value?.ToString() ?? ""; await ReloadAsync(); }
+
+    private async Task OnStatusAsync(ChangeEventArgs e) { _status = e.Value?.ToString() ?? "active"; await ReloadAsync(); }
+
+    private async Task CreateAsync()
+    {
+        var name = _name.Trim();
+        if (name.Length == 0) { Error = "Give the plugin a name."; Notice = null; return; }
+        var description = _description.Trim();
+        var r = await Api("/plugins", "POST", description.Length > 0 ? new { name, description } : new { name });
+        if (!r.Ok) { Error = r.Message("That did not work. Try again."); Notice = null; return; }
+        Nav.NavigateTo($"/dashboard/plugins/{r.String("item", "id")}");
+    }
+}

@@ -121,6 +121,8 @@ public sealed class OAuthClient
     public string? SecretHash { get; set; }
     public string? LogoUri { get; set; }
     public DateTime CreatedAt { get; set; }
+    /// <summary>For a client that presented an HTTPS client_id (a Client ID Metadata Document): when its document was last fetched.</summary>
+    public DateTime? MetadataFetchedAt { get; set; }
 }
 
 /// <summary>A one-time authorization code; the primary key is the SHA-256 of the code.</summary>
@@ -267,12 +269,28 @@ public sealed class PermissionSetPermission
     public DateTime CreatedAt { get; set; }
 }
 
-/// <summary>Links a role to a team. A team has at most one active role; unlinking keeps the row so history shows where it applied.</summary>
+/// <summary>
+/// Links a role to a team. A team has at most one active role; unlinking keeps the row so history shows where it applied.
+/// <see cref="ActiveTeamId"/> mirrors <see cref="TeamId"/> while the link is active and is empty once it is closed, so a plain unique index
+/// on it enforces "one active role per team" on every database (filtered indexes are not available on all of them).
+/// </summary>
 public sealed class PermissionSetTeam
 {
+    private string _teamId = "";
+    private DateTime? _removedAt;
+
     public required string Id { get; set; }
     public required string PermissionSetId { get; set; }
-    public required string TeamId { get; set; }
+    public required string TeamId
+    {
+        get => _teamId;
+        set { _teamId = value; ActiveTeamId = _removedAt is null ? value : null; }
+    }
     public DateTime CreatedAt { get; set; }
-    public DateTime? RemovedAt { get; set; }
+    public DateTime? RemovedAt
+    {
+        get => _removedAt;
+        set { _removedAt = value; ActiveTeamId = value is null ? _teamId : null; }
+    }
+    public string? ActiveTeamId { get; set; }
 }

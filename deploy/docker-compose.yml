@@ -1,0 +1,57 @@
+# A complete local stack: MySQL, the API and the web host.
+#   cd 360workai && AUTH_SECRET=$(openssl rand -hex 32) docker compose -f deploy/docker-compose.yml up --build
+# Then open http://localhost:8081. Sign-up emails need an SMTP server: set the EMAIL_* values below (or use a local mail catcher).
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change-me}
+      MYSQL_DATABASE: workai360
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-change-me}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes: [dbdata:/var/lib/mysql]
+
+  migrate:
+    build: { context: .., dockerfile: deploy/Dockerfile.api }
+    command: ["--migrate"]
+    environment: &api-env
+      Auth__Secret: ${AUTH_SECRET:?set AUTH_SECRET to 32 or more random characters}
+      Auth__WebUrl: http://localhost:8081
+      Auth__ApiPublicUrl: http://localhost:8080
+      # The web host reaches the API from a fixed address on the compose network; only it may set forwarded headers (README: Auth__TrustedProxies).
+      Auth__TrustedProxies__0: 172.28.0.10
+      ConnectionStrings__Default: Server=db;Database=workai360;User=root;Password=${MYSQL_ROOT_PASSWORD:-change-me}
+      Email__Provider: smtp
+      Email__From: ${EMAIL_FROM:-noreply@example.com}
+      Email__Smtp__Host: ${EMAIL_SMTP_HOST:-mail}
+      Email__Smtp__Port: ${EMAIL_SMTP_PORT:-25}
+      Email__Smtp__Security: ${EMAIL_SMTP_SECURITY:-none}
+    depends_on: { db: { condition: service_healthy } }
+    restart: "no"
+
+  api:
+    build: { context: .., dockerfile: deploy/Dockerfile.api }
+    environment:
+      <<: *api-env
+      Database__AutoMigrate: "false"
+    ports: ["8080:8080"]
+    depends_on: { migrate: { condition: service_completed_successfully } }
+
+  web:
+    build: { context: .., dockerfile: deploy/Dockerfile.web }
+    environment:
+      Den__ApiBaseUrl: http://api:8080
+    ports: ["8081:8080"]
+    depends_on: [api]
+    networks: { default: { ipv4_address: 172.28.0.10 } }
+
+networks:
+  default:
+    ipam: { config: [{ subnet: 172.28.0.0/24 }] }
+
+volumes:
+  dbdata:

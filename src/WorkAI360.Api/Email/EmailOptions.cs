@@ -4,13 +4,22 @@ public sealed class EmailOptions
 {
     public const string Section = "Email";
 
-    /// <summary>"dev" keeps messages in memory (Development only); "smtp" sends them for real.</summary>
+    /// <summary>"dev" keeps messages in memory (Development only); "smtp" and "resend" send them for real.</summary>
     public string Provider { get; set; } = "dev";
 
     /// <summary>The From address, e.g. "OpenWork &lt;no-reply@example.com&gt;".</summary>
     public string From { get; set; } = "OpenWork <no-reply@localhost>";
 
     public SmtpOptions Smtp { get; set; } = new();
+
+    public ResendOptions Resend { get; set; } = new();
+
+    public sealed class ResendOptions
+    {
+        public string ApiKey { get; set; } = "";
+        /// <summary>Only changed to point tests at a local fake.</summary>
+        public string BaseUrl { get; set; } = "https://api.resend.com";
+    }
 
     public sealed class SmtpOptions
     {
