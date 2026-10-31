@@ -27,6 +27,11 @@ public static class SsoSignInEndpoints
             var callback = Opt("callbackURL"); var errorCallback = Opt("errorCallbackURL"); var newUserCallback = Opt("newUserCallbackURL"); var loginHint = Opt("loginHint");
             if (body.Details.Count > 0) return Message(400, "Invalid request body.", "VALIDATION_ERROR");
 
+            // Open-redirect guard (first, as the reference does): only this site's own pages may be returned to.
+            if (callback is not null && !trusted.IsTrusted(callback)) return Message(403, "Invalid callbackURL", "INVALID_CALLBACK_URL");
+            if (errorCallback is not null && !trusted.IsTrusted(errorCallback)) return Message(403, "Invalid errorCallbackURL", "INVALID_ERROR_CALLBACK_URL");
+            if (newUserCallback is not null && !trusted.IsTrusted(newUserCallback)) return Message(403, "Invalid newUserCallbackURL", "INVALID_NEW_USER_CALLBACK_URL");
+
             // Which connection? (providerId, then the workspace slug, then the email's domain), as the reference resolves it.
             SsoConnection? connection = null;
             if (providerId is not null) connection = await db.Set<SsoConnection>().FirstOrDefaultAsync(c => c.ProviderId == providerId, ctx.RequestAborted);
@@ -48,11 +53,6 @@ public static class SsoSignInEndpoints
             if (connection.Kind != "oidc") return Message(400, "Invalid SSO provider");
 
             if (callback is null) return Message(400, "[body.callbackURL] Invalid input: expected string, received undefined", "VALIDATION_ERROR");
-            // Open-redirect guard: only this site's own pages may be returned to.
-            if (!trusted.IsTrusted(callback)) return Message(403, "Invalid callbackURL", "INVALID_CALLBACK_URL");
-            if (errorCallback is not null && !trusted.IsTrusted(errorCallback)) return Message(403, "Invalid errorCallbackURL", "INVALID_ERROR_CALLBACK_URL");
-            if (newUserCallback is not null && !trusted.IsTrusted(newUserCallback)) return Message(403, "Invalid newUserCallbackURL", "INVALID_NEW_USER_CALLBACK_URL");
-
             var url = await flow.StartAsync(ctx, connection, new OidcFlow.Start(callback, errorCallback, newUserCallback, loginHint ?? email, null), ctx.RequestAborted);
             return Results.Json(new { url, redirect = true });
         });
