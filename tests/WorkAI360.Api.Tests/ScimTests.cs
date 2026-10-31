@@ -338,13 +338,15 @@ public sealed class ScimDeprovisionTests(SsoFactory factory) : ScimBase(factory)
     [Fact]
     public async Task Someone_who_belongs_elsewhere_too_keeps_that_and_the_owner_cannot_be_deprovisioned()
     {
-        var id = await CreateUserAsync("fay", "e-fay");
+        var (fayBrowser, id) = await SignedInPersonAsync("fay");
         // Fay also belongs to another workspace.
         var (_, otherOwner, _) = await Factory.SignUpAsync(W.Http, "Other Owner");
         var org = await ReadJsonAsync(await W.Http.SendAsync(Bearer(HttpMethod.Post, "/v1/org", otherOwner, new { name = "Elsewhere" })));
         var orgId = org.GetProperty("organization").GetProperty("id").GetString()!;
         Factory.WithDb(db => { db.Members.Add(new Member { Id = Ids.New("om"), OrganizationId = orgId, UserId = id, Role = "member", CreatedAt = DateTime.UtcNow, JoinedAt = DateTime.UtcNow }); db.SaveChanges(); return 0; });
         Assert.Equal(HttpStatusCode.NoContent, (await Scim(HttpMethod.Delete, $"/Users/{id}")).Status);
+        // She lives on elsewhere, but everything she held here is over: her sessions end (they are not workspace-bound).
+        Assert.Equal(HttpStatusCode.Unauthorized, (await fayBrowser.GetAsync("/v1/me")).StatusCode);
         Assert.Equal(1, W.UsersWithEmail(Email("fay")));
         Assert.Equal(1, W.Db(db => db.Members.Count(m => m.UserId == id && m.OrganizationId == orgId)));
         Assert.Equal(0, W.Db(db => db.Members.Count(m => m.UserId == id && m.OrganizationId == W.OrgId)));
