@@ -152,7 +152,7 @@ public static class McpEndpoints
         {
             ["name"] = "execute_capability",
             ["description"] = "Run a capability found with search_capabilities.",
-            ["inputSchema"] = JsonNode.Parse("""{"type":"object","properties":{"capability_id":{"type":"string"},"arguments":{"type":"object"}},"required":["capability_id"],"additionalProperties":false}"""),
+            ["inputSchema"] = JsonNode.Parse("""{"type":"object","properties":{"name":{"type":"string"},"body":{"type":"object"},"capability_id":{"type":"string"},"arguments":{"type":"object"}},"additionalProperties":false}"""),
         },
     };
 
@@ -177,15 +177,16 @@ public static class McpEndpoints
             }
             case "execute_capability":
             {
-                var id = arguments["capability_id"]?.GetValue<string>();
-                var capabilityArguments = arguments["arguments"] as JsonObject ?? new JsonObject();
+                // The reference calls the id "name" and the arguments "body"; the first names this server used are still accepted.
+                var id = (arguments["name"] ?? arguments["capability_id"])?.GetValue<string>();
+                var capabilityArguments = (arguments["body"] ?? arguments["arguments"]) as JsonObject ?? new JsonObject();
                 foreach (var provider in providers)
                 {
-                    var capability = (await provider.ListAsync(principal, services)).FirstOrDefault(c => c.Id == id);
+                    var capability = await provider.ResolveAsync(id ?? "", principal, services);
                     if (capability is null) continue;
                     if (!principal.Scopes.Contains(capability.RequiredScope)) return ToolError("insufficient_scope", $"This capability needs the {capability.RequiredScope} scope.");
                     var outcome = await provider.ExecuteAsync(capability.Id, capabilityArguments, principal, services);
-                    return outcome.Result is { } result ? ToolResult(result) : ToolError(outcome.ErrorCode ?? "capability_failed", outcome.ErrorMessage ?? "The capability failed.");
+                    return outcome.Result is { } result ? (outcome.Passthrough ? result : ToolResult(result)) : ToolError(outcome.ErrorCode ?? "capability_failed", outcome.ErrorMessage ?? "The capability failed.");
                 }
                 return ToolError("unknown_capability", $"No capability named '{id}'. Use search_capabilities to list them.");
             }

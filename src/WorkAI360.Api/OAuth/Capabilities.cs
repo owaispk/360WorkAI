@@ -8,9 +8,11 @@ namespace WorkAI360.Api.OAuth;
 public sealed record CapabilityInfo(string Id, string Description, string RequiredScope, JsonNode InputSchema);
 
 /// <summary>What running a capability gave back: a result, or an error code and message the agent can read.</summary>
-public sealed record CapabilityOutcome(JsonObject? Result, string? ErrorCode = null, string? ErrorMessage = null)
+public sealed record CapabilityOutcome(JsonObject? Result, string? ErrorCode = null, string? ErrorMessage = null, bool Passthrough = false)
 {
     public static CapabilityOutcome Ok(JsonObject result) => new(result);
+    /// <summary>A result sent to the agent exactly as it is (an MCP tool result from another server), not wrapped.</summary>
+    public static CapabilityOutcome Raw(JsonObject result) => new(result, Passthrough: true);
     public static CapabilityOutcome Fail(string code, string message) => new(null, code, message);
 }
 
@@ -25,6 +27,13 @@ public interface ICapabilityProvider
     Task<IReadOnlyList<CapabilityInfo>> ListAsync(McpPrincipal principal, IServiceProvider services);
 
     Task<CapabilityOutcome> ExecuteAsync(string id, JsonObject arguments, McpPrincipal principal, IServiceProvider services);
+
+    /// <summary>
+    /// Finds the capability an agent named, to check its scope before running it. By default it must be one this provider lists. A provider
+    /// whose ids can be resolved without asking a remote server (and that answers refusals itself in <see cref="ExecuteAsync"/>) overrides this.
+    /// </summary>
+    async Task<CapabilityInfo?> ResolveAsync(string id, McpPrincipal principal, IServiceProvider services) =>
+        (await ListAsync(principal, services)).FirstOrDefault(c => c.Id == id);
 }
 
 /// <summary>The capabilities that read from the workspace itself.</summary>
