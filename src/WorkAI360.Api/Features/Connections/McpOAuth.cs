@@ -85,7 +85,9 @@ public sealed partial class McpOAuth(GuardedHttp http)
             if (status == HttpStatusCode.OK && json is not null) { resourceMetadata = json; break; }
         }
 
-        var advertised = resourceMetadata is null ? [origin] : Strings(resourceMetadata["authorization_servers"]);
+        // No guessing at the server's own origin when it publishes no protected-resource metadata (as the reference does).
+        if (resourceMetadata is null) throw new OAuthException("discovery_failed", "The MCP server does not publish OAuth protected-resource metadata.");
+        var advertised = Strings(resourceMetadata["authorization_servers"]);
         if (advertised.Length == 0) throw new OAuthException("discovery_failed", "The MCP server does not advertise a sign-in service.");
         var issuer = pinnedIssuer is not null ? advertised.FirstOrDefault(a => a.TrimEnd('/') == pinnedIssuer.TrimEnd('/')) ?? throw new OAuthException("issuer_mismatch", "The selected sign-in service is no longer advertised by this MCP server.") : advertised[0];
         var resource = resourceMetadata is not null && Str(resourceMetadata, "resource") is { Length: > 0 } declared ? declared : serverUrl;

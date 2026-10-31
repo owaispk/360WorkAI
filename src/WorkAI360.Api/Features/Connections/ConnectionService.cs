@@ -82,13 +82,33 @@ public sealed class ConnectionService(DenDbContext db, SecretBox box, McpClient 
     /// <summary>Replaces who may use a connection, atomically. Org-wide stands alone (it already covers everyone). Unknown people or teams are refused by the caller first.</summary>
     public async Task ReplaceAccessAsync(string orgId, string connectionId, AccessInput access, string byMemberId)
     {
-        // Inside a caller's transaction (an edit) the grants join it; otherwise this is one transaction of its own.
-        await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync() : null;
-        await db.Set<ConnectionAccessGrant>().Where(g => g.ConnectionId == connectionId).ExecuteDeleteAsync();
-        AddGrants(orgId, connectionId, access, byMemberId);
-        await db.SaveChangesAsync();
-        if (tx is not null) await tx.CommitAsync();
+        // Changes to one connection's grants run one at a time in this process; across processes the unique indexes refuse a duplicate and the loser retries.
+        var gate = AccessLocks.GetOrAdd(connectionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync();
+        try
+        {
+            for (var attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    // Inside a caller's transaction (an edit) the grants join it; otherwise this is one transaction of its own.
+                    await using var tx = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync() : null;
+                    await db.Set<ConnectionAccessGrant>().Where(g => g.ConnectionId == connectionId).ExecuteDeleteAsync();
+                    AddGrants(orgId, connectionId, access, byMemberId);
+                    await db.SaveChangesAsync();
+                    if (tx is not null) await tx.CommitAsync();
+                    return;
+                }
+                catch (DbUpdateException) when (attempt < 3 && db.Database.CurrentTransaction is null)
+                {
+                    db.ChangeTracker.Clear();
+                }
+            }
+        }
+        finally { gate.Release(); }
     }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> AccessLocks = new();
 
     public void AddGrants(string orgId, string connectionId, AccessInput access, string byMemberId)
     {
