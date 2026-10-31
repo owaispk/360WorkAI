@@ -1,0 +1,260 @@
+@page "/dashboard/policy"
+@inherits ActionPage
+@using System.Text.Json
+
+<PageTitle>Agents, prompts and models · OpenWork Cloud</PageTitle>
+
+<style>
+    .den-policy textarea { width: 100%; font: inherit; font-size: 14px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; resize: vertical; box-sizing: border-box; }
+    .den-policy .den-member-main { flex: 1 1 320px; }
+    .den-policy .den-member-actions select { min-width: 150px; }
+</style>
+
+<section class="den-card den-wide den-policy" data-testid="policy-page">
+    @if (_loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>Agents, prompts and models</h1>
+        <p class="den-muted">Set what agents may do, what they are told and which model new chats start with, for everyone or for one team. A team's choices add to everyone's.</p>
+
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @if (NeedsReauth)
+        {
+            <ReauthForm @bind-Password="ReauthPassword" Busy="Busy" OnConfirm="ConfirmItsYouAsync" OnCancel="CancelReauth" />
+        }
+
+        <label for="scope">Who this is for</label>
+        <select id="scope" data-testid="scope" value="@(_scope ?? "")" @onchange="e => ChooseScope(e.Value?.ToString() ?? string.Empty)">
+            <option value="">Everyone</option>
+            @foreach (var team in _teams)
+            {
+                <option value="@team.Id">@team.Name</option>
+            }
+        </select>
+        <p class="den-muted" data-testid="scope-name">@ScopeName</p>
+
+        @if (Can("prompts.view"))
+        {
+            <h2>Prompt</h2>
+            <p class="den-muted">Added to every agent's instructions for these people@(_scope is null ? "." : ", after the prompt for everyone.")</p>
+            <textarea aria-label="Prompt" data-testid="prompt-text" rows="5" disabled="@(!Can("prompts.manage"))" value="@_prompt" @oninput="e => _prompt = e.Value?.ToString() ?? string.Empty"></textarea>
+            @if (Can("prompts.manage"))
+            {
+                <div class="den-inline">
+                    <button type="button" class="den-link" data-testid="save-prompt" disabled="@Busy" @onclick="SavePromptAsync">Save prompt</button>
+                    <button type="button" class="den-link" data-testid="remove-prompt" disabled="@Busy" @onclick="RemovePromptAsync">Remove prompt</button>
+                </div>
+            }
+        }
+
+        @if (Can("agent_permissions.view"))
+        {
+            <h2>What agents may do</h2>
+            <p class="den-muted">@(_scope is null ? "Anything left on 'Not set' is allowed." : "Anything left on 'Same as everyone' follows the setting for everyone.")</p>
+            <ul class="den-members" data-testid="agent-list">
+                @foreach (var def in Definitions)
+                {
+                    var edit = _edits[def.Key];
+                    <li data-testid="agent-row" data-key="@def.Key">
+                        <div class="den-member-main">
+                            <strong>@def.Label</strong>
+                            <span class="den-muted">@def.Description</span>
+                        </div>
+                        <div class="den-member-actions">
+                            <select aria-label="@def.Label" disabled="@(!Can("agent_permissions.manage"))" value="@edit.Decision" @onchange="e => edit.Decision = e.Value?.ToString() ?? string.Empty">
+                                <option value="">@(_scope is null ? "Not set" : "Same as everyone")</option>
+                                <option value="allow">Allow</option>
+                                @if (!def.Toggle) { <option value="ask">Ask first</option> }
+                                <option value="deny">Block</option>
+                            </select>
+                        </div>
+                        @if (def.Lists is not null)
+                        {
+                            <div class="den-panel">
+                                <label>Always allowed @def.Noun (one per line)</label>
+                                <textarea rows="2" aria-label="Always allowed @def.Noun for @def.Label" disabled="@(!Can("agent_permissions.manage"))" value="@edit.Allow" @oninput="e => edit.Allow = e.Value?.ToString() ?? string.Empty"></textarea>
+                                <label>Always blocked @def.Noun (one per line)</label>
+                                <textarea rows="2" aria-label="Always blocked @def.Noun for @def.Label" disabled="@(!Can("agent_permissions.manage"))" value="@edit.Block" @oninput="e => edit.Block = e.Value?.ToString() ?? string.Empty"></textarea>
+                            </div>
+                        }
+                    </li>
+                }
+            </ul>
+            @if (Can("agent_permissions.manage"))
+            {
+                <div class="den-inline">
+                    <button type="button" class="den-button" data-testid="save-agents" disabled="@Busy" @onclick="SaveAgentsAsync">Save agent permissions</button>
+                </div>
+            }
+        }
+
+        @if (Can("inference.view"))
+        {
+            <h2>Starting model</h2>
+            @if (_models.Count == 0)
+            {
+                <p class="den-muted" data-testid="no-models">There are no models to choose from yet. Models show up here once the organization has set up its AI providers.</p>
+            }
+            else
+            {
+                <select aria-label="Starting model" data-testid="model-select" disabled="@(!Can("inference.manage"))" value="@_model" @onchange="e => _model = e.Value?.ToString() ?? string.Empty">
+                    <option value="">@(_scope is null ? "No default" : "Same as everyone")</option>
+                    @foreach (var m in _models)
+                    {
+                        <option value="@m.Key">@m.Label</option>
+                    }
+                </select>
+                @if (Can("inference.manage"))
+                {
+                    <div class="den-inline"><button type="button" class="den-link" data-testid="save-model" disabled="@Busy" @onclick="SaveModelAsync">Save model</button></div>
+                }
+            }
+        }
+
+        <a class="den-link" href="/dashboard">Back to dashboard</a>
+    }
+</section>
+
+@code {
+    private sealed record Team(string Id, string Name);
+    private sealed record Def(string Key, string Label, string Description, bool Toggle, string? Lists, string? Noun);
+    private sealed record ModelOption(string Key, string Label);
+    private sealed class Edit { public string Decision { get; set; } = ""; public string Allow { get; set; } = ""; public string Block { get; set; } = ""; }
+
+    // The catalog of agent permissions (the reference ships the same list in its shared types package).
+    private static readonly Def[] Definitions =
+    [
+        new("commands", "Run commands", "Commands the agent runs in a terminal on the member's computer.", false, "command", "commands"),
+        new("fileEdits", "Edit files", "Creating, changing and deleting files. Blocking it also blocks running commands.", false, null, null),
+        new("websites", "Open websites", "Pages the agent fetches and the built-in browser opens.", false, "website", "websites"),
+        new("webSearch", "Search the web", "Web searches the agent runs.", true, null, null),
+        new("localSkills", "Use local skills", "Skills installed on the member's computer.", true, null, null),
+        new("localMcpServers", "Use local MCP servers", "MCP servers added on the member's computer.", true, null, null),
+    ];
+
+    private bool _loading = true;
+    private HashSet<string> _permissions = [];
+    private List<Team> _teams = [];
+    private string? _scope;
+    private string _prompt = "";
+    private string _model = "";
+    private List<ModelOption> _models = [];
+    private Dictionary<string, Edit> _edits = Definitions.ToDictionary(d => d.Key, _ => new Edit());
+    private JsonElement _prompts, _agents, _defaults;
+
+    private bool Can(string permission) => _permissions.Contains(permission);
+
+    private string ScopeName => _scope is null ? "These settings apply to every member." : $"These settings apply to the people in {_teams.FirstOrDefault(t => t.Id == _scope)?.Name}.";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var me = await Den.RequestAsync("/api/browser/v1/me");
+        if (!me.Ok) { Nav.NavigateTo("/"); return; }
+        MyEmail = me.String("user", "email") ?? "";
+        if (!await LoadAsync()) return;
+        _loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync() => await LoadAsync();
+
+    private async Task<bool> LoadAsync()
+    {
+        var org = await Den.RequestAsync("/api/browser/v1/org");
+        if (org.Status is 404 or 403) { Nav.NavigateTo("/organization"); return false; }
+        if (org.Json is not { ValueKind: JsonValueKind.Object } root) return false;
+        _permissions = root.GetProperty("currentMember").GetProperty("permissions").EnumerateArray().Select(p => p.GetString() ?? "").ToHashSet();
+        _teams = root.GetProperty("teams").EnumerateArray().Select(t => new Team(t.GetProperty("id").GetString() ?? "", t.GetProperty("name").GetString() ?? ""))
+            .OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        if (Can("prompts.view") && await Den.RequestAsync("/api/browser/v1/org/prompts") is { Ok: true, Json: { } p }) _prompts = p;
+        if (Can("agent_permissions.view") && await Den.RequestAsync("/api/browser/v1/agent-permissions") is { Ok: true, Json: { } a }) _agents = a;
+        if (Can("inference.view"))
+        {
+            if (await Den.RequestAsync("/api/browser/v1/org/default-model") is { Ok: true, Json: { } d }) _defaults = d;
+            _models = [];
+            if (await Den.RequestAsync("/api/browser/v1/org/default-model/options") is { Ok: true, Json: { } o })
+                _models = o.GetProperty("options").EnumerateArray().Select(m => new ModelOption($"{m.GetProperty("providerId").GetString()}|{m.GetProperty("modelId").GetString()}", $"{m.GetProperty("providerName").GetString()}: {m.GetProperty("modelName").GetString()}")).ToList();
+        }
+        if (_scope is not null && _teams.All(t => t.Id != _scope)) _scope = null;
+        Fill();
+        return true;
+    }
+
+    private void ChooseScope(string value)
+    {
+        _scope = value.Length == 0 ? null : value;
+        Error = Notice = null;
+        Fill();
+    }
+
+    /// <summary>Shows the saved choices of the chosen scope.</summary>
+    private void Fill()
+    {
+        _prompt = "";
+        if (_prompts.ValueKind == JsonValueKind.Object)
+        {
+            var prompt = _scope is null ? _prompts.GetProperty("everyone")
+                : _prompts.GetProperty("teams").EnumerateArray().FirstOrDefault(t => t.GetProperty("teamId").GetString() == _scope) is { ValueKind: JsonValueKind.Object } t ? t.GetProperty("prompt") : default;
+            if (prompt.ValueKind == JsonValueKind.Object) _prompt = prompt.GetProperty("content").GetString() ?? "";
+        }
+        _edits = Definitions.ToDictionary(d => d.Key, _ => new Edit());
+        if (_agents.ValueKind == JsonValueKind.Object)
+        {
+            var policy = _scope is null ? _agents.GetProperty("everyone")
+                : _agents.GetProperty("teams").EnumerateArray().FirstOrDefault(t => t.GetProperty("teamId").GetString() == _scope);
+            if (policy.ValueKind == JsonValueKind.Object)
+                foreach (var d in Definitions)
+                    if (policy.GetProperty("settings").TryGetProperty(d.Key, out var s))
+                        _edits[d.Key] = new Edit
+                        {
+                            Decision = s.TryGetProperty("decision", out var dec) ? dec.GetString() ?? "" : "",
+                            Allow = s.TryGetProperty("allow", out var al) ? string.Join("\n", al.EnumerateArray().Select(x => x.GetString())) : "",
+                            Block = s.TryGetProperty("block", out var bl) ? string.Join("\n", bl.EnumerateArray().Select(x => x.GetString())) : "",
+                        };
+        }
+        _model = "";
+        if (_defaults.ValueKind == JsonValueKind.Object)
+        {
+            var model = _scope is null ? _defaults.GetProperty("everyone")
+                : _defaults.GetProperty("teams").EnumerateArray().FirstOrDefault(t => t.GetProperty("teamId").GetString() == _scope) is { ValueKind: JsonValueKind.Object } t ? t.GetProperty("model") : default;
+            if (model.ValueKind == JsonValueKind.Object) _model = $"{model.GetProperty("providerId").GetString()}|{model.GetProperty("modelId").GetString()}";
+        }
+    }
+
+    private string Path(string area) => _scope is null ? $"/api/browser/v1/{area}/everyone" : $"/api/browser/v1/{area}/teams/{_scope}";
+
+    private Task SavePromptAsync() => RunAsync(() => Den.RequestAsync(Path("org/prompts"), "PUT", new { content = _prompt }), "Prompt saved.");
+
+    private Task RemovePromptAsync() => RunAsync(() => Den.RequestAsync(Path("org/prompts"), "DELETE"), "Prompt removed.");
+
+    private static string[] Lines(string text) => text.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+    private Task SaveAgentsAsync()
+    {
+        var settings = new Dictionary<string, object>();
+        foreach (var d in Definitions)
+        {
+            var e = _edits[d.Key];
+            var setting = new Dictionary<string, object>();
+            if (e.Decision.Length > 0) setting["decision"] = e.Decision;
+            if (d.Lists is not null && Lines(e.Allow) is { Length: > 0 } allow) setting["allow"] = allow;
+            if (d.Lists is not null && Lines(e.Block) is { Length: > 0 } block) setting["block"] = block;
+            if (setting.Count > 0) settings[d.Key] = setting;
+        }
+        return RunAsync(() => Den.RequestAsync(Path("agent-permissions"), "PUT", new { settings }), "Agent permissions saved.", Explain);
+    }
+
+    private string? Explain(DenResponse r) => r.Status == 400 ? r.Message("Check the lists and try again.") : null;
+
+    private Task SaveModelAsync()
+    {
+        object? model = null;
+        if (_model.Length > 0) { var parts = _model.Split('|', 2); model = new { providerId = parts[0], modelId = parts[1] }; }
+        return RunAsync(() => Den.RequestAsync(Path("org/default-model"), "PUT", new { model }), "Model saved.");
+    }
+}
