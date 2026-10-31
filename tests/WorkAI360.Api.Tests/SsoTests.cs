@@ -420,6 +420,24 @@ public sealed class SsoConnectionTests : IClassFixture<SsoFactory>, IAsyncLifeti
     }
 
     [Fact]
+    public async Task A_test_signed_in_as_a_different_existing_person_fails()
+    {
+        await W.RegisterAsync();
+        await W.VerifyDomainAsync();
+        // Someone else who already has an account on the domain signs in at the provider instead of the administrator.
+        var other = $"colleague@{W.Domain}";
+        (await W.Http.PostAsJsonAsync("/api/auth/sign-up/email", new { name = "Colleague", email = other, password = Password })).EnsureSuccessStatusCode();
+        _idp.Identity = ("colleague-sub", other, "Colleague");
+        var (_, location) = await W.RunTestAsync();
+        Assert.Contains("error=access_denied", location);
+        Assert.Equal("failed", (await W.Owner(HttpMethod.Get, "/v1/sso")).Body.GetProperty("connection").GetProperty("testStatus").GetString());
+        Assert.Contains("different account", (await W.Owner(HttpMethod.Get, "/v1/sso")).Body.GetProperty("connection").GetProperty("lastError").GetString());
+        Assert.Equal(HttpStatusCode.Conflict, (await W.Owner(HttpMethod.Post, "/v1/sso/enable", new { })).Status);
+        // And the colleague was neither linked nor changed by the test.
+        Assert.Equal(0, W.Db(db => db.Set<ExternalAccount>().Count(a => a.AccountId == "colleague-sub")));
+    }
+
+    [Fact]
     public async Task A_test_the_provider_refuses_fails_with_an_explanation()
     {
         await W.RegisterAsync();
