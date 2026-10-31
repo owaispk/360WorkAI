@@ -244,6 +244,21 @@ public sealed class SsoAttackTests(SsoFactory factory) : SsoSignInBase(factory)
     }
 
     [Fact]
+    public async Task A_state_cannot_be_replayed_even_when_the_binding_cookie_is_replayed_too()
+    {
+        SignInAs(Person("replay"), "sub-replay");
+        var client = Factory.Plain();   // no cookie jar: the test carries the binding cookie by hand
+        var (response, started) = await W.StartSignInAsync(client);
+        var cookie = response.Headers.GetValues("Set-Cookie").First(c => c.StartsWith("openwork-den.sso_state=")).Split(';')[0];
+        var callback = SsoWorld.PathAndQuery(await SsoWorld.AtIdpAsync(started.GetProperty("url").GetString()!));
+        async Task<HttpResponseMessage> Hit() { var r = new HttpRequestMessage(HttpMethod.Get, callback); r.Headers.Add("Cookie", cookie); return await client.SendAsync(r); }
+        Assert.Equal("http://localhost/dashboard", LocationOf(await Hit()));
+        var before = Tokens;
+        Assert.Contains("state_mismatch", LocationOf(await Hit()));
+        Assert.Equal(before, Tokens);
+    }
+
+    [Fact]
     public async Task A_state_must_come_back_in_the_browser_that_started_it()
     {
         var (browser, callback) = await ReadyAsync();

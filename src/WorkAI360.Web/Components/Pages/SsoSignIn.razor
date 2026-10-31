@@ -1,0 +1,76 @@
+@page "/sso/{Slug}"
+@inject IJSRuntime Js
+@inject NavigationManager Nav
+
+<PageTitle>Sign in with SSO · OpenWork Cloud</PageTitle>
+
+<section class="den-card" data-testid="sso-signin">
+    @if (_error is null)
+    {
+        <h1>Redirecting you to your organisation’s identity provider</h1>
+        <p class="den-muted" data-testid="sso-redirecting">One moment…</p>
+        @if (_url is not null) { <p class="den-muted">If the page did not open, <a href="@_url" data-testid="sso-continue">click here</a>.</p> }
+    }
+    else
+    {
+        <h1>We couldn’t sign you in</h1>
+        <p class="den-error" role="alert" data-testid="sso-error">@_error</p>
+        <p class="den-muted">Try again, return to sign in, or contact your organization’s administrator.</p>
+        <button type="button" class="den-button" @onclick="StartAsync" data-testid="sso-retry">Try again</button>
+        <a class="den-link" href="/">Back to sign in</a>
+    }
+</section>
+
+@code {
+    [Parameter] public string Slug { get; set; } = "";
+
+    private string? _error, _url;
+    private string _callback = "/dashboard";
+    private string? _loginHint;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var query = System.Web.HttpUtility.ParseQueryString(new Uri(Nav.Uri).Query);
+        // Only this site's own pages: a page address that starts with a single slash (the server checks again).
+        var requested = query["callbackURL"];
+        if (requested is { Length: > 0 } && requested.StartsWith('/') && !requested.StartsWith("//") && !requested.Contains('\\')) _callback = requested;
+        _loginHint = query["loginHint"];
+        // The identity provider (or this server) sent the person back with a failure.
+        if (query["error"] is { Length: > 0 } error)
+        {
+            _error = query["error_description"] is { Length: > 0 } description ? Describe(error, description) : Describe(error, null);
+            StateHasChanged();
+            return;
+        }
+        await StartAsync();
+    }
+
+    private static string Describe(string error, string? description) => error switch
+    {
+        "access_denied" when description is not null && description.Contains("deprovisioned") => description,
+        "email_outside_sso_domain" => description ?? "Your sign-in provider returned an email outside this organization's verified domain.",
+        "invalid_state" or "state_mismatch" => "This sign-in link has expired or was already used. Start again.",
+        _ => description is { Length: > 0 } ? $"{error}: {description}" : error,
+    };
+
+    private async Task StartAsync()
+    {
+        _error = null;
+        StateHasChanged();
+        var self = $"/sso/{Uri.EscapeDataString(Slug)}";
+        var module = await Js.InvokeAsync<IJSObjectReference>("import", "./js/sso.js");
+        var body = System.Text.Json.JsonSerializer.Serialize(new { organizationSlug = Slug, callbackURL = _callback, errorCallbackURL = self, loginHint = _loginHint });
+        var raw = await module.InvokeAsync<DenRaw>("post", "/api/auth/sign-in/sso", null, body);
+        var response = new DenResponse(raw.Status, raw.Text);
+        if (!response.Ok || response.String("url") is not { Length: > 0 } url)
+        {
+            _error = response.Message($"Failed to start SSO sign-in ({response.Status}).");
+            StateHasChanged();
+            return;
+        }
+        _url = url;
+        StateHasChanged();
+        await module.InvokeVoidAsync("go", url);
+    }
+}

@@ -1,0 +1,25 @@
+@page "/sso/test/complete"
+@inject IJSRuntime Js
+@inject NavigationManager Nav
+
+<PageTitle>SSO test · OpenWork Cloud</PageTitle>
+
+<section class="den-card" data-testid="sso-test-complete">
+    <h1 data-testid="sso-test-result">@(_failed ? "Authentication test failed" : "Authentication test finished")</h1>
+    <p class="den-muted">Return to SSO settings to review the result. You can close this window.</p>
+    <a class="den-link" href="/dashboard/sso">Back to SSO settings</a>
+</section>
+
+@code {
+    private bool _failed;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var query = System.Web.HttpUtility.ParseQueryString(new Uri(Nav.Uri).Query);
+        _failed = query["error"] is not null || query["failed"] is not null;
+        StateHasChanged();
+        var module = await Js.InvokeAsync<IJSObjectReference>("import", "./js/sso.js");
+        await module.InvokeVoidAsync("finishTest", query["openworkSsoTest"] ?? "", _failed);
+    }
+}

@@ -1,0 +1,135 @@
+@page "/dashboard/scim"
+@inherits ActionPage
+@using System.Text.Json
+
+<PageTitle>SCIM provisioning · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="scim-page">
+    @if (_loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>SCIM provisioning</h1>
+        <p class="den-muted">@_orgName · your identity provider adds, updates and removes people here automatically.</p>
+
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @if (NeedsReauth)
+        {
+            <ReauthForm @bind-Password="ReauthPassword" Busy="Busy" OnConfirm="ConfirmItsYouAsync" OnCancel="CancelReauth" />
+        }
+
+        @if (!Can("scim.view"))
+        {
+            <p class="den-muted">You don’t have permission to view SCIM provisioning.</p>
+        }
+        else
+        {
+            <ul class="den-members">
+                <li><span>Base URL for your provider</span><code data-testid="scim-base-url">@_baseUrl</code></li>
+                <li><span>Single sign-on</span><strong data-testid="scim-sso-ready">@(_ssoReady ? "On" : "Not on yet")</strong></li>
+                <li><span>Connection</span><strong data-testid="scim-connection">@(_hasConnection ? "Created" : "None yet")</strong></li>
+                <li><span>Problems waiting</span><span data-testid="scim-failures">@_failures</span></li>
+                @if (_lastSync is not null) { <li><span>Last sync</span><span data-testid="scim-last-sync">@_lastSync</span></li> }
+            </ul>
+            @if (!_ssoReady) { <p class="den-muted">Turn on single sign-on first: SCIM needs it.</p> }
+
+            @if (_token is not null)
+            {
+                <div class="den-panel" data-testid="scim-token-panel">
+                    <strong>Your SCIM token</strong>
+                    <p class="den-muted">Copy it now. It is shown once and cannot be looked at again; making a new one stops the old one working.</p>
+                    <input readonly value="@_token" data-testid="scim-token" aria-label="SCIM token" />
+                </div>
+            }
+
+            @if (Can("scim.manage"))
+            {
+                <button type="button" class="den-button" disabled="@(Busy || !_ssoReady)" @onclick="TokenAsync" data-testid="scim-token-button">@(_hasConnection ? "Make a new token" : "Create connection and token")</button>
+                @if (_hasConnection)
+                {
+                    <h2>Groups</h2>
+                    <p class="den-muted">Groups from your provider are kept as information. Choose to also create a team for each group; those teams are then managed by your provider and are locked here.</p>
+                    <label for="scim-mode">Groups</label>
+                    <select id="scim-mode" value="@_mode" @onchange="ModeAsync" data-testid="scim-mode">
+                        <option value="metadata_only">Keep as information only</option>
+                        <option value="create_teams">Create a team for each group</option>
+                    </select>
+                    <button type="button" class="den-button den-secondary" disabled="@Busy" @onclick="ReconcileAsync" data-testid="scim-reconcile">Check for drift now</button>
+                    <button type="button" class="den-link den-danger" @onclick="DeleteAsync" data-testid="scim-delete">@(_confirmDelete ? "Confirm: turn SCIM off" : "Turn SCIM off")</button>
+                }
+            }
+        }
+        <a class="den-link" href="/dashboard">Back to dashboard</a>
+    }
+</section>
+
+@code {
+    private bool _loading = true, _ssoReady, _hasConnection, _confirmDelete;
+    private string _orgName = "", _baseUrl = "", _mode = "metadata_only";
+    private string? _token, _lastSync;
+    private int _failures;
+    private HashSet<string> _permissions = [];
+
+    private bool Can(string permission) => _permissions.Contains(permission);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var me = await Den.RequestAsync("/api/browser/v1/me");
+        if (!me.Ok) { Nav.NavigateTo("/"); return; }
+        MyEmail = me.String("user", "email") ?? "";
+        if (!await LoadAsync()) return;
+        _loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync() => await LoadAsync();
+
+    private async Task<bool> LoadAsync()
+    {
+        var org = await Den.RequestAsync("/api/browser/v1/org");
+        if (org.Status is 404 or 403) { Nav.NavigateTo("/organization"); return false; }
+        if (org.Json is not { ValueKind: JsonValueKind.Object } root) return false;
+        _orgName = org.String("organization", "name") ?? "";
+        _permissions = root.GetProperty("currentMember").GetProperty("permissions").EnumerateArray().Select(p => p.GetString() ?? "").ToHashSet();
+        if (!Can("scim.view")) return true;
+        var scim = await Den.RequestAsync("/api/browser/v1/scim");
+        if (scim.Ok && scim.Json is { ValueKind: JsonValueKind.Object } body)
+        {
+            _baseUrl = scim.String("baseUrl") ?? "";
+            _ssoReady = body.GetProperty("ssoReady").GetBoolean();
+            _hasConnection = body.GetProperty("connection").ValueKind == JsonValueKind.Object;
+            _mode = _hasConnection ? body.GetProperty("connection").GetProperty("groupMappingMode").GetString() ?? "metadata_only" : "metadata_only";
+            var health = body.GetProperty("health");
+            _failures = health.GetProperty("unresolvedFailureCount").GetInt32();
+            _lastSync = health.GetProperty("lastSuccessfulSyncAt").ValueKind == JsonValueKind.String ? health.GetProperty("lastSuccessfulSyncAt").GetString() : null;
+        }
+        return true;
+    }
+
+    private async Task TokenAsync() => await RunAsync(async () =>
+    {
+        var r = await Den.RequestAsync("/api/browser/v1/scim/token", "POST", new { });
+        _token = r.Ok ? r.String("scimToken") : null;
+        return r;
+    }, "Token created. Copy it now: it is not shown again.", r => r.String("message"));
+
+    private async Task ModeAsync(ChangeEventArgs e)
+    {
+        var mode = e.Value?.ToString() ?? "metadata_only";
+        await RunAsync(() => Den.RequestAsync("/api/browser/v1/scim", "PATCH", new { groupMappingMode = mode }), mode == "create_teams" ? "Groups now create and manage teams." : "Groups are kept as information only.");
+    }
+
+    private async Task ReconcileAsync() => await RunAsync(() => Den.RequestAsync("/api/browser/v1/scim/reconcile", "POST", new { }), "Checked.");
+
+    private async Task DeleteAsync()
+    {
+        if (!_confirmDelete) { _confirmDelete = true; return; }
+        _confirmDelete = false;
+        _token = null;
+        await RunAsync(() => Den.RequestAsync("/api/browser/v1/scim", "DELETE"), "SCIM is off and its token no longer works.");
+    }
+}
