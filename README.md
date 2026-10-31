@@ -93,8 +93,11 @@ Set with environment variables (`Auth__Secret`) or `appsettings`.
 | `Auth__TrustedProxies__0`, `__1`… | Addresses of proxies whose `X-Forwarded-*` headers are believed. Empty means loopback only. **Set this whenever the web host runs somewhere else**: until you do, the API sees every visitor as the web host, so the per-address rate limits share one bucket. |
 | `Auth__TrustedOrigins__0`… | Extra origins a password-reset link may return to, besides the web origin. |
 | `Auth__PrivilegedSessionMinutes` | How recently the person must have signed in to change members, roles or invitations (default 120). Older sessions get `403 {error: "reauth"}` and the Members page asks for the password. |
+| `Database__Provider`, `ConnectionStrings__Default`, `Database__AutoMigrate` | `sqlite` (default) or `mysql`; see [docs/database.md](docs/database.md). |
+| `Auth__SigningKeyRotationDays`, `Auth__SigningKeyGraceHours` | A new OAuth signing key after this many days (default 90); the old one stays published for the grace period (default 48 hours). |
+| `OAuth__ClientMetadata__AllowPrivateUrls` | Let Client ID Metadata Documents be fetched from private addresses (self-hosted setups; default off). |
 | `Auth__RateLimitsEnabled` | Rate limits on the email endpoints. Default: off in Development, on everywhere else. |
-| `Email__Provider` | `dev` keeps messages in memory and exposes them at `GET /dev/outbox` (**Development only; refused anywhere else**). `smtp` sends real mail. |
+| `Email__Provider` | `smtp`, `resend` (needs `Email__Resend__ApiKey`) or `dev`. `dev` keeps messages in memory and exposes them at `GET /dev/outbox` (**Development only; refused anywhere else**). `smtp` and `resend` send real mail. |
 | `Email__From`, `Email__Smtp__Host`, `__Port`, `__User`, `__Password`, `__Security` | SMTP settings. `Security` is `auto` (default), `starttls`, `ssl` or `none` (local test servers only). |
 
 ## Design decisions (different from the reference on purpose)
@@ -114,6 +117,9 @@ Set with environment variables (`Auth__Secret`) or `appsettings`.
 - **OAuth hardening**: PKCE S256 is required for every client; redirect URIs must be exact (a registered loopback URI matches on any port, per RFC 8252); resources must be ours (RFC 8707); a replayed authorization code revokes the tokens it produced; refresh tokens rotate, and presenting a rotated one after a 30-second grace window revokes the whole family; a refresh can narrow scopes but never add them; secrets, codes and refresh tokens are stored as SHA-256 only.
 - **MCP access follows membership**: every `/mcp/agent` call re-checks the person still belongs to the workspace, and browsers on other origins are refused (DNS-rebinding protection from the MCP spec).
 - **`execute_capability` runs two built-in read-only capabilities today** (`openwork.whoami`, `openwork.workspace.members`), so the whole path is real and testable. Connections to external services are not built yet.
+- **Client ID Metadata Documents** (what spec-following MCP clients use instead of registering): the HTTPS client_id is fetched once under an SSRF-safe policy (public addresses only, chosen when connecting so DNS cannot swap one in; no redirects; 5 KB cap; never this deployment's own origins), must name itself, be a public client with no secret, and pass the redirect policy; it is refreshed hourly, and an unreachable document leaves a known client as it was.
+- **Token endpoint limits** follow the reference: attempts per client and address (60 a minute; 20 with no client), per address (300), failures per caller (15 in five minutes) and per address (60); a dead refresh token is charged to that token only. In memory, per instance.
+- **Signing keys rotate**: the newest key signs; a replaced key stays published for a grace period so tokens it signed still verify, then is retired (the row is kept).
 - **Sign-in lockout**: 5 failures per address in 15 minutes returns `429 login_locked` with `Retry-After`. The email endpoints also have the reference's per-address and per-source limits (for example 5 reset requests per address per hour). All limits are in memory, per instance.
 
 - **Members who have not accepted yet are listed as placeholder members** (no user id, `inviteId` set), as in the reference, so one list shows everyone. Removing a placeholder **cancels the invitation**; the reference leaves it pending.
@@ -132,14 +138,14 @@ Set with environment variables (`Auth__Secret`) or `appsettings`.
 
 Roughly in the order to build them:
 
-1. **OAuth follow-ups**: Client ID Metadata Documents (clients that skip registration), a rate limit on registration and on failed token requests, signing-key rotation, ID tokens and `userinfo` (the OpenID document is served but no ID tokens are issued), and Workbot's fixed client id. Testing against real clients (Claude Code, Cursor) has not been done: the flows are exercised with a scripted client and a real browser.
+1. **OAuth follow-ups**: a rate limit on registration, `client_credentials`/introspection/`private_key_jwt` (the reference offers them; no client here needs them yet), ID tokens and `userinfo` (the OpenID document is served but no ID tokens are issued), and Workbot's fixed client id. Testing against real clients (Claude Code, Cursor) has not been done: the flows are exercised with a scripted client and a real browser.
 2. **MCP connections**: the capabilities behind `execute_capability` (Google Workspace, Microsoft 365 and other MCP servers), plus streaming responses.
-3. **More email**: a Resend provider (SMTP only today), the other code types (`sign-in`, `forget-password`, `change-email`), and a shared rate-limit store for more than one instance.
+3. **More email**: the other code types (`sign-in`, `forget-password`, `change-email`), and a shared rate-limit store for more than one instance.
 4. **Members and teams follow-ups**: API keys, invitation limits, invite-into-a-team, declarative `PUT /v1/teams/by-key/{key}`, a leave-workspace action, and a re-sign-in dialog that retries in place (the Members page does ask for the password, but other pages do not).
 5. **Social sign-in** (Google, GitHub), **SSO** (OIDC/SAML) and **SCIM**.
 6. The rest of `/v1/*` (about 550 route registrations in the reference) and the other ~120 web pages.
 7. **Passwords**: the reference's strength score and breached-password screening.
-8. **MySQL** (today SQLite), EF Core migrations (today a dev-only bootstrap that creates missing tables), rate limiting beyond sign-in, audit log, Docker/Helm packaging, CI.
+8. **Operations**: Helm packaging, a shared rate-limit store and cache for more than one instance (limits and signing-key reload are per instance today), and running the container build in CI (no Docker daemon was available here, so the Dockerfiles are written and the publishes verified, but the images were not built).
 9. **Cloud web handoff return URLs** (`returnUrl`) are refused until an approved-origin list exists.
 
 ## Licensing note

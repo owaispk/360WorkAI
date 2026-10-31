@@ -1,0 +1,86 @@
+@page "/dashboard/skills"
+@inherits LibraryPage
+@using System.Text.Json
+
+<PageTitle>Skills · OpenWork Cloud</PageTitle>
+
+<LibraryStyles />
+
+<section class="den-card den-wide lib-page" data-testid="skills-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>Skills</h1>
+        <p class="den-muted">@OrgName · instructions your agents load when they need them. You see the skills you made and the ones shared with you.</p>
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        <div class="lib-actions">
+            <input aria-label="Search skills" placeholder="Search skills" value="@_search" @oninput="OnSearchAsync" data-testid="skill-search" />
+        </div>
+        @if (_skills.Count == 0) { <p class="den-muted" data-testid="no-skills">@(_search.Length > 0 ? "No skill matches that search." : "There are no skills yet.")</p> }
+        <ul class="den-members" data-testid="skill-list">
+            @foreach (var skill in _skills)
+            {
+                <li data-testid="skill-row" data-name="@skill.Title">
+                    <div class="den-member-main">
+                        <a class="lib-row-title" href="/dashboard/skills/@skill.Id">@skill.Title</a>
+                        <span class="den-muted">@skill.Description</span>
+                        <div class="lib-tags"><span class="lib-tag">@skill.Type</span>@if (skill.Status != "active") { <span class="lib-tag">@skill.Status</span> }</div>
+                    </div>
+                    <div class="den-member-actions"><a class="den-link" href="/dashboard/skills/@skill.Id">Open</a></div>
+                </li>
+            }
+        </ul>
+
+        <h2>New skill</h2>
+        <p class="den-muted">A skill on its own is private to you until you share it or put it in a plugin.</p>
+        <form @onsubmit="CreateAsync" novalidate data-testid="skill-form">
+            <label for="skill-text">SKILL.md</label>
+            <textarea id="skill-text" @bind="_text" @bind:event="oninput" data-testid="skill-text"></textarea>
+            <button type="submit" class="den-button" disabled="@Busy" data-testid="create-skill">Create skill</button>
+        </form>
+        <div class="lib-actions">
+            <a class="den-link" href="/dashboard/plugins">Plugins</a>
+            <a class="den-link" href="/dashboard">Back to dashboard</a>
+        </div>
+    }
+</section>
+
+@code {
+    private sealed record Row(string Id, string Title, string? Description, string Type, string Status);
+
+    private List<Row> _skills = [];
+    private string _search = "";
+    private string _text = "---\nname: my-skill\ndescription: What this skill helps with\n---\n\nWrite the instructions here.\n";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await LoadOrgAsync()) return;
+        await ReloadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync()
+    {
+        var q = _search.Trim().Length > 0 ? $"&q={Uri.EscapeDataString(_search.Trim())}" : "";
+        var r = await Api($"/config-objects?type=skill&limit=100{q}");
+        _skills = [];
+        if (r.Json is not { ValueKind: JsonValueKind.Object } body) return;
+        foreach (var o in body.GetProperty("items").EnumerateArray())
+            _skills.Add(new Row(Str(o, "id") ?? "", Str(o, "title") ?? "", Str(o, "description"), Str(o, "objectType") ?? "", Str(o, "status") ?? ""));
+    }
+
+    private async Task OnSearchAsync(ChangeEventArgs e) { _search = e.Value?.ToString() ?? ""; await ReloadAsync(); }
+
+    private async Task CreateAsync()
+    {
+        var text = _text;
+        var r = await Api("/config-objects", "POST", new { type = "skill", sourceMode = "cloud", input = new { rawSourceText = text } });
+        if (!r.Ok) { Error = r.Message("That did not work. Try again."); return; }
+        Nav.NavigateTo($"/dashboard/skills/{r.String("item", "id")}");
+    }
+}

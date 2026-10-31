@@ -8,16 +8,24 @@ using WorkAI360.Api.Endpoints;
 using WorkAI360.Api.Features;
 using WorkAI360.Api.OAuth;
 
+// `--healthcheck` asks a running instance whether it is up and exits 0 or 1 (the container image has no curl).
+if (args.Contains("--healthcheck"))
+{
+    using var probe = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+    try { return (await probe.GetAsync(Environment.GetEnvironmentVariable("HEALTHCHECK_URL") ?? "http://localhost:8080/health")).IsSuccessStatusCode ? 0 : 1; }
+    catch (Exception) { return 1; }
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection(AuthOptions.Section));
-builder.Services.AddDbContext<DenDbContext>(o =>
-    o.UseSqlite(builder.Configuration.GetConnectionString("Default") ?? "Data Source=workai360.db"));
+builder.Services.AddDbContext<DenDbContext>(o => DatabaseProvider.Configure(o, builder.Configuration));
 builder.Services.AddScoped<SessionService>();
 builder.Services.AddSingleton<LoginThrottle>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection(EmailOptions.Section));
 builder.Services.AddSingleton<RateLimiter>();
+builder.Services.AddSingleton<TokenRateLimit>();
 builder.Services.AddScoped<EmailVerificationService>();
 builder.Services.AddScoped<PermissionService>();
 builder.Services.AddScoped<OrgAccess>();
@@ -30,6 +38,11 @@ if (emailProvider == "smtp")
     if (string.IsNullOrWhiteSpace(builder.Configuration["Email:Smtp:Host"])) throw new InvalidOperationException("Email:Smtp:Host is required when Email:Provider is smtp.");
     builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
 }
+else if (emailProvider == "resend")
+{
+    if (string.IsNullOrWhiteSpace(builder.Configuration["Email:Resend:ApiKey"])) throw new InvalidOperationException("Email:Resend:ApiKey is required when Email:Provider is resend.");
+    builder.Services.AddHttpClient<IEmailSender, ResendEmailSender>(c => c.Timeout = TimeSpan.FromSeconds(15));
+}
 else if (emailProvider == "dev")
 {
     // The dev provider keeps codes and links in memory. It must never run outside Development, where nothing would reach people.
@@ -37,11 +50,14 @@ else if (emailProvider == "dev")
     builder.Services.AddSingleton<DevOutbox>();
     builder.Services.AddSingleton<IEmailSender>(sp => sp.GetRequiredService<DevOutbox>());
 }
-else throw new InvalidOperationException($"Unknown Email:Provider '{emailProvider}' (use dev or smtp).");
+else throw new InvalidOperationException($"Unknown Email:Provider '{emailProvider}' (use dev, smtp or resend).");
 builder.Services.AddSingleton<SigningKeyStore>();
 builder.Services.AddSingleton<SignedQuery>();
 builder.Services.AddScoped<OAuthUrls>();
 builder.Services.AddScoped<TokenService>();
+builder.Services.Configure<OAuthClientMetadataOptions>(builder.Configuration.GetSection("OAuth:ClientMetadata"));
+builder.Services.AddSingleton<IClientMetadataFetcher, HttpClientMetadataFetcher>();
+builder.Services.AddScoped<ClientResolver>();
 builder.Services.AddScoped<McpAuthenticator>();
 builder.Services.AddScoped<ICapabilityProvider, BuiltInCapabilities>();
 
@@ -84,9 +100,11 @@ if (string.IsNullOrWhiteSpace(secret) || secret.Length < 32)
 
 using (var scope = app.Services.CreateScope())
 {
-    // Development convenience: create the schema on first start. Real deployments will use migrations.
-    DevSchema.Ensure(scope.ServiceProvider.GetRequiredService<DenDbContext>());
+    // SQLite: the schema is created and extended automatically. MySQL: migrations (see docs/database.md).
+    DatabaseSetup.Ensure(scope.ServiceProvider.GetRequiredService<DenDbContext>(), app.Configuration, app.Environment, migrateNow: args.Contains("--migrate"));
 }
+// `--migrate` brings the database up to date and exits, for deployments that migrate as a separate step.
+if (args.Contains("--migrate")) return 0;
 
 app.MapMiscEndpoints();
 app.MapAuthEndpoints();
@@ -111,5 +129,6 @@ if (app.Environment.IsDevelopment() && emailProvider == "dev")
 }
 
 app.Run();
+return 0;
 
 public partial class Program;

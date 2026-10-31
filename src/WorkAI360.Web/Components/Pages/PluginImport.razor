@@ -1,0 +1,136 @@
+@page "/dashboard/plugins/import"
+@inherits LibraryPage
+@using System.Text.Json
+
+<PageTitle>Import from GitHub · OpenWork Cloud</PageTitle>
+
+<LibraryStyles />
+
+<section class="den-card den-wide lib-page" data-testid="import-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>Import from GitHub</h1>
+        <p class="den-muted">Paste the address of a public GitHub repository, or of one folder in it, and choose which skills to bring in.</p>
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @if (!Can("plugins.import"))
+        {
+            <p class="den-muted" data-testid="import-denied">Only owners and admins can import plugins from GitHub.</p>
+        }
+        else
+        {
+            <form @onsubmit="PreviewAsync" novalidate data-testid="preview-form">
+                <label for="github-url">GitHub address</label>
+                <input id="github-url" autocomplete="off" placeholder="https://github.com/owner/repository" @bind="_url" @bind:event="oninput" />
+                <button type="submit" class="den-button" disabled="@Busy" data-testid="preview-button">Preview</button>
+            </form>
+        }
+
+        @if (_plan is { } plan)
+        {
+            <h2 data-testid="plan-title">@Str(plan, "repositoryFullName") @(Str(plan, "rootPath") is { Length: > 0 } root ? $"/ {root}" : "")</h2>
+            <p class="den-muted">Branch @Str(plan, "branch") · @Str(plan, "classification")?.Replace('_', ' ')</p>
+            @foreach (var warning in plan.GetProperty("warnings").EnumerateArray()) { <p class="den-muted" data-testid="plan-warning">@warning.GetString()</p> }
+            <h2>Skills</h2>
+            @if (_skills.Count == 0) { <p class="den-muted" data-testid="plan-no-skills">No skills were found here.</p> }
+            @foreach (var s in _skills)
+            {
+                <label class="den-check" data-testid="plan-skill" data-name="@s.Name">
+                    <input type="checkbox" disabled="@(!s.Supported)" checked="@(s.Supported && _selected.Contains(s.Key))" @onchange="e => Toggle(s.Key, e.Value is true)" />
+                    <span>@s.Name <span class="den-muted">@(s.Supported ? s.Description : "Not a valid SKILL.md, so it will be left out")</span></span>
+                </label>
+            }
+            @if (_servers.Count > 0)
+            {
+                <h2>Remote servers found</h2>
+                <ul class="den-list" data-testid="plan-servers">
+                    @foreach (var server in _servers) { <li>@server</li> }
+                </ul>
+            }
+
+            <h2>Import</h2>
+            <form @onsubmit="ImportAsync" novalidate data-testid="import-form">
+                <label for="import-name">Plugin name</label>
+                <input id="import-name" autocomplete="off" @bind="_name" @bind:event="oninput" />
+                @if (Can("sharing.share_org_wide"))
+                {
+                    <label class="den-check"><input type="checkbox" checked="@_everyone" @onchange="e => _everyone = e.Value is true" data-testid="import-everyone" /> <span>Share with everyone in the workspace</span></label>
+                }
+                else { <p class="den-muted">It will be shared with you only. You can share it afterwards.</p> }
+                <button type="submit" class="den-button" disabled="@(Busy || _selected.Count == 0)" data-testid="import-button">Import @_selected.Count @(_selected.Count == 1 ? "skill" : "skills")</button>
+            </form>
+        }
+
+        @if (_result is { } result)
+        {
+            <p class="den-notice" role="status" data-testid="import-result">
+                @(Str(result, "mode") == "created" ? "Plugin created" : "Plugin updated"):
+                @result.GetProperty("importedSkills").GetArrayLength() added,
+                @result.GetProperty("updatedSkills").GetArrayLength() updated,
+                @result.GetProperty("unchanged").GetArrayLength() unchanged,
+                @result.GetProperty("removed").GetArrayLength() removed.
+            </p>
+            <a class="den-button" href="/dashboard/plugins/@_resultId" data-testid="open-plugin">Open the plugin</a>
+        }
+        <div class="lib-actions"><a class="den-link" href="/dashboard/plugins">Back to plugins</a></div>
+    }
+</section>
+
+@code {
+    private sealed record Skill(string Key, string Name, string? Description, bool Supported);
+
+    private string _url = "", _name = "";
+    private bool _everyone = true;
+    private JsonElement? _plan, _result;
+    private string _resultId = "";
+    private List<Skill> _skills = [];
+    private List<string> _servers = [];
+    private HashSet<string> _selected = [];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await LoadOrgAsync()) return;
+        Loading = false;
+        StateHasChanged();
+    }
+
+    private void Toggle(string key, bool on) { if (on) _selected.Add(key); else _selected.Remove(key); }
+
+    private async Task PreviewAsync()
+    {
+        Error = null; _result = null; _plan = null;
+        if (_url.Trim().Length == 0) { Error = "Paste a GitHub address first."; return; }
+        Busy = true;
+        var r = await Api("/plugins/import-mcps-from-github-url/preview", "POST", new { githubUrl = _url.Trim() });
+        Busy = false;
+        if (!r.Ok) { Error = r.Message("GitHub could not be read. Try again."); return; }
+        var plan = r.Json!.Value.GetProperty("item");
+        _plan = plan;
+        _skills = plan.GetProperty("skills").EnumerateArray().Select(s => new Skill(Str(s, "skillKey") ?? "", Str(s, "name") ?? "", Str(s, "description"), s.GetProperty("supported").GetBoolean())).ToList();
+        _selected = _skills.Where(s => s.Supported).Select(s => s.Key).ToHashSet();
+        _servers = plan.GetProperty("servers").EnumerateArray().Select(s => $"{Str(s, "name")} ({(s.GetProperty("supported").GetBoolean() ? Str(s, "url") + ", not imported yet" : "cannot be used")})").ToList();
+        var plugins = plan.GetProperty("plugins").EnumerateArray().ToList();
+        _name = plugins.Count == 1 ? Str(plugins[0], "name") ?? "" : (Str(plan, "repositoryFullName") ?? "").Split('/').Last();
+    }
+
+    private async Task ImportAsync()
+    {
+        Error = null;
+        var access = _everyone && Can("sharing.share_org_wide") ? null : new { orgWide = false, memberIds = new[] { MyMemberId }, teamIds = Array.Empty<string>() };
+        var name = _name.Trim();
+        var keys = _selected.ToArray();
+        Busy = true;
+        var body = new Dictionary<string, object?> { ["githubUrl"] = _url.Trim(), ["selectedSkillKeys"] = keys };
+        if (name.Length > 0) body["name"] = name;
+        if (access is not null) body["access"] = access;
+        var r = await Api("/plugins/import-mcps-from-github-url", "POST", body);
+        Busy = false;
+        if (!r.Ok) { Error = r.Message("The import did not work. Try again."); return; }
+        _result = r.Json!.Value.GetProperty("item");
+        _resultId = _result.Value.GetProperty("plugin").GetProperty("id").GetString() ?? "";
+    }
+}

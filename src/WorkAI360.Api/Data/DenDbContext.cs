@@ -3,8 +3,31 @@ using WorkAI360.Api.Domain;
 
 namespace WorkAI360.Api.Data;
 
+/// <summary>An entity that keeps a derived column up to date (for example a unique "active" key), refreshed just before every save.</summary>
+public interface IDerivedKeys
+{
+    void RefreshKeys();
+}
+
 public sealed class DenDbContext(DbContextOptions<DenDbContext> options) : DbContext(options)
 {
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        RefreshDerivedKeys();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        RefreshDerivedKeys();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    private void RefreshDerivedKeys()
+    {
+        foreach (var entry in ChangeTracker.Entries<IDerivedKeys>().Where(e => e.State is EntityState.Added or EntityState.Modified)) entry.Entity.RefreshKeys();
+    }
+
     public DbSet<User> Users => Set<User>();
     public DbSet<Session> Sessions => Set<Session>();
     public DbSet<Organization> Organizations => Set<Organization>();
@@ -46,16 +69,34 @@ public sealed class DenDbContext(DbContextOptions<DenDbContext> options) : DbCon
         b.Entity<Invitation>().HasIndex(i => i.PlaceholderMemberId).IsUnique();
         b.Entity<PasswordResetToken>().HasIndex(t => t.UserId);
         // Team names are unique per workspace regardless of case, as with the reference's default MySQL collation.
-        b.Entity<Team>().Property(t => t.Name).UseCollation("NOCASE");
+        // SQLite needs the collation named; MySQL's default utf8mb4 collation is already case-insensitive.
+        if (this.IsSqlite()) b.Entity<Team>().Property(t => t.Name).UseCollation("NOCASE");
         b.Entity<Team>().HasIndex(t => new { t.OrganizationId, t.Name }).IsUnique();
         b.Entity<TeamMember>().HasIndex(t => new { t.TeamId, t.MemberId }).IsUnique();
         b.Entity<TeamMember>().HasIndex(t => t.MemberId);
         b.Entity<PermissionSet>().HasIndex(p => p.OrganizationId);
-        // One Member set and one Admin set per workspace, even if two requests try to create them at once.
-        b.Entity<PermissionSet>().HasIndex(p => new { p.OrganizationId, p.DefaultKey }).IsUnique().HasFilter("\"DefaultKey\" IS NOT NULL");
+        // One Member set and one Admin set per workspace, even if two requests try to create them at once (roles have no DefaultKey, and
+        // databases treat empty values as distinct, so they are unaffected).
+        b.Entity<PermissionSet>().HasIndex(p => new { p.OrganizationId, p.DefaultKey }).IsUnique();
         b.Entity<PermissionSetPermission>().HasIndex(p => new { p.PermissionSetId, p.PermissionKey });
         // A team has at most one active role, even if two requests give it one at the same moment.
-        b.Entity<PermissionSetTeam>().HasIndex(p => p.TeamId).IsUnique().HasFilter("\"RemovedAt\" IS NULL");
+        b.Entity<PermissionSetTeam>().HasIndex(p => p.ActiveTeamId).IsUnique();
+        b.Entity<PermissionSetTeam>().HasIndex(p => p.TeamId);
         b.Entity<PermissionSetTeam>().HasIndex(p => p.PermissionSetId);
+
+        // MySQL cannot index unbounded text. Every key, foreign key and indexed text column gets a length (ids are 29 characters).
+        if (!this.IsSqlite())
+        {
+            foreach (var entity in b.Model.GetEntityTypes())
+            {
+                var indexed = entity.GetKeys().SelectMany(k => k.Properties)
+                    .Concat(entity.GetIndexes().SelectMany(i => i.Properties))
+                    .Concat(entity.GetForeignKeys().SelectMany(f => f.Properties))
+                    .Where(p => p.ClrType == typeof(string) && p.GetMaxLength() is null).Distinct();
+                foreach (var property in indexed) property.SetMaxLength(255);
+                // A named SQLite collation does not exist elsewhere; MySQL's default is already case-insensitive.
+                foreach (var property in entity.GetProperties().Where(p => p.GetCollation() == "NOCASE")) property.SetCollation(null);
+            }
+        }
     }
 }
