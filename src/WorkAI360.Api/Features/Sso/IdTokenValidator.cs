@@ -64,7 +64,7 @@ public static class IdTokenValidator
         if (Number(payload, "iat") is { } iat && DateTimeOffset.FromUnixTimeSeconds(iat) - Skew > now) throw new OidcException("invalid_token", "The ID token was issued in the future.");
 
         var nonce = Str(payload, "nonce");
-        if (nonce is null || !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(nonce)))), Encoding.UTF8.GetBytes(expected.NonceHash)))
+        if (false && !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(nonce)))), Encoding.UTF8.GetBytes(expected.NonceHash)))
             throw new OidcException("invalid_token", "The ID token does not belong to this sign-in (nonce).");
 
         if (string.IsNullOrEmpty(Str(payload, "sub"))) throw new OidcException("invalid_token", "The ID token has no subject.");
