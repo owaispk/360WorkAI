@@ -6,10 +6,15 @@ using WorkAI360.Api.Data;
 
 namespace WorkAI360.Api.Tests;
 
-/// <summary>A fresh API instance with its own SQLite file per test class.</summary>
+/// <summary>
+/// A fresh API instance with its own database per test class: a SQLite file, or (when WORKAI_TEST_MYSQL names a server, for example
+/// "Server=127.0.0.1;User=root;Password=...") a throwaway MySQL database that is dropped afterwards, so the same tests run on both.
+/// </summary>
 public class ApiFactory : WebApplicationFactory<Program>
 {
     private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"workai360-test-{Guid.NewGuid():N}.db");
+    private static readonly string? MySqlServer = Environment.GetEnvironmentVariable("WORKAI_TEST_MYSQL");
+    private readonly string _mysqlDatabase = $"workai_test_{Guid.NewGuid():N}";
     public const string Secret = "test-secret-0123456789-abcdefghijklmnop";
     public const string Password = "Str0ng!Passw0rd#2026x";
 
@@ -19,7 +24,19 @@ public class ApiFactory : WebApplicationFactory<Program>
         builder.UseSetting("Auth:WebUrl", "http://localhost");
         foreach (var (key, value) in Settings) builder.UseSetting(key, value);
         builder.UseSetting("Auth:ApiPublicUrl", "http://localhost");
-        builder.UseSetting("ConnectionStrings:Default", $"Data Source={_dbPath}");
+        if (MySqlServer is null) builder.UseSetting("ConnectionStrings:Default", $"Data Source={_dbPath}");
+        else
+        {
+            using (var admin = new MySql.Data.MySqlClient.MySqlConnection(MySqlServer))
+            {
+                admin.Open();
+                using var create = admin.CreateCommand();
+                create.CommandText = $"CREATE DATABASE `{_mysqlDatabase}` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci";
+                create.ExecuteNonQuery();
+            }
+            builder.UseSetting("Database:Provider", "mysql");
+            builder.UseSetting("ConnectionStrings:Default", $"{MySqlServer};Database={_mysqlDatabase}");
+        }
         builder.UseSetting("environment", "Development");
     }
 
@@ -61,11 +78,24 @@ public class ApiFactory : WebApplicationFactory<Program>
 
     public override ValueTask DisposeAsync()
     {
+        var disposed = base.DisposeAsync();
+        if (MySqlServer is not null)
+        {
+            try
+            {
+                using var admin = new MySql.Data.MySqlClient.MySqlConnection(MySqlServer);
+                admin.Open();
+                using var drop = admin.CreateCommand();
+                drop.CommandText = $"DROP DATABASE IF EXISTS `{_mysqlDatabase}`";
+                drop.ExecuteNonQuery();
+            }
+            catch (Exception) { /* a leftover scratch database is harmless */ }
+        }
         foreach (var path in new[] { _dbPath, _dbPath + "-shm", _dbPath + "-wal" })
         {
             try { File.Delete(path); } catch (IOException) { }
         }
-        return base.DisposeAsync();
+        return disposed;
     }
 
     public static HttpRequestMessage Bearer(HttpMethod method, string url, string token, object? body = null)

@@ -249,25 +249,40 @@ public static class PermissionEndpoints
             if (setId is not null && MemberEndpoints.ValidateTypeId(setId, "pms", "permissionSetId") is { } badSet) return badSet;
 
             var org = context!.Organization.Id;
-            await using var tx = await db.Database.BeginTransactionAsync();
-            var team = await db.Teams.FirstOrDefaultAsync(t => t.Id == teamId && t.OrganizationId == org);
-            if (team is null) return Results.Json(new { error = "team_not_found", message = "This team doesn't exist in your organization." }, statusCode: 404);
-            PermissionSet? set = null;
-            if (setId is not null)
+            // Two people giving the same team different roles at once race on the one-active-role rule; the loser (or a database deadlock) simply
+            // tries again against what the winner left, so the last request wins and nobody sees an error.
+            for (var attempt = 1; ; attempt++)
             {
-                await permissions.EnsureDefaultSetsAsync(org);
-                set = await db.PermissionSets.FirstOrDefaultAsync(s => s.Id == setId && s.OrganizationId == org);
-                if (set is null) return SetNotFound();
-                if (set.DefaultKey is not null) return Results.Json(new { error = "default_permission_set", message = "Member and Admin aren't custom roles. Make the team an Admin team instead." }, statusCode: 400);
-                if (set.ArchivedAt is not null) return Results.Json(new { error = "permission_set_archived", message = "This role was deleted." }, statusCode: 409);
-                // Giving a role grants its permissions to everyone in the team, so the editor must hold them all.
-                var missing = (PermissionService.AllowedKeys((await permissions.ReadStatesAsync([set.Id]))[set.Id])).Where(k => !context.Permissions.Has(k)).Order(StringComparer.Ordinal).ToList();
-                if (missing.Count > 0) return Problem(new EditProblem("permission_not_held", missing));
+                try { return await ChangeTeamRoleAsync(); }
+                catch (DbUpdateException) when (attempt < 6)
+                {
+                    db.ChangeTracker.Clear();
+                    await Task.Delay(15 * attempt);
+                }
             }
-            await AssignTeamsAsync(db, set?.Id, [team.Id], DateTime.UtcNow);
-            await db.SaveChangesAsync();
-            await tx.CommitAsync();
-            return Results.Json(new { set = set is null ? null : await SetBody.DetailAsync(db, permissions, context, set) });
+
+            async Task<IResult> ChangeTeamRoleAsync()
+            {
+                await using var tx = await db.Database.BeginTransactionAsync();
+                var team = await db.Teams.FirstOrDefaultAsync(t => t.Id == teamId && t.OrganizationId == org);
+                if (team is null) return Results.Json(new { error = "team_not_found", message = "This team doesn't exist in your organization." }, statusCode: 404);
+                PermissionSet? set = null;
+                if (setId is not null)
+                {
+                    await permissions.EnsureDefaultSetsAsync(org);
+                    set = await db.PermissionSets.FirstOrDefaultAsync(s => s.Id == setId && s.OrganizationId == org);
+                    if (set is null) return SetNotFound();
+                    if (set.DefaultKey is not null) return Results.Json(new { error = "default_permission_set", message = "Member and Admin aren't custom roles. Make the team an Admin team instead." }, statusCode: 400);
+                    if (set.ArchivedAt is not null) return Results.Json(new { error = "permission_set_archived", message = "This role was deleted." }, statusCode: 409);
+                    // Giving a role grants its permissions to everyone in the team, so the editor must hold them all.
+                    var missing = (PermissionService.AllowedKeys((await permissions.ReadStatesAsync([set.Id]))[set.Id])).Where(k => !context.Permissions.Has(k)).Order(StringComparer.Ordinal).ToList();
+                    if (missing.Count > 0) return Problem(new EditProblem("permission_not_held", missing));
+                }
+                await AssignTeamsAsync(db, set?.Id, [team.Id], DateTime.UtcNow);
+                await db.SaveChangesAsync();
+                await tx.CommitAsync();
+                return Results.Json(new { set = set is null ? null : await SetBody.DetailAsync(db, permissions, context, set) });
+            }
         });
 
         app.MapGet("/v1/permissions/sets/{permissionSetId}/history", async (string permissionSetId, HttpContext ctx, OrgAccess access, DenDbContext db) =>

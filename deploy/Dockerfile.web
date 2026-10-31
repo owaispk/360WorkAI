@@ -1,0 +1,17 @@
+# The web host (Blazor + same-origin proxy). Build from the 360workai directory:  docker build -f deploy/Dockerfile.web -t workai360-web .
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+COPY Directory.Build.props WorkAI360.slnx ./
+COPY src/WorkAI360.Web/WorkAI360.Web.csproj src/WorkAI360.Web/
+RUN dotnet restore src/WorkAI360.Web/WorkAI360.Web.csproj
+COPY src/WorkAI360.Web src/WorkAI360.Web
+RUN dotnet publish src/WorkAI360.Web/WorkAI360.Web.csproj -c Release -o /out --no-restore
+
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
+WORKDIR /app
+COPY --from=build /out .
+RUN useradd --system --uid 10001 --no-create-home app && chown -R app /app
+USER app
+ENV ASPNETCORE_URLS=http://+:8080 ASPNETCORE_ENVIRONMENT=Production
+EXPOSE 8080
+ENTRYPOINT ["dotnet", "WorkAI360.Web.dll"]
