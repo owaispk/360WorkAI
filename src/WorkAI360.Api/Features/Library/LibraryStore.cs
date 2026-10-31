@@ -246,6 +246,7 @@ public sealed class LibraryStore(DenDbContext db, LibraryAccess lib, PermissionS
             Id = Ids.New("plg"), OrganizationId = a.OrgId, Name = name, Description = description, SourceRepositoryUrl = sourceRepositoryUrl, SourceFormat = sourceFormat,
             SourceSchemaVersion = sourceSchemaVersion, Status = "active", CreatedByMemberId = a.MemberId, CreatedAt = now, UpdatedAt = now,
         };
+        var activeKey = Plugin.ComputeActiveKey(a.OrgId, a.MemberId, name);
         db.Add(plugin);
         db.Add(NewGrant(a, GrantKinds.Plugin, plugin.Id, "m:" + a.MemberId, a.MemberId, null, false, "manager", "pag", now));
         foreach (var c in components)
@@ -262,7 +263,7 @@ public sealed class LibraryStore(DenDbContext db, LibraryAccess lib, PermissionS
         {
             // Two requests made the same plugin at once: the unique index let one through.
             db.ChangeTracker.Clear();
-            var winner = await db.Set<Plugin>().AsNoTracking().FirstOrDefaultAsync(p => p.OrganizationId == a.OrgId && p.CreatedByMemberId == a.MemberId && p.Name == name && p.Status == "active");
+            var winner = await db.Set<Plugin>().AsNoTracking().FirstOrDefaultAsync(p => p.ActiveKey == activeKey);
             if (winner is null) throw;
             throw Duplicate(name, winner.Id);
         }

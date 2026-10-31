@@ -27,8 +27,10 @@ public sealed class Plugin : IDerivedKeys
     /// </summary>
     public string? ActiveKey { get; set; }
 
-    public void RefreshKeys() =>
-        ActiveKey = Status == "active" ? Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{OrganizationId}|{CreatedByMemberId}|{Name.ToLowerInvariant()}"))) : null;
+    public static string ComputeActiveKey(string organizationId, string createdByMemberId, string name) =>
+        Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{organizationId}|{createdByMemberId}|{name.ToLowerInvariant()}")));
+
+    public void RefreshKeys() => ActiveKey = Status == "active" ? ComputeActiveKey(OrganizationId, CreatedByMemberId, Name) : null;
 }
 
 /// <summary>One skill, command, agent or other thing a plugin holds. Its text lives in versions.</summary>
@@ -152,6 +154,8 @@ public sealed class PluginConfiguration : IEntityTypeConfiguration<Plugin>
     {
         b.HasIndex(p => new { p.OrganizationId, p.UpdatedAt, p.Id });
         // One active plugin per creator and name, ignoring case, even when two requests race (the reference compares in a case-insensitive collation).
+        // The reference compares names ignoring case: SQLite needs the collation named (dropped on MySQL, whose default already does it).
+        b.Property(p => p.Name).UseCollation("NOCASE");
         b.HasIndex(p => p.ActiveKey).IsUnique();
     }
 }
