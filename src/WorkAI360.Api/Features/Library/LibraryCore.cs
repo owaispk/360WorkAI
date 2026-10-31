@@ -257,7 +257,7 @@ public static class Zod
         if (v.ValueKind != JsonValueKind.String) throw new Invalid(p, $"Invalid input: expected string, received {Kind(v)}");
         var s = v.GetString()!;
         if (trim) s = s.Trim();
-        if (s.Length < min) throw new Invalid(p, $"Too small: expected string to have >={min} character{(min == 1 ? "" : "s")}", "too_small");
+        if (s.Length < min) throw new Invalid(p, $"Too small: expected string to have >={min} characters", "too_small");
         if (s.Length > max) throw new Invalid(p, $"Too big: expected string to have <={max} characters", "too_big");
         return s;
     }
