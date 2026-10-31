@@ -28,6 +28,8 @@ public sealed class FakeMcpServer : IAsyncDisposable
     public ConcurrentQueue<OAuthCall> OAuthCalls { get; } = new();
     public ConcurrentQueue<string> Other { get; } = new();
     public volatile bool RejectRefresh;
+    /// <summary>When set the provider accepts an authorization code more than once (so a test can prove OUR state is single use).</summary>
+    public volatile bool ReusableCodes;
     public volatile int SlowMs;
     public volatile bool BigBody;
     public volatile int TokenLifetimeSeconds = 3600;
@@ -128,7 +130,8 @@ public sealed class FakeMcpServer : IAsyncDisposable
             OAuthCalls.Enqueue(new OAuthCall("token", form.GetValueOrDefault("grant_type"), form.ContainsKey("code_verifier"), Resource: form.GetValueOrDefault("resource")));
             if (form.GetValueOrDefault("grant_type") == "authorization_code")
             {
-                if (!_codes.TryRemove(form.GetValueOrDefault("code") ?? "", out var issued)) { await Json(ctx, 400, new JsonObject { ["error"] = "invalid_grant" }); return; }
+                var codeKey = form.GetValueOrDefault("code") ?? "";
+                if (!(ReusableCodes ? _codes.TryGetValue(codeKey, out var issued) : _codes.TryRemove(codeKey, out issued))) { await Json(ctx, 400, new JsonObject { ["error"] = "invalid_grant" }); return; }
                 var challenge = Convert.ToBase64String(SHA256.HashData(Encoding.ASCII.GetBytes(form.GetValueOrDefault("code_verifier") ?? ""))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
                 if (challenge != issued.Challenge || form.GetValueOrDefault("redirect_uri") != issued.RedirectUri) { await Json(ctx, 400, new JsonObject { ["error"] = "invalid_grant", ["error_description"] = "pkce or redirect mismatch" }); return; }
                 var refresh = "rt_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant(); _refresh[refresh] = 0;

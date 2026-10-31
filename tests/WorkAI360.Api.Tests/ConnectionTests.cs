@@ -208,7 +208,9 @@ public sealed class ConnectionTests : IClassFixture<ConnectionFactory>, IAsyncLi
         Assert.False(own.Body.GetProperty("access").GetProperty("orgWide").GetBoolean());
         var id = own.Body.GetProperty("id").GetString()!;
         // Left to its default (everyone), a member's connection is refused; nor can they add keys or shared OAuth.
-        Assert.Equal(HttpStatusCode.Forbidden, (await w.Post(bob, new { name = "All", url = _fake.Url("none"), authType = "none" })).Status);
+        var everyone = await w.Post(bob, new { name = "All", url = _fake.Url("none"), authType = "none" });
+        Assert.Equal(HttpStatusCode.Forbidden, everyone.Status);
+        Assert.Equal("Only workspace owners and admins can share a connection with everyone.", everyone.Msg());
         Assert.Equal(HttpStatusCode.Forbidden, (await w.Post(bob, new { name = "Key", url = _fake.Url("key"), authType = "apikey", apiKey = FakeMcpServer.Key })).Status);
         Assert.Equal(HttpStatusCode.Forbidden, (await w.Post(bob, new { name = "Shared", url = _fake.Url("oauth"), authType = "oauth" })).Status);
         // Bob may reshape who can use it, but not make it org-wide, and can drop others but never himself.
@@ -478,6 +480,8 @@ public sealed class ConnectionTests : IClassFixture<ConnectionFactory>, IAsyncLi
     [Fact]
     public async Task A_callback_can_be_used_once_and_only_with_its_own_state()
     {
+        // The provider here would accept the code again: it is our own state that must refuse the replay.
+        _fake.ReusableCodes = true;
         var w = await Workspace.CreateAsync(_factory);
         var id = await OAuthConnectionAsync(w);
         var location = await ConnectOAuthAsync(w, w.Owner, id);
