@@ -101,6 +101,22 @@ public sealed class SmtpEmailSender(IOptions<EmailOptions> options, ILogger<Smtp
     }
 }
 
+/// <summary>Sends mail through Resend's HTTP API (https://resend.com/docs/api-reference/emails/send-email).</summary>
+public sealed class ResendEmailSender(HttpClient http, IOptions<EmailOptions> options, ILogger<ResendEmailSender> logger) : IEmailSender
+{
+    public async Task SendAsync(EmailMessage message, CancellationToken cancellationToken = default)
+    {
+        var o = options.Value;
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{o.Resend.BaseUrl.TrimEnd('/')}/emails");
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", o.Resend.ApiKey);
+        request.Content = System.Net.Http.Json.JsonContent.Create(new { from = o.From, to = new[] { message.To }, subject = message.Subject, text = message.Text, html = message.Html });
+        using var response = await http.SendAsync(request, cancellationToken);
+        // The body can echo the request; only the status is kept, so neither the address nor the key reaches a log.
+        if (!response.IsSuccessStatusCode) throw new HttpRequestException($"Resend refused the message ({(int)response.StatusCode}).");
+        logger.LogInformation("Sent an email to {Domain}", message.To[(message.To.IndexOf('@') + 1)..]);
+    }
+}
+
 public static class InvitationEmail
 {
     public static EmailMessage Create(string to, string inviteLink, string invitedByName, string invitedByEmail, string organizationName, string role)

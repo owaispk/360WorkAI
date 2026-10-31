@@ -297,11 +297,20 @@ public static class OAuthEndpoints
 
     // ============================== tokens ==============================
 
-    private static async Task<IResult> TokenAsync(HttpContext ctx, DenDbContext db, TokenService tokens, OAuthUrls urls)
+    private static async Task<IResult> TokenAsync(HttpContext ctx, DenDbContext db, TokenService tokens, OAuthUrls urls, TokenRateLimit rateLimit)
     {
         ctx.Response.Headers.CacheControl = "no-store";
         ctx.Response.Headers.Pragma = "no-cache";
         var form = await ReadParamsAsync(ctx.Request);
+        var admission = rateLimit.Admit(ctx, form, BasicClientId(ctx.Request));
+        if (admission.Refused is { } refused) return refused;
+        var result = await HandleTokenRequestAsync(ctx, form, db, tokens, urls);
+        rateLimit.RecordFailure(admission, result);
+        return result;
+    }
+
+    private static async Task<IResult> HandleTokenRequestAsync(HttpContext ctx, Dictionary<string, string> form, DenDbContext db, TokenService tokens, OAuthUrls urls)
+    {
 
         var (client, clientFailure) = await AuthenticateClientAsync(ctx, db, form);
         if (clientFailure is not null) return clientFailure;
@@ -413,6 +422,20 @@ public static class OAuthEndpoints
     }
 
     // ============================== helpers ==============================
+
+    /// <summary>The client id named in an HTTP Basic header, if any (read only to pick a rate-limit bucket; authentication is separate).</summary>
+    private static string? BasicClientId(HttpRequest request)
+    {
+        var header = request.Headers.Authorization.ToString();
+        if (!header.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase)) return null;
+        try
+        {
+            var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(header[6..].Trim()));
+            var colon = decoded.IndexOf(':');
+            return colon > 0 ? Uri.UnescapeDataString(decoded[..colon]) : null;
+        }
+        catch (Exception e) when (e is FormatException or UriFormatException) { return null; }
+    }
 
     private static async Task<(OAuthClient? Client, IResult? Failure)> AuthenticateClientAsync(HttpContext ctx, DenDbContext db, Dictionary<string, string> form)
     {

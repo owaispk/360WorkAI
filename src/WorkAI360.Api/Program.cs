@@ -25,6 +25,7 @@ builder.Services.AddSingleton<LoginThrottle>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection(EmailOptions.Section));
 builder.Services.AddSingleton<RateLimiter>();
+builder.Services.AddSingleton<TokenRateLimit>();
 builder.Services.AddScoped<EmailVerificationService>();
 builder.Services.AddScoped<PermissionService>();
 builder.Services.AddScoped<OrgAccess>();
@@ -37,6 +38,11 @@ if (emailProvider == "smtp")
     if (string.IsNullOrWhiteSpace(builder.Configuration["Email:Smtp:Host"])) throw new InvalidOperationException("Email:Smtp:Host is required when Email:Provider is smtp.");
     builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
 }
+else if (emailProvider == "resend")
+{
+    if (string.IsNullOrWhiteSpace(builder.Configuration["Email:Resend:ApiKey"])) throw new InvalidOperationException("Email:Resend:ApiKey is required when Email:Provider is resend.");
+    builder.Services.AddHttpClient<IEmailSender, ResendEmailSender>(c => c.Timeout = TimeSpan.FromSeconds(15));
+}
 else if (emailProvider == "dev")
 {
     // The dev provider keeps codes and links in memory. It must never run outside Development, where nothing would reach people.
@@ -44,7 +50,7 @@ else if (emailProvider == "dev")
     builder.Services.AddSingleton<DevOutbox>();
     builder.Services.AddSingleton<IEmailSender>(sp => sp.GetRequiredService<DevOutbox>());
 }
-else throw new InvalidOperationException($"Unknown Email:Provider '{emailProvider}' (use dev or smtp).");
+else throw new InvalidOperationException($"Unknown Email:Provider '{emailProvider}' (use dev, smtp or resend).");
 builder.Services.AddSingleton<SigningKeyStore>();
 builder.Services.AddSingleton<SignedQuery>();
 builder.Services.AddScoped<OAuthUrls>();
