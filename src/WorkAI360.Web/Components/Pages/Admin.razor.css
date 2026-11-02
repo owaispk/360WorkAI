@@ -1,0 +1,5 @@
+.admin-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin: 12px 0; }
+.admin-tile { border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 2px; }
+.admin-tile-value { font-size: 24px; font-weight: 700; }
+.admin-series { display: flex; align-items: flex-end; gap: 3px; height: 70px; margin: 6px 0 12px; }
+.admin-bar { width: 100%; background: #6366f1; border-radius: 3px 3px 0 0; min-height: 4px; }

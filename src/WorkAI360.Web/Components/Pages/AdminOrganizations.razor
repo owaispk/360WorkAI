@@ -1,0 +1,76 @@
+@page "/admin/organizations"
+@inherits AdminPage
+@using System.Text.Json
+
+<PageTitle>Workspaces · Platform admin · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="admin-organizations-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (Denied)
+    {
+        <h1>Workspaces</h1>
+        <p class="den-muted" data-testid="no-access">This area is for the people who run this deployment. Your account is not one of them.</p>
+    }
+    else
+    {
+        <h1>Workspaces</h1>
+        <AdminNav Current="organizations" />
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        <form @onsubmit="SearchAsync" novalidate data-testid="search-form">
+            <label for="org-search">Search by name or id</label>
+            <input id="org-search" autocomplete="off" @bind="_search" @bind:event="oninput" />
+            <button type="submit" class="den-button" data-testid="search">Search</button>
+        </form>
+        <p class="den-muted" data-testid="org-count">@_total @(_total == 1 ? "workspace" : "workspaces")@(_applied.Length > 0 ? $" matching “{_applied}”" : "")</p>
+        <ul class="den-members" data-testid="org-list">
+            @foreach (var org in _organizations)
+            {
+                <li data-testid="org-row" data-name="@org.Name">
+                    <div class="den-member-main">
+                        <strong><a href="/admin/organizations/@org.Id" data-testid="open-org">@org.Name</a></strong>
+                        <span class="den-muted">@org.Members @(org.Members == 1 ? "person" : "people") · @org.Plan plan · created @Short(org.CreatedAt)</span>
+                    </div>
+                </li>
+            }
+        </ul>
+        <div class="den-inline">
+            <button type="button" class="den-link" disabled="@(_offset == 0)" @onclick="PreviousAsync" data-testid="prev">Previous</button>
+            <button type="button" class="den-link" disabled="@(!_more)" @onclick="NextAsync" data-testid="next">Next</button>
+        </div>
+    }
+</section>
+
+@code {
+    private const int PageSize = 25;
+    private sealed record OrgRow(string Id, string Name, int Members, string Plan, string CreatedAt);
+
+    private List<OrgRow> _organizations = [];
+    private string _search = "", _applied = "";
+    private int _total, _offset;
+    private bool _more;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await EnterAsync()) return;
+        await LoadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    private async Task LoadAsync()
+    {
+        var response = await Den.RequestAsync($"/api/browser/v1/admin/organizations?includeFeatures=0&limit={PageSize}&offset={_offset}&search={Uri.EscapeDataString(_applied)}");
+        if (response.Json is not { ValueKind: JsonValueKind.Object } root) { Error = response.Message("Could not load the workspaces."); return; }
+        _organizations = root.GetProperty("organizations").EnumerateArray().Select(o => new OrgRow(Text(o, "id"), Text(o, "name"), Number(o, "memberCount"), Text(o.GetProperty("plan"), "tier"), Text(o, "createdAt"))).ToList();
+        _total = Number(root.GetProperty("page"), "total");
+        _more = Flag(root.GetProperty("page"), "hasMore");
+    }
+
+    private async Task SearchAsync() { _applied = _search.Trim(); _offset = 0; await LoadAsync(); }
+    private async Task NextAsync() { _offset += PageSize; await LoadAsync(); }
+    private async Task PreviousAsync() { _offset = Math.Max(0, _offset - PageSize); await LoadAsync(); }
+}

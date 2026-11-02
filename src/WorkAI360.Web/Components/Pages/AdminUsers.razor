@@ -1,0 +1,112 @@
+@page "/admin/users"
+@inherits AdminPage
+@using System.Text.Json
+
+<PageTitle>Users · Platform admin · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="admin-users-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (Denied)
+    {
+        <h1>Users</h1>
+        <p class="den-muted" data-testid="no-access">This area is for the people who run this deployment. Your account is not one of them.</p>
+    }
+    else
+    {
+        <h1>Users</h1>
+        <AdminNav Current="users" />
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        <form @onsubmit="SearchAsync" novalidate data-testid="search-form">
+            <label for="user-search">Search by name, email, workspace or id</label>
+            <input id="user-search" autocomplete="off" @bind="_search" @bind:event="oninput" />
+            <button type="submit" class="den-button" disabled="@Busy" data-testid="search">Search</button>
+        </form>
+        <p class="den-muted" data-testid="user-count">@_total @(_total == 1 ? "user" : "users")@(_applied.Length > 0 ? $" matching “{_applied}”" : "")</p>
+        <ul class="den-members" data-testid="user-list">
+            @foreach (var user in _users)
+            {
+                <li data-testid="user-row" data-email="@user.Email">
+                    <div class="den-member-main">
+                        <strong>@user.Name <span class="den-muted">· @user.Email</span> @if (!user.Verified) { <span class="den-badge den-badge-pending">Email not verified</span> }</strong>
+                        <span class="den-muted">Joined @Short(user.CreatedAt) · @user.Sessions @(user.Sessions == 1 ? "session" : "sessions")@(user.Workspaces.Length == 0 ? " · no workspace" : " · " + user.Workspaces)</span>
+                    </div>
+                    <div class="den-member-actions">
+                        @if (user.Id == _me)
+                        {
+                            <span class="den-badge den-badge-owner">You</span>
+                        }
+                        else if (_confirm == user.Id)
+                        {
+                            <button type="button" class="den-link den-danger" @onclick="() => DeleteAsync(user)" data-testid="confirm-delete-user">Confirm delete</button>
+                            <button type="button" class="den-link" @onclick="() => _confirm = null">Cancel</button>
+                        }
+                        else { <button type="button" class="den-link" @onclick="() => _confirm = user.Id" data-testid="delete-user">Delete</button> }
+                    </div>
+                    @if (_confirm == user.Id)
+                    {
+                        <p class="den-muted den-panel" data-testid="delete-warning">Deleting @user.Email signs them out everywhere, removes them from every workspace and cannot be undone.</p>
+                    }
+                </li>
+            }
+        </ul>
+        <div class="den-inline">
+            <button type="button" class="den-link" disabled="@(_offset == 0)" @onclick="PreviousAsync" data-testid="prev">Previous</button>
+            <button type="button" class="den-link" disabled="@(!_more)" @onclick="NextAsync" data-testid="next">Next</button>
+        </div>
+    }
+</section>
+
+@code {
+    private const int PageSize = 25;
+    private sealed record UserRow(string Id, string Name, string Email, bool Verified, string CreatedAt, int Sessions, string Workspaces);
+
+    private List<UserRow> _users = [];
+    private string _search = "", _applied = "", _me = "";
+    private int _total, _offset;
+    private bool _more;
+    private string? _confirm;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await EnterAsync()) return;
+        var me = await Den.RequestAsync("/api/browser/v1/admin/overview?limit=1");
+        _me = me.String("viewer", "id") ?? "";
+        await LoadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        var response = await Den.RequestAsync($"/api/browser/v1/admin/users?limit={PageSize}&offset={_offset}&search={Uri.EscapeDataString(_applied)}");
+        if (response.Json is not { ValueKind: JsonValueKind.Object } root) { Error = response.Message("Could not load the users."); return; }
+        _users = root.GetProperty("users").EnumerateArray().Select(u => new UserRow(Text(u, "id"), Text(u, "name"), Text(u, "email"), Flag(u, "emailVerified"), Text(u, "createdAt"), Number(u, "sessionCount"),
+            string.Join(", ", u.GetProperty("organizations").EnumerateArray().Select(o => $"{Text(o, "name")} ({Text(o, "role")})")))).ToList();
+        _total = Number(root.GetProperty("page"), "total");
+        _more = Flag(root.GetProperty("page"), "hasMore");
+    }
+
+    private async Task SearchAsync()
+    {
+        _applied = _search.Trim();
+        _offset = 0;
+        Notice = Error = null;
+        await LoadAsync();
+    }
+
+    private async Task NextAsync() { _offset += PageSize; await LoadAsync(); }
+    private async Task PreviousAsync() { _offset = Math.Max(0, _offset - PageSize); await LoadAsync(); }
+
+    private async Task DeleteAsync(UserRow user)
+    {
+        _confirm = null;
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/admin/users/{user.Id}", "DELETE"), $"{user.Email} was deleted.");
+    }
+}

@@ -1,0 +1,202 @@
+@page "/admin/organizations/{OrganizationId}"
+@inherits AdminPage
+@using System.Text.Json
+
+<PageTitle>@(_name.Length > 0 ? _name : "Workspace") · Platform admin · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="admin-organization-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (Denied)
+    {
+        <h1>Workspace</h1>
+        <p class="den-muted" data-testid="no-access">This area is for the people who run this deployment. Your account is not one of them.</p>
+    }
+    else if (_missing)
+    {
+        <h1>Workspace not found</h1>
+        <a class="den-link" href="/admin/organizations">Back to workspaces</a>
+    }
+    else
+    {
+        <h1 data-testid="org-name">@_name</h1>
+        <p class="den-muted">@_id · @_people.Count @(_people.Count == 1 ? "person" : "people") · @_tier plan@(_seats is null ? "" : $" · {_seats} users allowed")@(_endsAt is null ? "" : $" · ends {_endsAt}")</p>
+        <AdminNav Current="organizations" />
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+
+        <h2>People</h2>
+        <ul class="den-members" data-testid="people">
+            @foreach (var person in _people)
+            {
+                <li data-testid="person-row"><div class="den-member-main"><strong>@person.Name <span class="den-muted">· @person.Email</span></strong><span class="den-muted">@person.Role</span></div></li>
+            }
+        </ul>
+
+        <h2>Plan</h2>
+        <p class="den-muted">The plan is recorded here. Nothing is billed from this page.</p>
+        <form @onsubmit="SavePlanAsync" novalidate data-testid="plan-form">
+            <label for="plan-tier">Plan</label>
+            <select id="plan-tier" @bind="_planTier">
+                <option value="free">Free</option>
+                <option value="team">Team</option>
+                <option value="enterprise">Enterprise</option>
+            </select>
+            <label for="plan-users">Users allowed</label>
+            <input id="plan-users" type="number" min="1" @bind="_planUsers" />
+            @if (_planTier != "free")
+            {
+                <label for="plan-ends">Ends on (optional, YYYY-MM-DD)</label>
+                <input id="plan-ends" autocomplete="off" placeholder="2027-01-31" @bind="_planEnds" />
+            }
+            <button type="submit" class="den-button" disabled="@Busy" data-testid="save-plan">Save plan</button>
+        </form>
+
+        <h2>Free seats</h2>
+        <form @onsubmit="SaveSeatsAsync" novalidate data-testid="seats-form">
+            <label for="free-seats">Total free seats (at least 5)</label>
+            <input id="free-seats" type="number" min="5" @bind="_freeSeats" />
+            <button type="submit" class="den-button" disabled="@Busy" data-testid="save-seats">Save free seats</button>
+        </form>
+
+        <h2>Data processing agreement</h2>
+        <form @onsubmit="SaveDpaAsync" novalidate data-testid="dpa-form">
+            <label for="dpa-signed">Decision</label>
+            <select id="dpa-signed" @bind="_dpaSigned"><option value="yes">Signed</option><option value="no">Not signed</option></select>
+            <label for="dpa-reason">Reason (kept private; the audit log only notes that one was given)</label>
+            <input id="dpa-reason" autocomplete="off" @bind="_dpaReason" @bind:event="oninput" />
+            <button type="submit" class="den-button" disabled="@Busy" data-testid="save-dpa">Record decision</button>
+        </form>
+
+        <h2>OpenWork Web access</h2>
+        <p class="den-muted" data-testid="web-state">Complimentary access is @(_webAccess ? "on" : "off") for this workspace.</p>
+        <form @onsubmit="SaveWebAsync" novalidate data-testid="web-form">
+            <label for="web-reason">Reason</label>
+            <input id="web-reason" autocomplete="off" @bind="_webReason" @bind:event="oninput" />
+            <button type="submit" class="den-button" disabled="@Busy" data-testid="save-web">@(_webAccess ? "Revoke access" : "Grant access")</button>
+        </form>
+
+        <h2>Features for this workspace</h2>
+        <p class="den-muted">“Follow everyone” uses the deployment-wide setting. A kill switch or an operator lock still wins over a setting here.</p>
+        <ul class="den-members" data-testid="override-list">
+            @foreach (var f in _features)
+            {
+                <li data-testid="override-row" data-key="@f.Key">
+                    <div class="den-member-main">
+                        <strong>@f.Label</strong>
+                        <span class="den-muted">@f.Key · @(f.Enabled ? "On" : "Off") here (@f.Source)</span>
+                    </div>
+                    <div class="den-member-actions">
+                        @if (f.Source != "unavailable")
+                        {
+                            <select aria-label="Setting for @f.Label" value="@f.Choice" @onchange="e => Choose(f, e.Value?.ToString())" data-testid="override-select">
+                                <option value="follow">Follow everyone</option>
+                                <option value="on">On</option>
+                                <option value="off">Off</option>
+                            </select>
+                        }
+                    </div>
+                </li>
+            }
+        </ul>
+        <button type="button" class="den-button" disabled="@Busy" @onclick="SaveFeaturesAsync" data-testid="save-features">Save feature settings</button>
+        <a class="den-link" href="/admin/organizations">Back to workspaces</a>
+    }
+</section>
+
+@code {
+    [Parameter] public string OrganizationId { get; set; } = "";
+
+    private sealed record Person(string Name, string Email, string Role);
+    private sealed class FeatureChoice
+    {
+        public string Key = "", Label = "", Source = "";
+        public bool Enabled;
+        public string Original = "follow";
+        public string Choice = "follow";
+    }
+
+    private bool _missing;
+    private string _id = "", _name = "", _tier = "free", _planTier = "free", _planEnds = "", _dpaReason = "", _webReason = "", _dpaSigned = "yes";
+    private int? _seats;
+    private int _planUsers = 5, _freeSeats = 5;
+    private string? _endsAt;
+    private bool _webAccess;
+    private List<Person> _people = [];
+    private List<FeatureChoice> _features = [];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await EnterAsync()) return;
+        await LoadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        var detail = await Den.RequestAsync($"/api/browser/v1/admin/organizations/{OrganizationId}?limit=50");
+        if (detail.Json is not { ValueKind: JsonValueKind.Object } root || !detail.Ok) { _missing = true; return; }
+        var org = root.GetProperty("organization");
+        _id = Text(org, "id"); _name = Text(org, "name"); _tier = Text(org, "planTier");
+        var plan = org.GetProperty("plan");
+        _seats = plan.GetProperty("seats").ValueKind == JsonValueKind.Number ? plan.GetProperty("seats").GetInt32() : null;
+        _endsAt = plan.GetProperty("endsAt").ValueKind == JsonValueKind.String ? plan.GetProperty("endsAt").GetString() : null;
+        _planTier = _tier; _planUsers = _seats ?? Number(org, "seatLimit"); _planEnds = _endsAt ?? "";
+        _webAccess = Flag(org.GetProperty("openworkWeb"), "complimentaryAccess");
+        _people = root.GetProperty("members").EnumerateArray().Select(m => new Person(Text(m, "name"), Text(m, "email"), Text(m, "role"))).ToList();
+
+        var list = await Den.RequestAsync($"/api/browser/v1/admin/organizations?includeFeatures=0&search={Uri.EscapeDataString(OrganizationId)}");
+        if (list.Json is { ValueKind: JsonValueKind.Object } l && l.GetProperty("organizations").GetArrayLength() > 0) _freeSeats = Number(l.GetProperty("organizations")[0], "freeSeatCount");
+
+        var labels = new Dictionary<string, string>();
+        var registry = await Den.RequestAsync("/api/browser/v1/admin/features");
+        if (registry.Json is { ValueKind: JsonValueKind.Object } r) foreach (var f in r.GetProperty("features").EnumerateArray()) labels[Text(f, "key")] = Text(f, "label");
+        var caps = await Den.RequestAsync($"/api/browser/v1/admin/organizations/{OrganizationId}/capabilities");
+        if (caps.Json is { ValueKind: JsonValueKind.Object } c)
+        {
+            _features = c.GetProperty("featureStates").EnumerateObject().Select(p =>
+            {
+                var choice = p.Value.GetProperty("override").ValueKind switch { JsonValueKind.True => "on", JsonValueKind.False => "off", _ => "follow" };
+                return new FeatureChoice { Key = p.Name, Label = labels.GetValueOrDefault(p.Name, p.Name), Source = Text(p.Value, "source"), Enabled = Flag(p.Value, "enabled"), Original = choice, Choice = choice };
+            }).ToList();
+        }
+    }
+
+    private static void Choose(FeatureChoice f, string? value) => f.Choice = value is "on" or "off" ? value : "follow";
+
+    private async Task SavePlanAsync()
+    {
+        object body = _planTier != "free" && _planEnds.Trim().Length > 0 ? new { tier = _planTier, seatLimit = _planUsers, endsAt = _planEnds.Trim() } : new { tier = _planTier, seatLimit = _planUsers };
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/admin/organizations/{OrganizationId}/plan", "PATCH", body), "The plan was saved.");
+    }
+
+    private Task SaveSeatsAsync() =>
+        RunAsync(() => Den.RequestAsync($"/api/browser/v1/admin/organizations/{OrganizationId}/free-seats", "PATCH", new { totalFreeSeats = _freeSeats }), "Free seats were saved.");
+
+    private async Task SaveDpaAsync()
+    {
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/admin/organizations/{OrganizationId}/dpa", "PATCH", new { dpaSigned = _dpaSigned == "yes", reason = _dpaReason.Trim() }), "The decision was recorded.");
+        if (Error is null) _dpaReason = "";
+    }
+
+    private async Task SaveWebAsync()
+    {
+        var grant = !_webAccess;
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/admin/organizations/{OrganizationId}/openwork-web-access", "PUT", new { enabled = grant, reason = _webReason.Trim() }), grant ? "Access was granted." : "Access was revoked.");
+        if (Error is null) _webReason = "";
+    }
+
+    private async Task SaveFeaturesAsync()
+    {
+        var changed = _features.Where(f => f.Choice != f.Original).ToList();
+        if (changed.Count == 0) { Notice = "Nothing to save."; Error = null; return; }
+        var capabilities = changed.ToDictionary(f => f.Key, f => f.Choice switch { "on" => (bool?)true, "off" => false, _ => null });
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/admin/organizations/{OrganizationId}/capabilities", "PUT", new { capabilities }), $"Saved {changed.Count} feature {(changed.Count == 1 ? "setting" : "settings")}.");
+    }
+}
