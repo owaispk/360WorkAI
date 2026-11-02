@@ -62,13 +62,15 @@ public static class AuthEndpoints
     {
         var auth = app.MapGroup("/api/auth");
 
-        auth.MapPost("/sign-up/email", async (SignUpBody? body, HttpContext ctx, DenDbContext db, SessionService sessions, RateLimiter limiter, IOptions<AuthOptions> options, EmailVerificationService verification, SsoRouting sso, IAuditLog audit) =>
+        auth.MapPost("/sign-up/email", async (SignUpBody? body, HttpContext ctx, DenDbContext db, SessionService sessions, RateLimiter limiter, IOptions<AuthOptions> options, EmailVerificationService verification, SsoRouting sso, IAuditLog audit, PasswordScreening screening) =>
         {
             if (body is null || string.IsNullOrWhiteSpace(body.Name) || !IsValidEmail(body.Email) || body.Password is null)
                 return Json(400, new { message = "Invalid name, email or password.", code = "VALIDATION_ERROR" });
 
             if (Passwords.Validate(body.Password) is { } violation)
                 return Json(400, new { error = violation.Error, message = violation.Message });
+            // After the basic rules, in the reference's order: how guessable it is (given the person's own email and name), then known breaches.
+            if (await screening.CheckAsync(body.Password, [NormalizeEmail(body.Email!), body.Name.Trim()], strength: true) is { } rejected) return rejected;
             if (limiter.Hit(RateLimiter.SignUp, NormalizeEmail(body.Email!), ClientIp(ctx)) is { } wait) return TooManyRequests(ctx, wait);
 
             var email = NormalizeEmail(body.Email!);

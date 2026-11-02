@@ -25,6 +25,8 @@ builder.Services.AddSingleton<LoginThrottle>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection(EmailOptions.Section));
 builder.Services.AddSingleton<RateLimiter>();
+builder.Services.AddHttpClient<IPwnedPasswords, PwnedPasswords>(c => c.Timeout = TimeSpan.FromSeconds(5));
+builder.Services.AddScoped<PasswordScreening>();
 builder.Services.AddSingleton<TokenRateLimit>();
 builder.Services.AddScoped<EmailVerificationService>();
 builder.Services.AddScoped<PermissionService>();

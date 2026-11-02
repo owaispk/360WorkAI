@@ -112,7 +112,7 @@ public static class EmailAuthEndpoints
                 : QueryHelpers.AddQueryString(target, "error", "INVALID_TOKEN"));
         });
 
-        auth.MapPost("/reset-password", async (HttpContext ctx, DenDbContext db, LoginThrottle throttle) =>
+        auth.MapPost("/reset-password", async (HttpContext ctx, DenDbContext db, LoginThrottle throttle, PasswordScreening screening) =>
         {
             var body = await ReadBodyAsync(ctx);
             if (body is not { ValueKind: JsonValueKind.Object } root) return Responses.AuthError(400, "Invalid token", "INVALID_TOKEN");
@@ -122,6 +122,7 @@ public static class EmailAuthEndpoints
 
             // The password rules come first, exactly as in the reference, so a weak password is reported whatever the token.
             if (Passwords.Validate(newPassword) is { } violation) return Results.Json(new { error = violation.Error, message = violation.Message }, statusCode: 400);
+            if (await screening.CheckAsync(newPassword, [], strength: false) is { } rejected) return rejected;
             if (string.IsNullOrEmpty(token)) return Responses.AuthError(400, "Invalid token", "INVALID_TOKEN");
 
             var hash = Ids.Sha256Hex(token);

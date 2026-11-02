@@ -34,6 +34,16 @@ public sealed class AuthOptions
     /// <summary>A replaced key keeps being published for this many hours after its successor appeared, so tokens it signed still verify (default 48; access tokens last 45 minutes).</summary>
     public int SigningKeyGraceHours { get; set; } = 48;
 
+    /// <summary>
+    /// Refuse passwords found in public breaches (Have I Been Pwned range lookups: only the first five characters of the password's SHA-1 leave
+    /// the server). Default: on everywhere except Development, so a local run works offline. When the lookup service is unreachable, sign-up and
+    /// reset are refused with 503 rather than waved through.
+    /// </summary>
+    public bool? PasswordBreachScreening { get; set; }
+
+    /// <summary>The range API's address (changed only to point tests at a local fake).</summary>
+    public string PwnedPasswordsUrl { get; set; } = "https://api.pwnedpasswords.com";
+
     public int PrivilegedSessionMinutes { get; set; } = 120;
 
     /// <summary>Extra origins a reset link may return to, besides the web origin.</summary>
