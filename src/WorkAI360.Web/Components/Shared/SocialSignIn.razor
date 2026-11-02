@@ -1,0 +1,66 @@
+@inject DenClient Den
+@inject NavigationManager Nav
+
+@* Buttons for the social providers the server has switched on (none when none is configured). Starting one asks the API where to send the
+   browser, then goes there; the provider sends the person back through /api/auth/callback/{provider}, which lands on the page below. *@
+@if (_providers.Count > 0)
+{
+    <div class="den-social" data-testid="social-buttons">
+        <p class="den-muted den-social-or">or</p>
+        @foreach (var provider in _providers)
+        {
+            var name = provider;
+            <button type="button" class="den-button den-secondary" data-testid="social-@name" disabled="@_busy" @onclick="() => StartAsync(name)">Continue with @Label(name)</button>
+        }
+        @if (_error is not null) { <p class="den-error" role="alert" data-testid="social-error">@_error</p> }
+    </div>
+}
+
+@code {
+    private List<string> _providers = [];
+    private bool _busy;
+    private string? _error;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var response = await Den.RequestAsync("/api/auth/social-providers");
+        if (response.Json is { ValueKind: System.Text.Json.JsonValueKind.Object } root && root.TryGetProperty("providers", out var list) && list.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            _providers = list.EnumerateArray().Select(p => p.GetString() ?? "").Where(p => p is "google" or "github").ToList();
+            StateHasChanged();
+        }
+    }
+
+    private static string Label(string provider) => provider == "github" ? "GitHub" : "Google";
+
+    private async Task StartAsync(string provider)
+    {
+        _error = null;
+        _busy = true;
+        // Come back to this same page (keeping what it carries: an invitation, an agent's authorization request, where to go next), minus any earlier error.
+        var current = new Uri(Nav.Uri);
+        var keep = System.Web.HttpUtility.ParseQueryString(current.Query);
+        keep.Remove("error"); keep.Remove("error_description");
+        var back = $"{Nav.BaseUri.TrimEnd('/')}/{(keep.Count > 0 ? "?" + keep : "")}";
+        var result = await Den.RequestAsync("/api/auth/sign-in/social", "POST", new { provider, callbackURL = back, errorCallbackURL = back });
+        _busy = false;
+        if (!result.Ok || result.String("url") is not { Length: > 0 } url)
+        {
+            _error = result.Status == 429 ? "Too many attempts. Try again later." : result.Message($"{Label(provider)} sign-in is not available. Try again.");
+            return;
+        }
+        Nav.NavigateTo(url, forceLoad: true);
+    }
+
+    /// <summary>What to tell a person who comes back from a provider without being signed in (the <c>error</c> in the address).</summary>
+    public static string? DescribeError(string? error) => string.IsNullOrEmpty(error) ? null : error switch
+    {
+        "sso_required" => "Your organization requires single sign-on. Enter your work email and continue with SSO.",
+        "email_not_verified" => "That provider has not verified your email address. Verify it there, then try again.",
+        "email_not_found" => "That provider did not share an email address with us.",
+        "access_denied" => "Sign-in was cancelled.",
+        "state_mismatch" or "state_not_found" or "invalid_state" => "That sign-in expired or was opened in a different browser. Start again.",
+        _ => "Sign-in with that provider failed. Try again.",
+    };
+}

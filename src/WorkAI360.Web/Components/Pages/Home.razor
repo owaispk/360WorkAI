@@ -19,6 +19,7 @@
             @if (_error is not null) { <p class="den-error" role="alert">@_error</p> }
             <button type="submit" class="den-button" disabled="@_busy">Next</button>
         </form>
+        <SocialSignIn />
     }
     else if (_step is Step.SignIn or Step.SignUp)
     {
@@ -98,6 +99,8 @@
         var me = await Den.RequestAsync("/api/browser/v1/me");
         if (me.Ok) { await GoAfterSignInAsync(); return; }
         _checking = false;
+        // Back from a social provider without a session: say why (the provider's refusal or ours, in the address).
+        _error = SocialSignIn.DescribeError(query["error"]);
         // A claim link carries the address it was made for: offered, not forced.
         if (_returnTo is not null && _invite is null && new Uri(new Uri(Nav.BaseUri), _returnTo).Query is { Length: > 1 } returnQuery
             && System.Web.HttpUtility.ParseQueryString(returnQuery)["email"] is { Length: > 0 } suggested && suggested.Contains('@'))
