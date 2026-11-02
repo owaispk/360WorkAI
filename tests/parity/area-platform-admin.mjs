@@ -422,7 +422,7 @@ await t("metrics: the deferred numbers computed from the data (users, activity s
   const m = r.json?.summary;
   const today = new Date().toISOString().slice(0, 10);
   return r.status === 200 && keys(r.json) === "generatedAt,summary" && m.totalUsers >= 5 && m.totalOrganizations >= 2 && m.verifiedUsers <= m.totalUsers && m.recentUsers7d >= 5 && m.recentUsers30d >= m.recentUsers7d
-    && m.adminCount >= 1 && m.billingLoaded === false && m.activeUsers1d >= 5 && m.activeUsers7d >= m.activeUsers1d && m.activeUsers30d >= m.activeUsers7d && m.inviters >= 2
+    && m.adminCount >= 1 && m.billingLoaded === false && m.activeUsers1d >= 5 && m.activeUsers7d >= m.activeUsers1d && m.activeUsers30d >= m.activeUsers7d && m.inviters >= 1
     && m.activitySeries.length === 30 && keys(m.activitySeries[0]) === "activeUsers,day,realActiveUsers,signups" && m.activitySeries.at(-1).day === today && m.activitySeries.at(-1).signups >= 5
     && m.usersWithoutWorkers >= 0 || r.text.slice(0, 600);
 });

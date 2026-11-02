@@ -9,7 +9,12 @@ public sealed class PlatformAdminFeature : IFeature
 {
     public void AddServices(IServiceCollection services, IConfiguration configuration)
     {
-        services.Configure<PlatformAdminOptions>(configuration.GetSection(PlatformAdminOptions.Section));
+        // BootstrapEmails is a comma separated string in an environment variable and an array in a settings file; both are read.
+        services.Configure<PlatformAdminOptions>(options =>
+        {
+            var section = configuration.GetSection($"{PlatformAdminOptions.Section}:BootstrapEmails");
+            options.BootstrapEmails = [.. section.GetChildren().Select(c => c.Value).Where(v => !string.IsNullOrWhiteSpace(v)).Select(v => v!), .. section.Value is { Length: > 0 } single ? new[] { single } : []];
+        });
         services.AddScoped<PlatformAdmins>();
         services.AddScoped<PlatformAdminGuard>();
         services.AddScoped<FeatureResolver>();
