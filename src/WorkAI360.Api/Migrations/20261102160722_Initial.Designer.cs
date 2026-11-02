@@ -11,7 +11,7 @@ using WorkAI360.Api.Data;
 namespace WorkAI360.Api.Migrations
 {
     [DbContext(typeof(DenDbContext))]
-    [Migration("20261102160035_Initial")]
+    [Migration("20261102160722_Initial")]
     partial class Initial
     {
         /// <inheritdoc />
@@ -1087,6 +1087,274 @@ namespace WorkAI360.Api.Migrations
                         .IsUnique();
 
                     b.ToTable("OAuthConsents");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Onboarding.DesktopStartupReport", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("AppVersion")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<string>("AttemptId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<int?>("EngineMs")
+                        .HasColumnType("int");
+
+                    b.Property<string>("FailedStep")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("FailureReason")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("MemberId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("ObservedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<int?>("OrgToolsMs")
+                        .HasColumnType("int");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("Platform")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("varchar(16)");
+
+                    b.Property<int?>("SignedInMs")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("Success")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<int?>("WindowMs")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "AttemptId")
+                        .IsUnique();
+
+                    b.HasIndex("OrganizationId", "ObservedAt");
+
+                    b.ToTable("DesktopStartupReport");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Onboarding.EgressDiagnosticCredential", b =>
+                {
+                    b.Property<string>("OrganizationId")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("TokenCipher")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("OrganizationId");
+
+                    b.ToTable("EgressDiagnosticCredential");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Onboarding.OnboardingRateLimit", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<int>("Count")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Key")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<long>("WindowStart")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Key")
+                        .IsUnique();
+
+                    b.ToTable("OnboardingRateLimit");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Onboarding.WorkspaceBootstrap", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("AgentUserId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("AssertionJti")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime?>("ClaimedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime?>("CredentialsRevokedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("DeviceKeyFingerprint")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("OwnerEmail")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("SetupMemberId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("TeammateEmailsJson")
+                        .HasColumnType("longtext");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AgentUserId")
+                        .IsUnique();
+
+                    b.HasIndex("OrganizationId")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "ExpiresAt");
+
+                    b.ToTable("WorkspaceBootstrap");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Onboarding.WorkspaceClaim", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("BootstrapId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<DateTime?>("ClaimedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("ClaimedByUserId")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Role")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BootstrapId");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.ToTable("WorkspaceClaim");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Onboarding.WorkspaceClaimCode", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<DateTime?>("AcceptedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("BootstrapId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("ClaimedByUserId")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("CodeHash")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime?>("ReconciledAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BootstrapId");
+
+                    b.HasIndex("CodeHash");
+
+                    b.ToTable("WorkspaceClaimCode");
                 });
 
             modelBuilder.Entity("WorkAI360.Api.Domain.OrgAdmin.ApiKey", b =>
