@@ -10,6 +10,15 @@ using WorkAI360.Api.OAuth;
 
 namespace WorkAI360.Api.Features.Library;
 
+/// <summary>An item another area adds to "my library" (the reference lists Workflows beside plugins), already in the shape clients read.</summary>
+public sealed record MyLibraryItem(string Name, string Id, object Item);
+
+/// <summary>Implemented by areas whose things belong in "my library". Registered as a scoped service.</summary>
+public interface IMyLibrarySource
+{
+    Task<IReadOnlyList<MyLibraryItem>> ItemsAsync(Actor a);
+}
+
 /// <summary>
 /// The library: plugins, skills (config objects), marketplaces, who may see and use them, importing from GitHub, usage, and the skills
 /// agents can read through <c>/mcp/agent</c>. See docs/features/library.md.
@@ -466,12 +475,14 @@ public sealed class LibraryFeature : IFeature
             });
         }));
 
-        app.MapGet("/v1/me/library", (HttpContext ctx, LibraryRunner run, LibraryUsage usage) => run.RunAsync(ctx, async a =>
+        app.MapGet("/v1/me/library", (HttpContext ctx, LibraryRunner run, LibraryUsage usage, IEnumerable<IMyLibrarySource> sources) => run.RunAsync(ctx, async a =>
         {
             var items = await usage.EffectiveAccessAsync(a);
+            var others = new List<MyLibraryItem>();
+            foreach (var source in sources) others.AddRange(await source.ItemsAsync(a));
             return Ok(new
             {
-                items = items.Select(i => new
+                items = items.Select(i => (Name: i.Plugin.Name, Id: i.Plugin.Id, Item: (object)new
                 {
                     type = "plugin",
                     id = i.Plugin.Id,
@@ -482,7 +493,8 @@ public sealed class LibraryFeature : IFeature
                     sourceRepositoryUrl = i.Plugin.SourceRepositoryUrl,
                     edges = i.Edges,
                     role = RoleNames.Name(i.Role),
-                }).ToList(),
+                })).Concat(others.Select(o => (o.Name, o.Id, o.Item)))
+                    .OrderBy(x => x.Name, StringComparer.InvariantCultureIgnoreCase).ThenBy(x => x.Id, StringComparer.Ordinal).Select(x => x.Item).ToList(),
             });
         }));
 

@@ -10,6 +10,17 @@ public static class LibraryJson
     public static string Iso(DateTime v) => Responses.IsoUtc(v);
     public static string? Iso(DateTime? v) => v is null ? null : Responses.IsoUtc(v.Value);
 
+    /// <summary>Workflow versions are shown without their source and example input here: those belong to the role-aware Workflow routes, so a viewer cannot read them through the generic ones.</summary>
+    private static readonly string CodemodeSchema = "codemode-script-v1";
+
+    private static object? Payload(ConfigObjectVersion v)
+    {
+        if (v.NormalizedPayloadJson is null) return null;
+        var element = JsonSerializer.Deserialize<JsonElement>(v.NormalizedPayloadJson);
+        if (v.SchemaVersion != CodemodeSchema || element.ValueKind != JsonValueKind.Object) return element;
+        return element.EnumerateObject().Where(p => p.Name != "exampleInput").ToDictionary(p => p.Name, p => p.Value);
+    }
+
     public static Dictionary<string, object?> Version(ConfigObjectVersion v) => new()
     {
         ["configObjectId"] = v.ConfigObjectId,
@@ -19,8 +30,8 @@ public static class LibraryJson
         ["createdVia"] = v.CreatedVia,
         ["id"] = v.Id,
         ["isDeletedVersion"] = v.IsDeletedVersion,
-        ["normalizedPayloadJson"] = v.NormalizedPayloadJson is null ? null : JsonSerializer.Deserialize<JsonElement>(v.NormalizedPayloadJson),
-        ["rawSourceText"] = v.RawSourceText,
+        ["normalizedPayloadJson"] = Payload(v),
+        ["rawSourceText"] = v.SchemaVersion == CodemodeSchema ? null : v.RawSourceText,
         ["schemaVersion"] = v.SchemaVersion,
         ["sourceRevisionRef"] = v.SourceRevisionRef,
     };
