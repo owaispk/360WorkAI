@@ -40,7 +40,7 @@ Open `http://localhost:5081`. The API needs `Auth__Secret` (32+ characters). Dev
 ## Test
 
 ```bash
-dotnet test                                                    # 567 in-process API tests (~1 min)
+dotnet test                                                    # 655 in-process API tests (~2 min)
 WORKAI_TEST_MYSQL="Server=127.0.0.1;User=root;Password=..." dotnet test   # the same tests on MySQL (a throwaway database per test class)
 
 # Contract tests against the running rewrite (web is W, API is A):
@@ -93,6 +93,9 @@ It is the yardstick for "does the rewrite behave like Den": a route is done when
 | Connections ([docs](docs/features/connections.md)) | `/v1/mcp-connections*`: catalog presets, create/edit/delete, per-person and shared credentials, access grants, tool policy, discovery (incl. server-sent events), a real Streamable-HTTP MCP client, OAuth sign-in with protected servers (PKCE, dynamic registration, refresh), an SSRF-safe outbound guard, and a capability provider that exposes allowed tools to agents. Pages `/dashboard/mcp-connections`, `/your-connections`, `/connect/mcp` |
 | SSO and SCIM ([docs](docs/features/sso-scim.md)) | `/v1/sso*` (OIDC connection, domain proof by DNS TXT, test, enable/disable), `POST /api/auth/sign-in/sso` + callback (state, nonce, PKCE, ID-token validation), SSO-enforced workspaces close password sign-in, SCIM v2 `/Users` and `/Groups` with a hashed bearer token, group-to-team mapping, reconcile, deprovisioning. Pages `/dashboard/sso`, `/scim`, `/sso/{slug}` and the sign-in form's SSO step |
 | Policy ([docs](docs/features/policy.md)) | Desktop policies (default, access/execution limits, assignments by role, team or person, by-key), agent permissions (everyone/team), prompts, default model, Automation and Workbot settings; what a person's desktop receives (`/v1/me/desktop-config`, `/v1/me/prompts`). Pages `/dashboard/policy`, `/desktop-policies` |
+| Onboarding and the person's own routes ([docs](docs/features/onboarding.md)) | `/v1/me/profile`, `/v1/me/invitations`, `/v1/me/send-download-link`, install config and links (`/v1/install*`, `/v1/me/install*`, `POST /v1/orgs/{id}/install-links`), bootstrap workspaces and claim links/codes (`/v1/bootstrap/*`), diagnostics and egress checks, `/v1/resources*`, `/v1/app-version`. Pages: create workspace and settings (`/organization`), `/dashboard/onboarding` (invite people, tools), `/install`, `/claim`, `/workspace-claim`, `/setup`, `/reauth/*` |
+| Platform admin ([docs](docs/features/platform-admin.md)) | `/v1/admin/*` for the operator of a deployment: overview and metrics, users (search, delete), organizations (detail, plan, free seats, DPA, web access, capabilities), feature flags with per-workspace overrides, platform admins (a table plus `PlatformAdmin__BootstrapEmails`). The flags drive `GET /v1/features` and the `features` fields of `GET /v1/org`. Pages under `/admin` |
+| Approved web origins in use ([docs](docs/features/web-origins.md)) | CORS for operator-configured and workspace-approved origins (cached, fail-closed), and approved web return URLs for desktop handoff |
 | Web host | `/api/auth/*`, `/api/browser/v1/*` (same-origin guard, cookie filter) proxied to the API; the aliases `login-options`, `sso-resolve`, `desktop-handoff`; `/api/health`, `/api/ready`, `/api/runtime-config`, `/api/auth/clear-session-cookie` |
 | Blazor pages | `/` (email-first sign-in or sign-up; resumes an agent's authorization afterwards), `/organization`, `/dashboard`, `/dashboard/members` (list, invite, change role, remove, make owner, copy or cancel an invitation), `/dashboard/teams` (create, rename, delete, choose people, Admin teams), `/dashboard/permissions` (roles by area, shared roles, give to teams, history), `/join-org` (open an invitation link), `/device`, `/mcp/consent` and `/mcp/select-organization` (allow or deny an agent, choose or create a workspace), `/connect/error`, `/reset-password` (and the verify-code and forgot-password steps on `/`) |
 
@@ -163,8 +166,8 @@ The reference has about 400 distinct `/v1` paths and 129 web pages; this covers 
 - **Google Workspace, Microsoft 365 and Gmail** integrations (and every connection of kind `native_provider`), the Slack assistant, and the GitHub App install routes.
 
 **Not reached yet (no outside dependency):**
-- **Automations**, workflows and workflow/script runs (`/v1/automations*`, `/v1/automation-runs*`, `/v1/codemode*`), and **telemetry/analytics** (`/v1/telemetry*`).
-- **Platform admin** (`/v1/admin/*`: users, organizations, admins, feature flags, overview and metrics, the `/admin` pages), and the install-link and `/v1/me/*` extras listed in [docs/features/org-admin.md](docs/features/org-admin.md).
+- **Automations**, workflows and workflow/script runs (`/v1/automations*`, `/v1/automation-runs*`, `/v1/codemode*`), and **telemetry/analytics** (`/v1/telemetry*`) are in progress (see the repository's commit log).
+- The rest of platform admin (inference usage, security, feature usage, sandbox organizations, services), first-administrator setup, activation and "my agent", and real egress probes (see [docs/features/platform-admin.md](docs/features/platform-admin.md) and [onboarding.md](docs/features/onboarding.md)).
 - **SAML** sign-in (the SSO route answers 501), plugin–connection bindings, `/v1/oauth-providers*`, invite-into-a-team, declarative team keys.
 - **OAuth**: `client_credentials`, introspection, `private_key_jwt`, ID tokens and `userinfo`, a rate limit on client registration. **Email**: the sign-in, forget-password and change-email code types. **Social sign-in** (Google, GitHub).
 - **Operations**: Helm packaging; a shared store for rate limits and caches (they are per instance); the container images were written and the publishes verified, but not built (no Docker daemon here); the CI template is not enabled in the repository's own CI.
