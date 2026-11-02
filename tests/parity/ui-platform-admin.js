@@ -34,7 +34,7 @@ async function platformAdmin() {
   const ownerPage = await ownerCtx.newPage();
   ownerPage.on('pageerror', (e) => errors.push(String(e).slice(0, 160)));
   await signIn(ownerPage, ws.owner.email);
-  for (const path of ['/admin', '/admin/users', '/admin/organizations', '/admin/features', `/admin/organizations/${ws.orgId}`]) {
+  for (const path of ['/admin', '/admin/users', '/admin/organizations', '/admin/features', '/admin/feature-usage', '/admin/security', '/admin/services', `/admin/organizations/${ws.orgId}`]) {
     await ownerPage.goto(W + path, { waitUntil: 'networkidle', timeout: 60000 });
     await ownerPage.getByTestId('no-access').waitFor({ timeout: 20000 });
     const body = await text(ownerPage);
@@ -162,6 +162,38 @@ async function platformAdmin() {
     await api('PUT', `/v1/admin/features/${FEATURE}`, { enabled: false, killed: false }, admin.token);
   }
   check('the feature is back to its default afterwards', (await api('GET', '/v1/admin/features', null, admin.token)).json.features.find((f) => f.key === FEATURE).enabled === false);
+
+  // ---- feature use, security, services -------------------------------------------------------------------------------------------
+  await api('POST', '/v1/org/feature-usage', { features: ['libraryDetailBreadcrumbs'] }, ws.owner.token, ws.orgId);
+  await page.getByTestId('nav-feature-usage').click();
+  await page.getByTestId('admin-feature-usage-page').waitFor({ timeout: 15000 });
+  await page.locator('[data-testid="usage-row"][data-key="libraryDetailBreadcrumbs"]').waitFor({ timeout: 15000 });
+  const usageRow = page.locator('[data-testid="usage-row"][data-key="libraryDetailBreadcrumbs"]');
+  check('feature use lists every available feature with who uses it', (await page.getByTestId('usage-row').count()) > 40 && Number(await usageRow.getByTestId('members-using').innerText()) >= 1 && (await usageRow.getByTestId('health').innerText()) === 'In use');
+  await page.getByTestId('range-30d').click();
+  await until(async () => (await page.getByTestId('range-30d').getAttribute('class'))?.includes('current'));
+  await usageRow.getByTestId('open-feature').click();
+  await page.getByTestId('detail-title').waitFor({ timeout: 15000 });
+  check('opening a feature shows the workspaces that use it', /libraryDetailBreadcrumbs/.test(await page.getByTestId('detail-title').innerText()) && (await page.getByTestId('detail-org').count()) >= 1);
+  await shot(page, 'platform-admin-feature-use');
+
+  await page.getByTestId('nav-security').click();
+  await page.getByTestId('admin-security-page').waitFor({ timeout: 15000 });
+  await page.locator('[data-testid="finding"][data-id="admin-grants"]').waitFor({ timeout: 15000 });
+  check('security lists the findings, each with its severity and the rule that raised it', (await page.getByTestId('finding').count()) === 14 && (await page.locator('[data-testid="finding"][data-id="admin-grants"] [data-testid="rule"]').textContent()).length > 20);
+  check('findings that need model usage are shown as clear', (await page.locator('[data-testid="finding"][data-id="spend-spikes"]').getAttribute('data-severity')) === 'clear');
+  await page.getByTestId('days-30').click();
+  await until(async () => (await page.getByTestId('days-30').getAttribute('class'))?.includes('current'));
+  await shot(page, 'platform-admin-security');
+
+  await page.getByTestId('nav-services').click();
+  await page.getByTestId('admin-services-page').waitFor({ timeout: 15000 });
+  await page.locator('[data-testid="service-row"][data-id="database"]').waitFor({ timeout: 15000 });
+  check('services shows the database as ready and the cloud-only services as not set up', (await page.locator('[data-testid="service-row"][data-id="database"]').getAttribute('data-state')) === 'ready' && (await page.locator('[data-testid="service-row"][data-id="gateway"]').getAttribute('data-state')) === 'not_configured');
+  await page.getByTestId('check-now').click();
+  await page.getByTestId('notice').waitFor({ timeout: 15000 });
+  check('a check can be made from the page and sandbox organizations are said to be off', /Checked/.test(await page.getByTestId('notice').innerText()) && /turned off/.test(await page.getByTestId('sandboxes').innerText()));
+  await shot(page, 'platform-admin-services');
 
   await finish(browser, errors);
 })().catch((e) => { console.error(e); process.exit(1); });
