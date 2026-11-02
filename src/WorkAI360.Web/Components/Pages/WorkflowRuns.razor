@@ -1,0 +1,95 @@
+@page "/dashboard/workflow-runs"
+@inherits LibraryPage
+@using System.Text.Json
+
+<PageTitle>Workflow runs · OpenWork Cloud</PageTitle>
+
+<LibraryStyles />
+
+<section class="den-card den-wide lib-page" data-testid="workflow-runs-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>Workflow runs</h1>
+        <p class="den-muted">@OrgName · what your Workflows and scripts ran, newest first. Only your own runs are listed; they keep the names of the tools called, never the values.</p>
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @if (_runs.Count == 0)
+        {
+            <p class="den-muted" data-testid="runs-empty">Nothing has run yet.</p>
+        }
+        else
+        {
+            <table class="wr-table" data-testid="runs-table">
+                <thead><tr><th>When</th><th>Workflow</th><th>Outcome</th><th>Tools</th><th>Took</th></tr></thead>
+                <tbody>
+                    @foreach (var r in _runs)
+                    {
+                        <tr data-testid="run-row" data-status="@r.Status">
+                            <td>@WorkflowFormat.When(r.FinishedAt)</td>
+                            <td>
+                                @if (r.WorkflowId is not null) { <a href="/dashboard/library/workflows/@r.WorkflowId" data-testid="run-workflow">@r.Title</a> }
+                                else { <span class="den-muted" data-testid="run-workflow">@r.Kind</span> }
+                            </td>
+                            <td>
+                                <span data-testid="run-status">@(r.Status == "succeeded" ? "Succeeded" : "Failed")</span>
+                                @if (r.Error is not null) { <span class="den-error" data-testid="run-error"> · @r.Error</span> }
+                            </td>
+                            <td data-testid="run-tools" title="@string.Join(", ", r.Tools)">@r.Tools.Count</td>
+                            <td>@WorkflowFormat.Duration(r.DurationMs)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+            @if (_next is not null)
+            {
+                <button type="button" class="den-button den-secondary" disabled="@Busy" @onclick="MoreAsync" data-testid="runs-more">Show older runs</button>
+            }
+        }
+        <div class="lib-actions">
+            <a class="den-link" href="/dashboard/library">My library</a>
+            <a class="den-link" href="/dashboard">Back to dashboard</a>
+        </div>
+    }
+</section>
+
+@code {
+    private sealed record Run(string Status, string FinishedAt, string Source, string? WorkflowId, string? Title, string? Error, List<string> Tools, int DurationMs)
+    {
+        public string Kind => Source.StartsWith("workflow-test:", StringComparison.Ordinal) ? "Draft test" : Source == "adhoc" ? "Script run by an agent" : Source.StartsWith("authoring:", StringComparison.Ordinal) ? "Live script run" : "Workflow";
+    }
+
+    private readonly List<Run> _runs = [];
+    private string? _next;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await LoadOrgAsync()) return;
+        await LoadAsync(null);
+        Loading = false;
+        StateHasChanged();
+    }
+
+    private async Task LoadAsync(string? cursor)
+    {
+        var r = await Api($"/workflow-runs?limit=50{(cursor is null ? "" : "&cursor=" + Uri.EscapeDataString(cursor))}");
+        if (r.Json is not { ValueKind: JsonValueKind.Object } body || !r.Ok) { Error = r.Message("The runs could not be loaded."); return; }
+        foreach (var x in body.GetProperty("runs").EnumerateArray())
+        {
+            var wf = x.GetProperty("workflow");
+            _runs.Add(new Run(Str(x, "status") ?? "", Str(x, "finishedAt") ?? "", Str(x, "source") ?? "", wf.ValueKind == JsonValueKind.Object ? Str(wf, "configObjectId") : null,
+                wf.ValueKind == JsonValueKind.Object ? Str(wf, "title") : null, Str(x, "errorMessage"), x.GetProperty("toolCalls").EnumerateArray().Select(c => Str(c, "name") ?? "").ToList(), Int(x, "durationMs")));
+        }
+        _next = body.GetProperty("nextCursor").ValueKind == JsonValueKind.String ? body.GetProperty("nextCursor").GetString() : null;
+    }
+
+    private async Task MoreAsync()
+    {
+        Busy = true;
+        await LoadAsync(_next);
+        Busy = false;
+    }
+}

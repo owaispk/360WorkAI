@@ -1,0 +1,327 @@
+@page "/dashboard/library/workflows/{Id}"
+@inherits LibraryPage
+@using System.Text.Json
+
+<PageTitle>Workflow · OpenWork Cloud</PageTitle>
+
+<LibraryStyles />
+
+<section class="den-card den-wide lib-page" data-testid="workflow-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (_missing)
+    {
+        <h1>Workflow not found</h1>
+        <p class="den-muted" data-testid="workflow-missing">It may have been removed, or it has not been shared with you.</p>
+        <a class="den-link" href="/dashboard/library">Back to my library</a>
+    }
+    else
+    {
+        <h1 data-testid="workflow-title">@_title</h1>
+        @if (!string.IsNullOrWhiteSpace(_description)) { <p class="den-muted" data-testid="workflow-description">@_description</p> }
+        <div class="lib-tags">
+            <span class="lib-tag" data-testid="workflow-role">You can @_roleText</span>
+            <span class="lib-tag" data-testid="workflow-ready">@WorkflowFormat.Ready(_ready)</span>
+            <span class="lib-tag" data-testid="workflow-fresh">@WorkflowFormat.Fresh(_fresh)@(_lastSuccess is null ? "" : $" · last good result {WorkflowFormat.When(_lastSuccess)}")</span>
+            @if (_automations > 0) { <span class="lib-tag" data-testid="workflow-automations">@_automations Automation@(_automations == 1 ? "" : "s")</span> }
+            @if (_pluginName is not null) { <a class="lib-tag" href="/dashboard/plugins/@_pluginId" data-testid="workflow-plugin">In plugin @_pluginName</a> }
+        </div>
+
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+
+        <div class="wf-tabs" role="tablist">
+            @foreach (var (key, label) in Tabs)
+            {
+                <button type="button" role="tab" class="wf-tab @(_tab == key ? "wf-on" : "")" aria-selected="@(_tab == key)" @onclick="() => OpenTabAsync(key)" data-testid="@($"tab-{key}")">@label</button>
+            }
+        </div>
+
+        @if (_tab == "run")
+        {
+            <div class="den-panel" data-testid="run-panel">
+                <label for="run-input">Input (JSON, optional)</label>
+                <textarea id="run-input" @bind="_runInput" rows="4" data-testid="run-input"></textarea>
+                <button type="button" class="den-button" disabled="@Busy" @onclick="() => RunWorkflowAsync(false)" data-testid="run-now">Run now</button>
+                <button type="button" class="den-button den-secondary" disabled="@Busy" @onclick="() => RunWorkflowAsync(true)" data-testid="run-live">Run live (read-only)</button>
+                @if (_runError is not null) { <p class="den-error" role="alert" data-testid="run-error">@_runError</p> }
+            </div>
+            @if (_ran)
+            {
+                <h2>Result</h2>
+                <p class="den-muted" data-testid="run-meta">@_ranWhen · receipt <code data-testid="run-receipt">@_ranReceipt</code></p>
+                <WorkflowResult Markdown="@_ranMarkdown" />
+            }
+        }
+        else if (_tab == "runs")
+        {
+            @if (_snapshots.Count == 0)
+            {
+                <p class="den-muted" data-testid="snapshots-empty">No runs yet.</p>
+            }
+            <ul class="den-members" data-testid="snapshots-list">
+                @foreach (var s in _snapshots)
+                {
+                    <li data-testid="snapshot-row" data-status="@s.Status">
+                        <div class="den-member-main">
+                            <strong>@(s.Status == "succeeded" ? "Succeeded" : "Failed")</strong>
+                            <span class="den-muted">@WorkflowFormat.When(s.FinishedAt) · @s.Source@(s.ToolCalls > 0 ? $" · {s.ToolCalls} tool call{(s.ToolCalls == 1 ? "" : "s")}" : "")</span>
+                            @if (s.Error is not null) { <span class="den-error" data-testid="snapshot-error">@s.Error</span> }
+                            @if (s.Deleted) { <span class="den-muted" data-testid="snapshot-erased">Result erased @WorkflowFormat.When(s.DeletedAt)</span> }
+                            else if (s.Markdown is not null)
+                            {
+                                <details><summary>Show result</summary><WorkflowResult Markdown="@s.Markdown" /></details>
+                            }
+                        </div>
+                        @if (_canManage && !s.Deleted && s.Markdown is not null)
+                        {
+                            <button type="button" class="den-link den-danger" disabled="@Busy" @onclick="() => EraseAsync(s.Id)" data-testid="snapshot-erase">Erase result</button>
+                        }
+                    </li>
+                }
+            </ul>
+        }
+        else if (_tab == "versions")
+        {
+            <ul class="den-members" data-testid="versions-list">
+                @foreach (var v in _versions)
+                {
+                    <li data-testid="version-row">
+                        <div class="den-member-main">
+                            <strong>@(v.Id == _currentVersionId ? "Current version" : "Earlier version")</strong>
+                            <span class="den-muted">@WorkflowFormat.When(v.CreatedAt) · <code>@v.Id</code></span>
+                            @if (v.Capabilities.Count > 0) { <span class="den-muted" data-testid="version-capabilities">Uses @string.Join(", ", v.Capabilities)</span> }
+                            @if (v.Code is not null) { <details><summary>Show code</summary><pre class="wf-pre-code" data-testid="version-code">@v.Code</pre></details> }
+                        </div>
+                    </li>
+                }
+            </ul>
+        }
+        else if (_tab == "edit" && _canManage)
+        {
+            <div class="den-panel" data-testid="edit-panel">
+                <label for="edit-name">Name</label>
+                <input id="edit-name" @bind="_editName" maxlength="255" data-testid="edit-name" />
+                <label for="edit-description">Description</label>
+                <input id="edit-description" @bind="_editDescription" maxlength="4000" data-testid="edit-description" />
+                <label for="edit-code">Code</label>
+                <textarea id="edit-code" @bind="_editCode" rows="12" spellcheck="false" data-testid="edit-code"></textarea>
+                <label for="edit-example">Example input (JSON)</label>
+                <textarea id="edit-example" @bind="_editExample" rows="3" data-testid="edit-example"></textarea>
+                <label for="edit-in-schema">Input schema (JSON Schema, optional)</label>
+                <textarea id="edit-in-schema" @bind="_editInSchema" rows="3" data-testid="edit-in-schema"></textarea>
+                <label for="edit-out-schema">Output schema (JSON Schema, optional)</label>
+                <textarea id="edit-out-schema" @bind="_editOutSchema" rows="3" data-testid="edit-out-schema"></textarea>
+                <button type="button" class="den-button" disabled="@Busy" @onclick="TestDraftAsync" data-testid="edit-test">Test it</button>
+                @if (_testReceipt is not null)
+                {
+                    <button type="button" class="den-button den-secondary" disabled="@Busy" @onclick="SaveVersionAsync" data-testid="edit-save">Save as a new version</button>
+                    <h2>Test result</h2>
+                    <WorkflowResult Markdown="@_testMarkdown" />
+                }
+                <p class="den-muted">A new version needs a passing test of exactly this draft; change anything after testing and test again.</p>
+            </div>
+        }
+        else
+        {
+            <h2>Steps</h2>
+            @if (_steps.Count == 0) { <p class="den-muted">This Workflow has no steps that call a tool.</p> }
+            <ol class="den-list" data-testid="steps-list">
+                @foreach (var step in _steps) { <li data-testid="step" data-kind="@step.Kind">@step.Label</li> }
+            </ol>
+            @if (_views.Count > 0)
+            {
+                <h2>Apps</h2>
+                <ul class="den-list" data-testid="views-list">
+                    @foreach (var v in _views) { <li data-testid="view-row">@v.Title <span class="den-muted">(@v.Status)</span></li> }
+                </ul>
+            }
+            @if (_latestMarkdown is not null)
+            {
+                <h2>Latest result</h2>
+                <WorkflowResult Markdown="@_latestMarkdown" />
+            }
+        }
+
+        <div class="lib-actions">
+            <a class="den-link" href="/dashboard/library">My library</a>
+            <a class="den-link" href="/dashboard/workflow-runs">Workflow runs</a>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter] public string Id { get; set; } = "";
+
+    private sealed record Snap(string Id, string Status, string FinishedAt, string Source, int ToolCalls, string? Error, string? Markdown, bool Deleted, string? DeletedAt);
+    private sealed record Ver(string Id, string CreatedAt, string? Code, List<string> Capabilities);
+    private sealed record Step(string Kind, string Label);
+    private sealed record ViewRow(string Title, string Status);
+
+    private static readonly (string, string)[] AllTabs = [("overview", "Overview"), ("run", "Run"), ("runs", "Runs"), ("versions", "Versions"), ("edit", "Edit")];
+    private IEnumerable<(string, string)> Tabs => AllTabs.Where(t => t.Item1 != "edit" || _canManage);
+
+    private bool _missing;
+    private string _tab = "overview";
+    private string _title = "", _roleText = "", _ready = "", _fresh = "";
+    private string? _description, _lastSuccess, _pluginId, _pluginName, _currentVersionId, _latestMarkdown;
+    private int _automations;
+    private bool _canManage;
+    private List<Step> _steps = [];
+    private List<ViewRow> _views = [];
+    private List<Snap> _snapshots = [];
+    private List<Ver> _versions = [];
+    private string _runInput = "";
+    private string? _runError, _ranMarkdown, _ranWhen, _ranReceipt;
+    private bool _ran;
+    private string _editName = "", _editDescription = "", _editCode = "", _editExample = "", _editInSchema = "", _editOutSchema = "";
+    private string? _testReceipt, _testMarkdown, _testKey;
+    private JsonElement _requiredCapabilities;
+    private string _exampleText = "";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await LoadOrgAsync()) return;
+        await ReloadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync()
+    {
+        var r = await Api($"/workflows/{Uri.EscapeDataString(Id)}");
+        if (r.Json is not { ValueKind: JsonValueKind.Object } body || !r.Ok) { _missing = true; return; }
+        var wf = body.GetProperty("workflow");
+        var script = body.GetProperty("script");
+        var current = script.GetProperty("currentVersion");
+        _title = Str(script, "title") ?? "";
+        _description = Str(script, "description");
+        _roleText = Str(wf, "role") switch { "manager" => "manage it", "editor" => "run and edit it", _ => "run it" };
+        _canManage = script.GetProperty("canManage").GetBoolean();
+        _ready = Str(wf, "state") ?? "";
+        _fresh = Str(script.GetProperty("freshness"), "state") ?? "";
+        _lastSuccess = Str(wf, "latestSuccessfulAt");
+        _automations = Int(wf, "automationCount");
+        _currentVersionId = Str(current, "id");
+        _pluginId = wf.TryGetProperty("plugin", out var p) && p.ValueKind == JsonValueKind.Object ? Str(p, "id") : null;
+        _pluginName = wf.TryGetProperty("plugin", out var pn) && pn.ValueKind == JsonValueKind.Object ? Str(pn, "name") : null;
+        _steps = current.GetProperty("graph").GetProperty("nodes").EnumerateArray()
+            .Select(n => new Step(Str(n, "kind") ?? "", Str(n, "kind") switch { "tool" => $"Calls {Str(n, "label")}", "branch" => $"Decides: {Str(n, "label")}", "loop" => $"Repeats: {Str(n, "label")}", "return" => $"Returns {Str(n, "label")}", "input" => "Takes input", _ => Str(n, "label") ?? "" })).ToList();
+        _views = body.GetProperty("views").EnumerateArray().Select(v => new ViewRow(Str(v, "title") ?? "", Str(v, "status") ?? "")).ToList();
+        var latest = script.GetProperty("latestSuccessfulSnapshot");
+        _latestMarkdown = latest.ValueKind == JsonValueKind.Object ? Str(latest, "markdown") : null;
+        _versions = script.GetProperty("versions").EnumerateArray().Select(v => new Ver(Str(v, "id") ?? "", Str(v, "createdAt") ?? "", Str(v, "code"),
+            v.GetProperty("requiredCapabilities").EnumerateArray().Select(c => Str(c, "scriptPath") ?? "").ToList())).ToList();
+        _requiredCapabilities = current.GetProperty("requiredCapabilities").Clone();
+        if (_canManage && _editName.Length == 0)
+        {
+            _editName = _title;
+            _editDescription = _description ?? "";
+            _editCode = Str(current, "code") ?? "";
+            _editExample = current.TryGetProperty("exampleInput", out var ex) && ex.ValueKind != JsonValueKind.Null ? WorkflowFormat.Pretty(ex.GetRawText()) : "";
+            _editInSchema = current.TryGetProperty("inputSchema", out var si) && si.ValueKind != JsonValueKind.Null ? WorkflowFormat.Pretty(si.GetRawText()) : "";
+            _editOutSchema = current.TryGetProperty("outputSchema", out var so) && so.ValueKind != JsonValueKind.Null ? WorkflowFormat.Pretty(so.GetRawText()) : "";
+            _exampleText = _editExample;
+        }
+        if (_runInput.Length == 0 && _exampleText.Length > 0) _runInput = _exampleText;
+        await LoadSnapshotsAsync();
+    }
+
+    private async Task LoadSnapshotsAsync()
+    {
+        var r = await Api($"/workflows/{Uri.EscapeDataString(Id)}/snapshots?limit=50");
+        _snapshots = [];
+        if (r.Json is not { ValueKind: JsonValueKind.Object } body) return;
+        foreach (var s in body.GetProperty("items").EnumerateArray())
+            _snapshots.Add(new Snap(Str(s, "receiptId") ?? "", Str(s, "status") ?? "", Str(s, "finishedAt") ?? "", Str(s, "source") ?? "", s.GetProperty("toolCalls").GetArrayLength(), Str(s, "errorMessage"),
+                Str(s, "markdown"), s.GetProperty("contentDeletedAt").ValueKind == JsonValueKind.String, Str(s, "contentDeletedAt")));
+    }
+
+    private async Task OpenTabAsync(string key)
+    {
+        _tab = key;
+        Error = Notice = null;
+        if (key == "runs") await LoadSnapshotsAsync();
+    }
+
+    private static bool TryJson(string text, out JsonElement? value)
+    {
+        value = null;
+        if (string.IsNullOrWhiteSpace(text)) return true;
+        try { value = JsonDocument.Parse(text).RootElement.Clone(); return true; }
+        catch (JsonException) { return false; }
+    }
+
+    private async Task RunWorkflowAsync(bool live)
+    {
+        _runError = null;
+        _ran = false;
+        if (!TryJson(_runInput, out var input)) { _runError = "The input is not valid JSON."; return; }
+        var body = new Dictionary<string, object?> { ["pluginId"] = _pluginId, ["configObjectVersionId"] = _currentVersionId };
+        if (live) body["mode"] = "live"; else if (input is not null) body["input"] = input;
+        Busy = true;
+        var r = await Api($"/workflows/{Uri.EscapeDataString(Id)}/run", "POST", body);
+        Busy = false;
+        if (!r.Ok) { _runError = r.Message("The Workflow could not run."); return; }
+        _ran = true;
+        _ranMarkdown = r.String("markdown");
+        _ranReceipt = r.String("receiptId");
+        _ranWhen = WorkflowFormat.When(r.String("fetchedAt"));
+        await ReloadAsync();
+    }
+
+    private async Task EraseAsync(string receiptId) =>
+        await RunAsync(() => Api($"/workflows/{Uri.EscapeDataString(Id)}/snapshots/{Uri.EscapeDataString(receiptId)}/content", "DELETE"), "The result was erased. The receipt stays.");
+
+    private Dictionary<string, object?>? Draft(out string? problem)
+    {
+        problem = null;
+        if (!TryJson(_editExample, out var example)) { problem = "The example input is not valid JSON."; return null; }
+        if (!TryJson(_editInSchema, out var inSchema)) { problem = "The input schema is not valid JSON."; return null; }
+        if (!TryJson(_editOutSchema, out var outSchema)) { problem = "The output schema is not valid JSON."; return null; }
+        var d = new Dictionary<string, object?> { ["name"] = _editName, ["description"] = _editDescription, ["code"] = _editCode, ["requiredCapabilities"] = _requiredCapabilities };
+        if (example is not null) d["exampleInput"] = example;
+        if (inSchema is not null) d["inputSchema"] = inSchema;
+        if (outSchema is not null) d["outputSchema"] = outSchema;
+        return d;
+    }
+
+    private string DraftKey() => JsonSerializer.Serialize(new[] { _editName, _editDescription, _editCode, _editExample, _editInSchema, _editOutSchema });
+
+    private async Task TestDraftAsync()
+    {
+        Error = Notice = null;
+        _testReceipt = null;
+        var draft = Draft(out var problem);
+        if (draft is null) { Error = problem; return; }
+        draft["configObjectId"] = Id;
+        Busy = true;
+        var r = await Api("/workflows/test", "POST", draft);
+        Busy = false;
+        if (!r.Ok) { Error = r.Message("The test did not pass."); return; }
+        _testReceipt = r.String("receiptId");
+        _testMarkdown = r.String("markdown");
+        _testKey = DraftKey();
+        Notice = "The test passed. You can save this draft as a new version.";
+    }
+
+    private async Task SaveVersionAsync()
+    {
+        Error = Notice = null;
+        if (_testReceipt is null || _testKey != DraftKey()) { _testReceipt = null; Error = "The draft changed since the test. Test it again."; return; }
+        var draft = Draft(out var problem);
+        if (draft is null) { Error = problem; return; }
+        draft["receiptId"] = _testReceipt;
+        Busy = true;
+        var r = await Api($"/workflows/{Uri.EscapeDataString(Id)}/versions", "POST", draft);
+        Busy = false;
+        if (!r.Ok) { Error = r.Message("The version was not saved."); return; }
+        _testReceipt = null;
+        _editName = "";
+        Notice = "Saved as a new version.";
+        await ReloadAsync();
+    }
+}

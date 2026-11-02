@@ -1,0 +1,5 @@
+.wf-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 16px 0 8px; border-bottom: 1px solid rgba(127, 127, 127, 0.3); }
+.wf-tab { background: none; border: none; padding: 8px 14px; cursor: pointer; font: inherit; color: inherit; border-bottom: 2px solid transparent; }
+.wf-tab.wf-on { border-bottom-color: currentColor; font-weight: 600; }
+.wf-pre-code { background: rgba(127, 127, 127, 0.1); padding: 10px; border-radius: 6px; overflow-x: auto; white-space: pre; }
+textarea[data-testid="edit-code"], textarea[data-testid="run-input"] { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; width: 100%; }

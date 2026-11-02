@@ -1,0 +1,4 @@
+.wf-table { border-collapse: collapse; margin: 8px 0; max-width: 100%; }
+.wf-table th, .wf-table td { border: 1px solid var(--den-border, #d8dce3); padding: 4px 10px; text-align: left; vertical-align: top; }
+.wf-table th { background: rgba(127, 127, 127, 0.1); }
+.wf-pre { background: rgba(127, 127, 127, 0.1); padding: 10px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }

@@ -1,0 +1,28 @@
+@using WorkAI360.Web.Components
+
+@* A Workflow result: the server's Markdown table as a real table, anything else as text. Cells are text nodes, never markup. *@
+@{ var table = WorkflowFormat.Table(Markdown); }
+@if (Markdown is null)
+{
+    <p class="den-muted" data-testid="result-empty">No result to show.</p>
+}
+else if (table is { } t)
+{
+    <table class="wf-table" data-testid="result-table">
+        <thead><tr>@foreach (var h in t.Headers) { <th>@h</th> }</tr></thead>
+        <tbody>
+            @foreach (var row in t.Rows)
+            {
+                <tr data-testid="result-row">@foreach (var cell in row) { <td>@cell</td> }</tr>
+            }
+        </tbody>
+    </table>
+}
+else
+{
+    <pre class="wf-pre" data-testid="result-text">@WorkflowFormat.Plain(Markdown)</pre>
+}
+
+@code {
+    [Parameter] public string? Markdown { get; set; }
+}

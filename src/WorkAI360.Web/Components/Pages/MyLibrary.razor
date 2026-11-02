@@ -15,7 +15,7 @@
     {
         <h1>My library</h1>
         <p class="den-muted">@OrgName · everything your agents can use for you, and how you got it.</p>
-        @if (_items.Count == 0)
+        @if (_items.Count == 0 && _workflows.Count == 0)
         {
             <p class="den-muted" data-testid="library-empty">Nothing has been shared with you yet. Ask the person who made a plugin to share it, or make your own.</p>
         }
@@ -40,7 +40,28 @@
                 </li>
             }
         </ul>
+        @if (_workflows.Count > 0)
+        {
+            <h2>Workflows</h2>
+            <ul class="den-members" data-testid="library-workflows">
+                @foreach (var wf in _workflows)
+                {
+                    <li data-testid="library-workflow" data-name="@wf.Name">
+                        <div class="den-member-main">
+                            <a class="lib-row-title" href="/dashboard/library/workflows/@wf.Id">@wf.Name</a>
+                            @if (!string.IsNullOrWhiteSpace(wf.Description)) { <span class="den-muted">@wf.Description</span> }
+                            <div class="lib-tags">
+                                <span class="lib-tag" data-testid="library-workflow-role">You can @wf.Role</span>
+                                <span class="lib-tag" data-testid="library-workflow-state">@WorkflowFormat.Fresh(wf.ResultState)</span>
+                                @foreach (var edge in wf.Edges) { <span class="lib-tag">@edge</span> }
+                            </div>
+                        </div>
+                    </li>
+                }
+            </ul>
+        }
         <div class="lib-actions">
+            <a class="den-link" href="/dashboard/workflow-runs">Workflow runs</a>
             <a class="den-link" href="/dashboard/plugins">Manage plugins</a>
             <a class="den-link" href="/dashboard/marketplaces">Marketplaces</a>
             <a class="den-link" href="/dashboard">Back to dashboard</a>
@@ -51,7 +72,10 @@
 @code {
     private sealed record Item(string Id, string Name, string? Description, string Role, List<string> Edges, List<string> Skills);
 
+    private sealed record WorkflowItem(string Id, string Name, string? Description, string Role, string ResultState, List<string> Edges);
+
     private List<Item> _items = [];
+    private List<WorkflowItem> _workflows = [];
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -65,8 +89,12 @@
     protected override async Task ReloadAsync()
     {
         _items = [];
+        _workflows = [];
         var r = await Api("/me/library");
         if (r.Json is not { ValueKind: JsonValueKind.Object } body) return;
+        foreach (var wf in body.GetProperty("items").EnumerateArray().Where(i => Str(i, "type") == "workflow"))
+            _workflows.Add(new WorkflowItem(Str(wf, "id") ?? "", Str(wf, "name") ?? "", Str(wf, "description"), Str(wf, "role") switch { "manager" => "manage it", "editor" => "edit it", _ => "run it" },
+                Str(wf, "resultState") ?? "", wf.GetProperty("edges").EnumerateArray().Select(EdgeLabel).ToList()));
         var plugins = body.GetProperty("items").EnumerateArray().Where(i => Str(i, "type") == "plugin").ToList();
         var contents = new Dictionary<string, List<string>>();
         if (plugins.Count > 0)
