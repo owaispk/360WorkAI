@@ -11,7 +11,7 @@ using WorkAI360.Api.Data;
 namespace WorkAI360.Api.Migrations
 {
     [DbContext(typeof(DenDbContext))]
-    [Migration("20261102160722_Initial")]
+    [Migration("20261102162550_Initial")]
     partial class Initial
     {
         /// <inheritdoc />
@@ -65,6 +65,460 @@ namespace WorkAI360.Api.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("AuthorizationCodes");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Automations.Automation", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<long?>("ArchivedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("CurrentRevisionId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<long?>("LatestRunAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("LatestSuccessfulResultJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("LatestSuccessfulRunId")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("varchar(120)");
+
+                    b.Property<string>("NeedsAttentionJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<long?>("NextDueAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("OwnerMemberId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("OwnerMemberId", "Id");
+
+                    b.HasIndex("State", "NextDueAt");
+
+                    b.ToTable("Automation");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Automations.AutomationRevision", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("ActionJson")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("AutomationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Digest")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ExecutionTarget")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Instructions")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<int>("MaximumRuntimeMs")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ModelId")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("varchar(160)");
+
+                    b.Property<string>("ModelVariant")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(160)
+                        .HasColumnType("varchar(160)");
+
+                    b.Property<string>("ScheduleJson")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ScheduleKind")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("int");
+
+                    b.Property<string>("WorkspaceId")
+                        .HasColumnType("longtext");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AutomationId", "Version")
+                        .IsUnique();
+
+                    b.ToTable("AutomationRevision");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Automations.AutomationRun", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<int>("AttemptCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("AutomationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<long?>("CancelRequestedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("ClaimDeadlineAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("EngineKind")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("EngineReceiptJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<int>("EngineSequence")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ErrorJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ExecutionTarget")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<long?>("FinishedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("HeartbeatAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("varchar(512)");
+
+                    b.Property<long?>("LeaseExpiresAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("LeaseOwner")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("ModelId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ModelVariant")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ResultSummary")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("RevisionId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<long?>("ScheduledFor")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("StartedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("ThreadId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Trigger")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("TriggerContextJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("UsageJson")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IdempotencyKey")
+                        .IsUnique();
+
+                    b.HasIndex("AutomationId", "Id");
+
+                    b.HasIndex("AutomationId", "Status");
+
+                    b.HasIndex("Status", "ExecutionTarget");
+
+                    b.ToTable("AutomationRun");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Automations.AutomationRunEvent", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<int>("Attempt")
+                        .HasColumnType("int");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("IdempotencyKey")
+                        .IsRequired()
+                        .HasMaxLength(400)
+                        .HasColumnType("varchar(400)");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("RunId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<int>("Sequence")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RunId", "Attempt", "Sequence")
+                        .IsUnique();
+
+                    b.ToTable("AutomationRunEvent");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Automations.AutomationRunner", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("AppVersion")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("CapabilitiesJson")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<int>("Concurrency")
+                        .HasColumnType("int");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("InstallId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<long>("LastSeenAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("OwnerMemberId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("Platform")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<int>("ProtocolVersion")
+                        .HasColumnType("int");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "OwnerMemberId", "LastSeenAt");
+
+                    b.ToTable("AutomationRunner");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Automations.TelemetryEvent", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<int?>("DurationMs")
+                        .HasColumnType("int");
+
+                    b.Property<long>("EventTimestamp")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("EventType")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<string>("MemberId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("SessionId")
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(128)");
+
+                    b.Property<string>("Source")
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<bool?>("Success")
+                        .HasColumnType("tinyint(1)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "EventTimestamp");
+
+                    b.HasIndex("OrganizationId", "SessionId", "EventTimestamp");
+
+                    b.ToTable("TelemetryEvent");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Automations.TelemetrySessionDimension", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("DimensionLabel")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("DimensionType")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<string>("DimensionValue")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(128)");
+
+                    b.Property<long>("LastSeenAt")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("MetadataJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("SessionId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("varchar(128)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "DimensionType", "DimensionValue");
+
+                    b.HasIndex("OrganizationId", "Source", "SessionId", "DimensionType")
+                        .IsUnique();
+
+                    b.ToTable("TelemetrySessionDimension");
                 });
 
             modelBuilder.Entity("WorkAI360.Api.Domain.Connections.ConnectedAccount", b =>
@@ -3007,6 +3461,69 @@ namespace WorkAI360.Api.Migrations
                         .IsUnique();
 
                     b.ToTable("Users");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Automations.Automation", b =>
+                {
+                    b.HasOne("WorkAI360.Api.Domain.Organization", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Automations.AutomationRevision", b =>
+                {
+                    b.HasOne("WorkAI360.Api.Domain.Automations.Automation", null)
+                        .WithMany()
+                        .HasForeignKey("AutomationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Automations.AutomationRun", b =>
+                {
+                    b.HasOne("WorkAI360.Api.Domain.Automations.Automation", null)
+                        .WithMany()
+                        .HasForeignKey("AutomationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Automations.AutomationRunEvent", b =>
+                {
+                    b.HasOne("WorkAI360.Api.Domain.Automations.AutomationRun", null)
+                        .WithMany()
+                        .HasForeignKey("RunId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Automations.AutomationRunner", b =>
+                {
+                    b.HasOne("WorkAI360.Api.Domain.Organization", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Automations.TelemetryEvent", b =>
+                {
+                    b.HasOne("WorkAI360.Api.Domain.Organization", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Automations.TelemetrySessionDimension", b =>
+                {
+                    b.HasOne("WorkAI360.Api.Domain.Organization", null)
+                        .WithMany()
+                        .HasForeignKey("OrganizationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("WorkAI360.Api.Domain.Policy.AgentPermissionPolicy", b =>
