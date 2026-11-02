@@ -8,7 +8,7 @@ Status: **a working core of Den, not all of Den.** Built and tested: sign-in, se
 members, roles and invitations, teams and permissions, desktop handoff, device login, the OAuth provider for MCP clients (with `/mcp/agent`),
 and five larger areas: the **library** (plugins, skills, marketplaces, sharing), **org administration** (API keys, audit log, settings, web origins,
 brand), **connections** (external MCP servers, tool policy, OAuth sign-in), **SSO and SCIM**, and **policy** (desktop policies, agent permissions,
-prompts, default model). It runs on SQLite or MySQL. About 40% of the reference's route registrations and a corresponding share of its web
+prompts, default model), plus platform admin, onboarding, automations and analytics, OpenID Connect (userinfo, introspection, end-session, ID tokens), social sign-in (Google, GitHub) and sign-in/forget-password/change-email codes. It runs on SQLite or MySQL. About 40% of the reference's route registrations and a corresponding share of its web
 pages exist; what is missing is listed honestly in [Not built yet](#not-built-yet), mostly features that need outside services (billing,
 model gateways, cloud sandboxes, Google/Microsoft integrations). Each area has a page under [docs/features](docs/features).
 
@@ -40,7 +40,7 @@ Open `http://localhost:5081`. The API needs `Auth__Secret` (32+ characters). Dev
 ## Test
 
 ```bash
-dotnet test                                                    # 741 in-process API tests (~2 min)
+dotnet test                                                    # 835 in-process API tests (~2 min)
 WORKAI_TEST_MYSQL="Server=127.0.0.1;User=root;Password=..." dotnet test   # the same tests on MySQL (a throwaway database per test class)
 
 # Contract tests against the running rewrite (web is W, API is A):
@@ -120,6 +120,7 @@ Set with environment variables (`Auth__Secret`) or `appsettings`.
 | `Sso__AllowPrivateNetworks` | Let SSO providers and DNS proof use private networks (never in production). |
 | `Auth__PasswordBreachScreening`, `Auth__PwnedPasswordsUrl` | Refuse passwords found in public breaches. Default: on everywhere except Development. |
 | `Cors__Origins__0`, `__1`… | Extra exact origins allowed to call the API from a browser, besides this deployment's own and the ones workspaces approved ([docs](docs/features/web-origins.md)). |
+| `SocialProviders__Google__ClientId`, `__ClientSecret`, `SocialProviders__GitHub__ClientId`, `__ClientSecret` | Turn on Google / GitHub sign-in (the button appears when the pair is set). |
 | `Auth__RateLimitsEnabled` | Rate limits on the email endpoints. Default: off in Development, on everywhere else. |
 | `Email__Provider` | `smtp`, `resend` (needs `Email__Resend__ApiKey`) or `dev`. `dev` keeps messages in memory and exposes them at `GET /dev/outbox` (**Development only; refused anywhere else**). `smtp` and `resend` send real mail. |
 | `Email__From`, `Email__Smtp__Host`, `__Port`, `__User`, `__Password`, `__Security` | SMTP settings. `Security` is `auto` (default), `starttls`, `ssl` or `none` (local test servers only). |
@@ -170,7 +171,7 @@ The reference has about 400 distinct `/v1` paths and 129 web pages; this covers 
 - **Workflows** and workflow/script runs (`/v1/workflows*`, `/v1/codemode*`, the den-web workflow-runs and script-runs pages), the runner events SSE stream and runner inventory, calendar triggers, and cloud execution of Automations (it needs a cloud runner).
 - The rest of platform admin (inference usage, security, feature usage, sandbox organizations, services), first-administrator setup, activation and "my agent", and real egress probes (see [docs/features/platform-admin.md](docs/features/platform-admin.md) and [onboarding.md](docs/features/onboarding.md)).
 - **SAML** sign-in (the SSO route answers 501), plugin–connection bindings, `/v1/oauth-providers*`, invite-into-a-team, declarative team keys.
-- **OAuth**: `client_credentials`, introspection, `private_key_jwt`, ID tokens and `userinfo`, a rate limit on client registration. **Email**: the sign-in, forget-password and change-email code types. **Social sign-in** (Google, GitHub).
+- **OAuth**: `client_credentials`, DPoP and `private_key_jwt`. **OAuth-provider browser sign-in** connect (start and callback) and GitHub import bindings; memory, artifact views, direct uploads, mcp-apps and webhooks.
 - **Operations**: Helm packaging; a shared store for rate limits and caches (they are per instance); the container images were written and the publishes verified, but not built (no Docker daemon here); the CI template is not enabled in the repository's own CI.
 
 Each area's page in [docs/features](docs/features) lists its own gaps and its differences from the reference.

@@ -520,7 +520,8 @@ namespace WorkAI360.Api.Migrations
                     CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
                     ExpiresAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
                     AcceptedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
-                    AcceptedByUserId = table.Column<string>(type: "longtext", nullable: true)
+                    AcceptedByUserId = table.Column<string>(type: "longtext", nullable: true),
+                    TeamId = table.Column<string>(type: "longtext", nullable: true)
                 },
                 constraints: table =>
                 {
@@ -779,6 +780,27 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "OrgOAuthClient",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ProviderId = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false),
+                    ClientId = table.Column<string>(type: "varchar(512)", maxLength: 512, nullable: false),
+                    ClientSecretEnc = table.Column<string>(type: "longtext", nullable: true),
+                    FeaturesJson = table.Column<string>(type: "longtext", nullable: true),
+                    TenantId = table.Column<string>(type: "longtext", nullable: true),
+                    CreatedByMemberId = table.Column<string>(type: "longtext", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_OrgOAuthClient", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "OrgPolicySettings",
                 columns: table => new
                 {
@@ -974,6 +996,28 @@ namespace WorkAI360.Api.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_PluginConfigObject", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "PluginMcpBinding",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "longtext", nullable: false),
+                    PluginId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ConfigObjectId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ServerName = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ConnectionId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    RequiredAuthType = table.Column<string>(type: "longtext", nullable: true),
+                    ConnectionOwnedByPlugin = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    CreatedByMemberId = table.Column<string>(type: "longtext", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_PluginMcpBinding", x => x.Id);
                 })
                 .Annotation("MySQL:Charset", "utf8mb4");
 
@@ -2024,6 +2068,12 @@ namespace WorkAI360.Api.Migrations
                 column: "TeamId");
 
             migrationBuilder.CreateIndex(
+                name: "IX_OrgOAuthClient_OrganizationId_ProviderId",
+                table: "OrgOAuthClient",
+                columns: new[] { "OrganizationId", "ProviderId" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
                 name: "IX_OrgPrompt_OrganizationId_ScopeKey",
                 table: "OrgPrompt",
                 columns: new[] { "OrganizationId", "ScopeKey" },
@@ -2101,6 +2151,22 @@ namespace WorkAI360.Api.Migrations
                 name: "IX_PluginConfigObject_PluginId_ConfigObjectId",
                 table: "PluginConfigObject",
                 columns: new[] { "PluginId", "ConfigObjectId" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_PluginMcpBinding_ConfigObjectId",
+                table: "PluginMcpBinding",
+                column: "ConfigObjectId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_PluginMcpBinding_ConnectionId",
+                table: "PluginMcpBinding",
+                column: "ConnectionId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_PluginMcpBinding_PluginId_ConfigObjectId_ServerName",
+                table: "PluginMcpBinding",
+                columns: new[] { "PluginId", "ConfigObjectId", "ServerName" },
                 unique: true);
 
             migrationBuilder.CreateIndex(
@@ -2424,6 +2490,9 @@ namespace WorkAI360.Api.Migrations
                 name: "OrgDefaultModel");
 
             migrationBuilder.DropTable(
+                name: "OrgOAuthClient");
+
+            migrationBuilder.DropTable(
                 name: "OrgPolicySettings");
 
             migrationBuilder.DropTable(
@@ -2458,6 +2527,9 @@ namespace WorkAI360.Api.Migrations
 
             migrationBuilder.DropTable(
                 name: "PluginConfigObject");
+
+            migrationBuilder.DropTable(
+                name: "PluginMcpBinding");
 
             migrationBuilder.DropTable(
                 name: "RefreshTokens");
