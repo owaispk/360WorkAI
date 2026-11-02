@@ -1,0 +1,12 @@
+@* The three-step header of the sign-up path: your name, your workspace, inviting people. *@
+<ol class="ob-steps" aria-label="Setup progress" data-testid="ob-steps">
+    @for (var i = 0; i < Labels.Length; i++)
+    {
+        <li class="@(i < Active ? "ob-done" : i == Active ? "ob-active" : "")" aria-current="@(i == Active ? "step" : null)">@Labels[i]</li>
+    }
+</ol>
+
+@code {
+    private static readonly string[] Labels = ["Name", "Workspace", "Invite (optional)"];
+    [Parameter] public int Active { get; set; }
+}

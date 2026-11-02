@@ -1,0 +1,23 @@
+@page "/reauth/complete"
+@inject IJSRuntime Js
+
+<PageTitle>Security check · OpenWork Cloud</PageTitle>
+
+<section class="den-card" data-testid="reauth-complete">
+    <p class="den-muted">SECURITY CHECK</p>
+    <h1>You're verified.</h1>
+    <p class="den-muted">You can close this window and return to OpenWork.</p>
+</section>
+
+@code {
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var query = System.Web.HttpUtility.ParseQueryString(new Uri(Nav.Uri).Query);
+        // Hand the result back to the window that opened this one (same site only), then close.
+        var module = await Js.InvokeAsync<IJSObjectReference>("import", "./js/onboarding.js");
+        await module.InvokeAsync<bool>("notifyOpener", query["nonce"], string.IsNullOrEmpty(query["error"]) ? null : query["error"]);
+    }
+
+    [Inject] private NavigationManager Nav { get; set; } = null!;
+}

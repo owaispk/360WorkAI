@@ -1,0 +1,59 @@
+@page "/dashboard/onboarding"
+@inherits OnboardingPage
+
+<PageTitle>Your workspace is ready · OpenWork Cloud</PageTitle>
+<OnboardingStyles />
+
+<section class="den-card ob-page" data-testid="marketplace-onboarding">
+    @if (!Ready)
+    {
+        <p class="den-muted" role="status">Getting your workspace ready…</p>
+    }
+    else
+    {
+        <h1>Your workspace is ready</h1>
+        <p class="den-muted">@OrgName is set up. Next, get the desktop app so your team's skills and tools are with you where you work.</p>
+
+        <h2>Get the desktop app</h2>
+        <p class="den-muted">Download OpenWork, sign in with this address, and your workspace appears.</p>
+        <div class="ob-actions" style="justify-content:flex-start">
+            <a class="den-button" href="/install" data-testid="download-app">Download OpenWork</a>
+            <button type="button" class="den-button den-secondary" disabled="@_sending" @onclick="EmailLinkAsync" data-testid="email-link">Email me the link</button>
+        </div>
+        @if (_notice is not null) { <p class="den-notice" role="status" data-testid="email-notice">@_notice</p> }
+        @if (_error is not null) { <p class="den-error" role="alert" data-testid="error">@_error</p> }
+
+        <h2>Models</h2>
+        <p class="den-muted">Choose what powers your work: managed models and your own provider keys are set up from the dashboard when you are ready. No model selection is required to finish.</p>
+
+        <div class="ob-actions">
+            <a class="den-button den-secondary" href="/dashboard/onboarding/tools" data-testid="add-tools">Add team tools</a>
+            <button type="button" class="den-button" @onclick="Complete" data-testid="complete-setup">Complete setup</button>
+        </div>
+    }
+</section>
+
+@code {
+    private bool _sending;
+    private string? _notice, _error;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await RequireSignInAsync("/dashboard/onboarding") || !await LoadWorkspaceAsync()) return;
+        Ready = true;
+        StateHasChanged();
+    }
+
+    private async Task EmailLinkAsync()
+    {
+        _notice = _error = null;
+        _sending = true;
+        var result = await Den.RequestAsync("/api/browser/v1/me/send-download-link", "POST", new { });
+        _sending = false;
+        if (result.Ok) _notice = $"We sent the download link to {MyEmail}.";
+        else _error = result.Status == 429 ? "Too many download link emails. Try again later." : result.Message("Could not send the email. Try again.");
+    }
+
+    private void Complete() => Nav.NavigateTo("/dashboard");
+}

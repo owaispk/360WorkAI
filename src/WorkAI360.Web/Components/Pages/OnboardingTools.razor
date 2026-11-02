@@ -1,0 +1,101 @@
+@page "/dashboard/onboarding/tools"
+@inherits OnboardingPage
+@using System.Text.Json
+
+<PageTitle>Give your team a head start · OpenWork Cloud</PageTitle>
+<OnboardingStyles />
+
+<section class="den-card ob-page" data-testid="onboarding-tools">
+    @if (!Ready)
+    {
+        <p class="den-muted" role="status">Getting your workspace ready…</p>
+    }
+    else
+    {
+        <h1>Give your team a head start.</h1>
+        <p class="den-muted">Start with the tools your team already uses. Choose a few now, or add them whenever you need them. Each teammate connects their own account before accessing private information.</p>
+        @if (NeedsReauth)
+        {
+            <ReauthForm @bind-Password="ReauthPassword" Busy="Busy" OnConfirm="ConfirmItsYouAsync" OnCancel="CancelReauth" />
+        }
+        @if (_loadError)
+        {
+            <p class="den-error" role="alert" data-testid="load-error">We couldn't load your tools. You can add them later from the dashboard.</p>
+        }
+        else
+        {
+            <div class="ob-tools" aria-label="Available team tools">
+                @foreach (var preset in _presets)
+                {
+                    var done = _existing.Contains(preset.Url) || preset.State == "added";
+                    <label class="ob-tool" data-testid="tool" data-name="@preset.Name">
+                        <input type="checkbox" aria-label="Add @preset.Name" checked="@(done || preset.Selected)" disabled="@(Busy || done)" @onchange="e => preset.Selected = e.Value is true" />
+                        <span>@preset.Name<small>@(preset.OAuth ? "Individual accounts" : "No sign-in needed")@(done ? " · added" : preset.State == "error" ? " · could not add" : "")</small></span>
+                    </label>
+                }
+            </div>
+        }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        <div class="ob-actions">
+            <button type="button" class="@(Count > 0 ? "den-button den-secondary" : "den-button")" disabled="@Busy" @onclick="Continue" data-testid="continue">@(Added > 0 ? "Continue" : "Skip")</button>
+            @if (Count > 0) { <button type="button" class="den-button" disabled="@Busy" @onclick="AddAsync" data-testid="add-tools">Add @Count @(Count == 1 ? "tool" : "tools")</button> }
+        </div>
+    }
+</section>
+
+@code {
+    private sealed class Preset { public string Id = "", Name = "", Url = "", AuthType = ""; public bool OAuth => AuthType == "oauth"; public bool Selected; public string State = ""; }
+
+    private readonly List<Preset> _presets = [];
+    private readonly HashSet<string> _existing = [];
+    private bool _loadError;
+    private int Count => _presets.Count(p => p.Selected && p.State != "added" && !_existing.Contains(p.Url));
+    private int Added => _presets.Count(p => p.State == "added" || _existing.Contains(p.Url));
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await RequireSignInAsync("/dashboard/onboarding/tools") || !await LoadWorkspaceAsync()) return;
+        var presets = await Den.RequestAsync("/api/browser/v1/mcp-connections/presets");
+        var existing = await Den.RequestAsync("/api/browser/v1/mcp-connections?scope=manageable");
+        _loadError = !presets.Ok;
+        if (presets.Json is { ValueKind: JsonValueKind.Object } root && root.TryGetProperty("presets", out var list))
+        {
+            // Only tools that need no pre-registered OAuth client can be added in one click.
+            foreach (var p in list.EnumerateArray())
+            {
+                var authType = p.TryGetProperty("authType", out var a) ? a.GetString() ?? "" : "";
+                var needsClient = p.TryGetProperty("requiresOAuthClient", out var r) && r.ValueKind == JsonValueKind.True;
+                var url = p.GetProperty("url").GetString() ?? "";
+                if ((authType == "none" || (authType == "oauth" && !needsClient)) && _presets.All(x => x.Url != url))
+                    _presets.Add(new Preset { Id = p.GetProperty("presetId").GetString() ?? "", Name = p.GetProperty("displayName").GetString() ?? "", Url = url, AuthType = authType });
+            }
+        }
+        if (existing.Json is { ValueKind: JsonValueKind.Object } body && body.TryGetProperty("connections", out var items))
+            foreach (var c in items.EnumerateArray()) if (c.TryGetProperty("url", out var u) && u.GetString() is { } url) _existing.Add(url);
+        Ready = true;
+        StateHasChanged();
+    }
+
+    private async Task AddAsync()
+    {
+        Error = null;
+        Busy = true;
+        foreach (var preset in _presets.Where(p => p.Selected && p.State != "added" && !_existing.Contains(p.Url)).ToList())
+        {
+            var result = await Den.RequestAsync("/api/browser/v1/mcp-connections", "POST", new
+            {
+                name = preset.Name, url = preset.Url, authType = preset.AuthType,
+                credentialMode = preset.OAuth ? "per_member" : "shared",
+                access = new { orgWide = true, memberIds = Array.Empty<string>(), teamIds = Array.Empty<string>() },
+            });
+            if (result.String("error") == "reauth") { Busy = false; AskToConfirm(AddAsync); return; }
+            preset.State = result.Ok ? "added" : "error";
+            if (!result.Ok) Error = result.Message("Could not add this tool. Try again.");
+            StateHasChanged();
+        }
+        Busy = false;
+    }
+
+    private void Continue() => Nav.NavigateTo("/dashboard/onboarding");
+}

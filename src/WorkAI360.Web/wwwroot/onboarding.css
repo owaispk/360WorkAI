@@ -1,0 +1,45 @@
+/* The pages between sign-up and a working workspace (organization, invite people, tools, install, claim, setup). Linked by <OnboardingStyles />. */
+.ob-page { max-width: 520px; margin: 0 auto; }
+.ob-steps { display: flex; gap: 8px; list-style: none; padding: 0; margin: 0 0 14px; }
+.ob-steps li { flex: 1; font-size: 12px; color: var(--muted); border-top: 3px solid var(--line); padding-top: 6px; }
+.ob-steps .ob-done { border-top-color: #94a3b8; }
+.ob-steps .ob-active { border-top-color: var(--accent); color: var(--ink); font-weight: 600; }
+.ob-page .ob-row { position: relative; margin: 10px 0; }
+.ob-page .ob-row input { padding-right: 90px; }
+.ob-page .ob-row .ob-state { position: absolute; right: 12px; top: 12px; font-size: 12px; color: var(--muted); }
+.ob-page .ob-row .ob-sent { color: #166534; }
+.ob-page .ob-actions { display: flex; gap: 10px; justify-content: flex-end; align-items: center; flex-wrap: wrap; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.ob-page .ob-actions .den-button, .ob-page .ob-actions a.den-button { width: auto; margin-top: 0; padding: 11px 20px; }
+.ob-page .ob-footer { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+.ob-page .ob-footer .den-link { margin-top: 0; }
+.ob-page .ob-tabs { display: flex; gap: 22px; border-bottom: 1px solid var(--line); margin: 14px 0 18px; }
+.ob-page .ob-tabs button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 0 0 10px; font-size: 14px; font-weight: 500; color: var(--muted); cursor: pointer; }
+.ob-page .ob-tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--ink); }
+.ob-page .ob-orgs { list-style: none; margin: 12px 0; padding: 0; border-top: 1px solid var(--line); }
+.ob-page .ob-orgs li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.ob-page .ob-orgs .ob-small { width: auto; margin: 0; padding: 8px 16px; font-size: 13px; }
+.ob-page details { margin-top: 18px; }
+.ob-page details summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+.ob-page .ob-invites { margin: 18px 0 0; padding: 14px; border: 1px solid var(--line); border-radius: 14px; background: #f8fafc; }
+.ob-page .ob-invites h2 { margin-top: 0; }
+.ob-page .ob-facts { margin: 14px 0; border-top: 1px solid var(--line); }
+.ob-page .ob-facts div { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.ob-page .ob-facts dt { color: var(--muted); }
+.ob-page .ob-facts dd { margin: 0; font-weight: 500; text-align: right; word-break: break-all; }
+.ob-page .ob-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; text-transform: uppercase; }
+.ob-page .ob-platforms { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 16px 0; }
+.ob-page .ob-platform { border: 1px solid var(--line); border-radius: 14px; padding: 14px; background: #fff; }
+.ob-page .ob-platform h3 { margin: 0 0 10px; font-size: 14px; }
+.ob-page .ob-platform .ob-badge { font-size: 11px; font-weight: 600; background: #dcfce7; color: #166534; border-radius: 999px; padding: 2px 8px; margin-left: 6px; }
+.ob-page .ob-platform a { display: block; margin: 6px 0; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; background: #f8fafc; color: var(--ink); text-decoration: none; font-size: 13px; }
+.ob-page .ob-platform a[data-recommended="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+.ob-page .ob-address { display: flex; gap: 8px; align-items: stretch; margin: 10px 0; }
+.ob-page .ob-address input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.ob-page .ob-address .den-button { width: auto; margin-top: 0; padding: 0 16px; }
+.ob-page .ob-tools { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin: 14px 0; }
+.ob-page .ob-tool { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 14px; padding: 12px; background: #fff; cursor: pointer; font-size: 14px; margin: 0; font-weight: 500; }
+.ob-page .ob-tool input { width: auto; padding: 0; }
+.ob-page .ob-tool small { display: block; color: var(--muted); font-weight: 400; font-size: 11px; }
+.ob-page .ob-bad { color: var(--err); font-size: 12px; margin: 4px 0 0; }
+.ob-page .ob-ok { color: #166534; font-size: 13px; }
+.ob-wide { max-width: 720px; }

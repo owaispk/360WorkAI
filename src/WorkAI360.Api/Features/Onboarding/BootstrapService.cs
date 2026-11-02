@@ -208,6 +208,8 @@ public sealed class BootstrapService(DenDbContext db, IOptions<AuthOptions> auth
         var b = await db.Set<WorkspaceBootstrap>().AsNoTracking().FirstOrDefaultAsync(x => x.Id == claim.BootstrapId && x.Status == "provisional");
         if (b is null) return null;
         await using var tx = await db.Database.BeginTransactionAsync();
+        // Everything that can take this workspace queues on its row first, so a link and a code racing each other cannot deadlock on each other's rows.
+        await db.LockOrganizationAsync(b.OrganizationId);
         var won = await db.Set<WorkspaceClaim>().Where(c => c.Id == claim.Id && c.Status == "pending").ExecuteUpdateAsync(u => u.SetProperty(c => c.Status, "claimed").SetProperty(c => c.ClaimedByUserId, userId).SetProperty(c => c.ClaimedAt, now));
         if (won == 0) { await tx.RollbackAsync(); return null; }
         var transferred = await TransferAsync(b, userId, claim.Role, now);
@@ -222,6 +224,7 @@ public sealed class BootstrapService(DenDbContext db, IOptions<AuthOptions> auth
     {
         var now = DateTime.UtcNow;
         await using var tx = await db.Database.BeginTransactionAsync();
+        await db.LockOrganizationAsync(b.OrganizationId);
         var won = await db.Set<WorkspaceClaimCode>().Where(c => c.Id == code.Id && c.State == "pending" && c.ExpiresAt > now).ExecuteUpdateAsync(u => u.SetProperty(c => c.State, "accepted").SetProperty(c => c.ClaimedByUserId, userId).SetProperty(c => c.AcceptedAt, now));
         if (won == 0) { await tx.RollbackAsync(); return null; }
         var transferred = await TransferAsync(b, userId, "owner", now);
@@ -236,7 +239,6 @@ public sealed class BootstrapService(DenDbContext db, IOptions<AuthOptions> auth
     /// <summary>Makes the person a member, passes the starter content to them, and removes the setup agent (its member, its sessions, its user). Runs inside the caller's transaction.</summary>
     private async Task<Claimed?> TransferAsync(WorkspaceBootstrap b, string userId, string role, DateTime now)
     {
-        await db.LockOrganizationAsync(b.OrganizationId);
         // Won the conditional update on the bootstrap itself: only one of a link and a code can take the workspace.
         var moved = await db.Set<WorkspaceBootstrap>().Where(x => x.Id == b.Id && x.Status == "provisional").ExecuteUpdateAsync(u => u.SetProperty(x => x.Status, "claimed").SetProperty(x => x.ClaimedAt, now).SetProperty(x => x.CredentialsRevokedAt, now));
         if (moved == 0) return null;

@@ -427,6 +427,10 @@ public sealed class OnboardingTests : IClassFixture<OnboardingFactory>
         var forged = payload.Replace(a.BootstrapId, b.BootstrapId);
         var forgedToken = $"{parts[0]}.{Convert.ToBase64String(Encoding.UTF8.GetBytes(forged)).TrimEnd('=').Replace('+', '-').Replace('/', '_')}.{parts[2]}";
         Assert.Equal(HttpStatusCode.Unauthorized, (await SendAsync(http, Json(HttpMethod.Get, url(b.BootstrapId), bearer: forgedToken))).Status);
+        // The right payload with a wrong signature is refused (the signature is the proof, not just the token id inside).
+        var flipped = parts[2][..^1] + (parts[2][^1] == 'A' ? 'B' : 'A');
+        Assert.Equal(HttpStatusCode.Unauthorized, (await SendAsync(http, Json(HttpMethod.Get, url(a.BootstrapId), bearer: $"{parts[0]}.{parts[1]}.{flipped}"))).Status);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await SendAsync(http, Json(HttpMethod.Get, url(a.BootstrapId), bearer: $"{parts[0]}.{parts[1]}."))).Status);
         // The header's algorithm cannot be changed to "none".
         var none = $"{Convert.ToBase64String(Encoding.UTF8.GetBytes("""{"alg":"none","typ":"openwork-preclaim+jwt"}""")).TrimEnd('=')}.{parts[1]}.";
         Assert.Equal(HttpStatusCode.Unauthorized, (await SendAsync(http, Json(HttpMethod.Get, url(a.BootstrapId), bearer: none))).Status);
