@@ -5,9 +5,12 @@ public static class OAuthConstants
     public const string ReadScope = "mcp:read";
     public const string WriteScope = "mcp:write";
     public const string OfflineScope = "offline_access";
+    public const string OpenIdScope = "openid";
+    public const string ProfileScope = "profile";
+    public const string EmailScope = "email";
 
     /// <summary>Scopes public OAuth may grant. The first-party desktop scope is never in this list.</summary>
-    public static readonly string[] Scopes = [ReadScope, WriteScope, OfflineScope];
+    public static readonly string[] Scopes = [OpenIdScope, ProfileScope, EmailScope, OfflineScope, ReadScope, WriteScope];
     public const string DefaultScope = "mcp:read mcp:write offline_access";
 
     public static readonly TimeSpan AccessTokenLifetime = TimeSpan.FromMinutes(45);

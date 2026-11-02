@@ -24,8 +24,10 @@ public sealed class TokenRateLimit(RateLimiter limiter, IOptions<AuthOptions> op
     /// <summary>What a refused caller is told, and the failure budgets to charge if this request fails.</summary>
     public sealed record Admission(IResult? Refused, Budget Subject, Budget Source, bool IsRefreshToken);
 
-    public Admission Admit(HttpContext ctx, IReadOnlyDictionary<string, string> form, string? basicClientId)
+    /// <param name="bucket">Names the endpoint, so another endpoint (introspection) gets its own budgets with the same numbers; empty is the token endpoint.</param>
+    public Admission Admit(HttpContext ctx, IReadOnlyDictionary<string, string> form, string? basicClientId, string bucket = "")
     {
+        string Id(params string[] parts) => bucket.Length == 0 ? this.Id(parts) : this.Id([bucket, .. parts]);
         var address = AuthEndpoints.ClientIp(ctx);
         var clientId = basicClientId ?? (form.TryGetValue("client_id", out var c) && c.Length > 0 ? c : null);
         var refresh = form.GetValueOrDefault("grant_type") == "refresh_token" && form.TryGetValue("refresh_token", out var r) && r.Length > 0 ? r : null;

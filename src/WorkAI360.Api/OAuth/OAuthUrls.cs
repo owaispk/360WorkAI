@@ -19,6 +19,9 @@ public sealed class OAuthUrls(IOptions<AuthOptions> options, IHttpContextAccesso
     public string TokenEndpoint => $"{Issuer}/oauth2/token";
     public string RegistrationEndpoint => $"{Issuer}/oauth2/register";
     public string RevocationEndpoint => $"{Issuer}/oauth2/revoke";
+    public string IntrospectionEndpoint => $"{Issuer}/oauth2/introspect";
+    public string UserInfoEndpoint => $"{Issuer}/oauth2/userinfo";
+    public string EndSessionEndpoint => $"{Issuer}/oauth2/end-session";
     public string JwksUri => $"{Issuer}/jwks";
 
     /// <summary>The audience of every access token.</summary>

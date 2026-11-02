@@ -2,10 +2,11 @@ using Microsoft.EntityFrameworkCore;
 using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.Domain;
+using WorkAI360.Api.Features.Oidc;
 
 namespace WorkAI360.Api.OAuth;
 
-public sealed class TokenService(DenDbContext db, SigningKeyStore keys, OAuthUrls urls)
+public sealed class TokenService(DenDbContext db, SigningKeyStore keys, OAuthUrls urls, IdTokenIssuer idTokens)
 {
     /// <summary>Issues an access token (a signed JWT) and, when `offline_access` was granted, a refresh token.</summary>
     public async Task<Dictionary<string, object?>> IssueAsync(string clientId, string userId, string organizationId, string scope, string resource, string? codeHash, string? familyId = null)
@@ -53,6 +54,9 @@ public sealed class TokenService(DenDbContext db, SigningKeyStore keys, OAuthUrl
             await db.SaveChangesAsync();
             response["refresh_token"] = refresh;
         }
+        // OpenID Connect: asking for "openid" also yields an ID token (signed for this client, bound to the request's nonce).
+        if (OAuthConstants.SplitScope(scope).Contains(OAuthConstants.OpenIdScope))
+            response["id_token"] = await idTokens.IssueAsync(clientId, userId, jwt, codeHash, fromRefresh: familyId is not null);
         return response;
     }
 

@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.Domain;
+using WorkAI360.Api.Domain.Oidc;
 
 namespace WorkAI360.Api.OAuth;
 
@@ -58,8 +59,19 @@ public static class OAuthEndpoints
         token_endpoint = urls.TokenEndpoint,
         registration_endpoint = urls.RegistrationEndpoint,
         revocation_endpoint = urls.RevocationEndpoint,
+        introspection_endpoint = urls.IntrospectionEndpoint,
+        userinfo_endpoint = urls.UserInfoEndpoint,
+        end_session_endpoint = urls.EndSessionEndpoint,
         jwks_uri = urls.JwksUri,
         scopes_supported = OAuthConstants.Scopes,
+        subject_types_supported = new[] { "public" },
+        id_token_signing_alg_values_supported = new[] { "ES256" },
+        claims_supported = new[] { "sub", "name", "given_name", "family_name", "picture", "email", "email_verified", "auth_time", "acr", "at_hash", "nonce", OAuthConstants.ClaimOrg, OAuthConstants.ClaimTokenUse },
+        acr_values_supported = new[] { "0" },
+        claims_parameter_supported = false,
+        request_parameter_supported = false,
+        request_uri_parameter_supported = false,
+        introspection_endpoint_auth_methods_supported = new[] { "client_secret_basic", "client_secret_post" },
         response_types_supported = new[] { "code" },
         response_modes_supported = new[] { "query" },
         grant_types_supported = new[] { "authorization_code", "refresh_token" },
@@ -80,7 +92,7 @@ public static class OAuthEndpoints
 
     // ============================== registration ==============================
 
-    private static async Task<IResult> RegisterAsync(HttpContext ctx, DenDbContext db)
+    private static async Task<IResult> RegisterAsync(HttpContext ctx, DenDbContext db, SessionService sessions)
     {
         JsonElement body;
         try { body = (await JsonDocument.ParseAsync(ctx.Request.Body)).RootElement.Clone(); }
@@ -112,9 +124,17 @@ public static class OAuthEndpoints
         var logo = Str(body, "logo_uri");
         if (logo is not null && !(Uri.TryCreate(logo, UriKind.Absolute, out var logoUri) && logoUri.Scheme == "https")) logo = null;
 
+        // OpenID Connect logout settings. Post-logout URIs follow the redirect policy; the end-session switch is honored only when the
+        // registration is made by a signed-in person (an anonymous registration cannot give a client the right to log people out).
+        var postLogout = Strings(body, "post_logout_redirect_uris");
+        if (postLogout.Count > 10 || postLogout.Any(u => !RedirectPolicy.IsAllowed(u))) return Error(400, "invalid_redirect_uri", "post_logout_redirect_uris must use HTTPS callbacks or HTTP loopback callbacks and must not include fragments.");
+        var enableEndSession = body.TryGetProperty("enable_end_session", out var ees) && ees.ValueKind == JsonValueKind.True && await sessions.ResolveAsync(ctx) is not null;
+
         var clientId = Ids.RandomAlnum(32);
         string? secret = method == "none" ? null : OAuthConstants.ClientSecretPrefix + Ids.RandomAlnum(40);
         var now = DateTime.UtcNow;
+        if (postLogout.Count > 0 || enableEndSession)
+            db.Set<OidcClientSettings>().Add(new OidcClientSettings { ClientId = clientId, EnableEndSession = enableEndSession, PostLogoutRedirectUrisJson = postLogout.Count > 0 ? JsonSerializer.Serialize(postLogout) : null });
         db.OAuthClients.Add(new OAuthClient
         {
             Id = clientId,
@@ -141,6 +161,7 @@ public static class OAuthEndpoints
         };
         if (secret is not null) { response["client_secret"] = secret; response["client_secret_expires_at"] = 0; }
         if (logo is not null) response["logo_uri"] = logo;
+        if (postLogout.Count > 0) response["post_logout_redirect_uris"] = postLogout;
         ctx.Response.Headers.CacheControl = "no-store";
         return Results.Json(response, statusCode: 201);
     }
@@ -217,7 +238,7 @@ public static class OAuthEndpoints
         {
             var consent = await db.OAuthConsents.AsNoTracking().FirstOrDefaultAsync(c => c.ClientId == req.Client.Id && c.UserId == current.User.Id && c.OrganizationId == orgId);
             if (consent is not null && OAuthConstants.SplitScope(req.Scope).All(OAuthConstants.SplitScope(consent.Scope).Contains))
-                return Results.Redirect(await IssueCodeRedirectAsync(db, req, current.User.Id, orgId));
+                return Results.Redirect(await IssueCodeRedirectAsync(db, req, current.User.Id, orgId, current.Session, urls));
         }
         return Results.Redirect($"{urls.Web}/mcp/consent?{query}");
     }
@@ -271,15 +292,26 @@ public static class OAuthEndpoints
         else { consent.Scope = OAuthConstants.JoinScope(OAuthConstants.SplitScope(consent.Scope).Concat(granted)); consent.UpdatedAt = now; }
         await db.SaveChangesAsync();
 
-        return Results.Json(new { url = await IssueCodeRedirectAsync(db, req with { Scope = scope }, current.User.Id, orgId) });
+        return Results.Json(new { url = await IssueCodeRedirectAsync(db, req with { Scope = scope }, current.User.Id, orgId, current.Session, urls) });
     }
 
-    private static async Task<string> IssueCodeRedirectAsync(DenDbContext db, AuthorizeRequest req, string userId, string orgId)
+    private static async Task<string> IssueCodeRedirectAsync(DenDbContext db, AuthorizeRequest req, string userId, string orgId, Session session, OAuthUrls urls)
     {
         var code = Ids.RandomAlnum(48);
+        var codeHash = Ids.Sha256Hex(code);
+        // OpenID Connect: remember the nonce, the sign-in time and the browser session for the ID token this code will become.
+        if (OAuthConstants.SplitScope(req.Scope).Contains(OAuthConstants.OpenIdScope))
+        {
+            var nonce = req.Parameters.FirstOrDefault(p => p.Key == "nonce").Value;
+            db.Set<OidcGrant>().Add(new OidcGrant
+            {
+                Id = codeHash, ClientId = req.Client.Id, UserId = userId, Nonce = string.IsNullOrEmpty(nonce) ? null : nonce[..Math.Min(nonce.Length, 512)],
+                AuthTime = session.CreatedAt, SessionId = session.Id, CreatedAt = DateTime.UtcNow,
+            });
+        }
         db.AuthorizationCodes.Add(new AuthorizationCode
         {
-            Id = Ids.Sha256Hex(code),
+            Id = codeHash,
             ClientId = req.Client.Id,
             UserId = userId,
             OrganizationId = orgId,
@@ -292,6 +324,7 @@ public static class OAuthEndpoints
         await db.SaveChangesAsync();
         var ps = new Dictionary<string, string?> { ["code"] = code };
         if (req.State is not null) ps["state"] = req.State;
+        ps["iss"] = urls.Issuer;   // RFC 9207: tells a client which server answered (the reference sends it too)
         return QueryHelpers.AddQueryString(req.RedirectUri, ps);
     }
 
@@ -424,7 +457,7 @@ public static class OAuthEndpoints
     // ============================== helpers ==============================
 
     /// <summary>The client id named in an HTTP Basic header, if any (read only to pick a rate-limit bucket; authentication is separate).</summary>
-    private static string? BasicClientId(HttpRequest request)
+    internal static string? BasicClientId(HttpRequest request)
     {
         var header = request.Headers.Authorization.ToString();
         if (!header.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase)) return null;
@@ -467,7 +500,7 @@ public static class OAuthEndpoints
     private static IResult InvalidClient() => Results.Json(new { error = "invalid_client", error_description = "Client authentication failed." }, statusCode: 401);
 
     /// <summary>Reads form-encoded or JSON parameters (token and revocation endpoints accept both in practice).</summary>
-    private static async Task<Dictionary<string, string>> ReadParamsAsync(HttpRequest request)
+    internal static async Task<Dictionary<string, string>> ReadParamsAsync(HttpRequest request)
     {
         var result = new Dictionary<string, string>();
         if (request.HasFormContentType)
