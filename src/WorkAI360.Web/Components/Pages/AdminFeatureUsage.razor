@@ -1,0 +1,136 @@
+@page "/admin/feature-usage"
+@inherits AdminPage
+@using System.Text.Json
+
+<PageTitle>Feature use · Platform admin · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="admin-feature-usage-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (Denied)
+    {
+        <h1>Feature use</h1>
+        <p class="den-muted" data-testid="no-access">This area is for the people who run this deployment. Your account is not one of them.</p>
+    }
+    else
+    {
+        <h1>Feature use</h1>
+        <AdminNav Current="feature-usage" />
+        <p class="den-muted">Which features are on, who uses them and how they are doing, across every workspace. Counts only: no names, titles or message text.</p>
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        <div class="den-inline" data-testid="range">
+            @foreach (var r in new[] { "7d", "30d" })
+            {
+                <button type="button" class="den-link @(_range == r ? "current" : "")" disabled="@Busy" @onclick="() => ChooseAsync(r)" data-testid="range-@r">@(r == "7d" ? "Last 7 days" : "Last 30 days")</button>
+            }
+        </div>
+        <p class="den-muted" data-testid="summary">@_organizations @(_organizations == 1 ? "workspace" : "workspaces") on this deployment.</p>
+        <table class="den-table" data-testid="feature-usage-table">
+            <thead><tr><th>Feature</th><th>On for</th><th>Members using</th><th>Last used</th><th>State</th><th>What it did</th></tr></thead>
+            <tbody>
+                @foreach (var f in _features)
+                {
+                    <tr data-testid="usage-row" data-key="@f.Key" data-health="@f.Health">
+                        <td><button type="button" class="den-link" @onclick="() => OpenAsync(f.Key)" data-testid="open-feature">@f.Key</button></td>
+                        <td data-testid="orgs-on">@f.OrganizationsOn</td>
+                        <td data-testid="members-using">@f.MembersUsing</td>
+                        <td>@(f.LastUsed.Length == 0 ? "never" : f.LastUsed)</td>
+                        <td><span class="den-badge @(f.Health is "failing" ? "den-badge-pending" : "den-badge-admin")" data-testid="health">@Describe(f.Health, f.HealthCount)</span></td>
+                        <td>@f.Outcomes</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        @if (_detail is not null)
+        {
+            <h2 data-testid="detail-title">@_detail.Key</h2>
+            <p class="den-muted">@_detail.Summary</p>
+            @if (_detail.Reasons.Count > 0)
+            {
+                <ul class="den-members" data-testid="detail-reasons">
+                    @foreach (var reason in _detail.Reasons) { <li><span>@reason.Outcome</span><strong>@reason.Code</strong><span class="den-muted">@reason.Count</span></li> }
+                </ul>
+            }
+            @if (_detail.Organizations.Count == 0) { <p class="den-muted" data-testid="detail-empty">No workspace has used it or overridden it in this range.</p> }
+            else
+            {
+                <ul class="den-members" data-testid="detail-orgs">
+                    @foreach (var o in _detail.Organizations)
+                    {
+                        <li data-testid="detail-org"><strong>@o.Name</strong><span class="den-muted">@(o.Enabled ? "On" : "Off") · @o.Members @(o.Members == 1 ? "member" : "members") using@(o.Runs is { } n ? $" · {n} runs" : "")</span></li>
+                    }
+                </ul>
+            }
+        }
+    }
+</section>
+
+@code {
+    private sealed record Row(string Key, int OrganizationsOn, int MembersUsing, string LastUsed, string Health, int? HealthCount, string Outcomes);
+    private sealed record FailureReason(string Code, string Outcome, int Count);
+    private sealed record OrgRow(string Name, bool Enabled, int Members, int? Runs);
+    private sealed record Detail(string Key, string Summary, List<FailureReason> Reasons, List<OrgRow> Organizations);
+
+    private string _range = "7d";
+    private int _organizations;
+    private List<Row> _features = [];
+    private Detail? _detail;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await EnterAsync()) return;
+        await LoadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync() => await LoadAsync();
+
+    private static string Describe(string health, int? count) => health switch
+    {
+        "not_used" => "Not used",
+        "in_use" => "In use",
+        "healthy" => "Healthy",
+        "failing" => $"Failing ({count})",
+        "limited" => $"Limited ({count})",
+        "mostly_skipped" => "Mostly skipped",
+        _ => health,
+    };
+
+    private async Task ChooseAsync(string range)
+    {
+        _range = range;
+        _detail = null;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        var response = await Den.RequestAsync($"/api/browser/v1/admin/feature-usage?range={_range}");
+        if (response.Json is not { ValueKind: JsonValueKind.Object } root) { Error = response.Message("Could not load feature use."); return; }
+        Error = null;
+        _organizations = Number(root, "organizations");
+        _features = root.GetProperty("features").EnumerateArray().Select(f =>
+        {
+            var health = f.GetProperty("health");
+            string outcomes = "";
+            if (f.GetProperty("outcomes") is { ValueKind: JsonValueKind.Object } o)
+                outcomes = $"{Number(o, "runs")} {Text(o, "unit")}s: {Number(o, "succeeded")} succeeded, {Number(o, "failed")} failed, {Number(o, "skipped")} skipped";
+            return new Row(Text(f, "key"), Number(f, "organizationsOn"), Number(f, "membersUsing"), Short(Text(f, "lastUsedAt")), Text(health, "status"), health.GetProperty("count").ValueKind == JsonValueKind.Number ? health.GetProperty("count").GetInt32() : null, outcomes);
+        }).ToList();
+    }
+
+    private async Task OpenAsync(string key)
+    {
+        var response = await Den.RequestAsync($"/api/browser/v1/admin/feature-usage/{key}?range={_range}");
+        if (response.Json is not { ValueKind: JsonValueKind.Object } root) { Error = response.Message("Could not load that feature."); return; }
+        var feature = root.GetProperty("feature");
+        _detail = new Detail(key, $"{Number(feature, "organizationsOn")} workspaces have it on; {Number(feature, "membersUsing")} members used it in this range.",
+            feature.GetProperty("reasons").EnumerateArray().Select(r => new FailureReason(Text(r, "reason"), Text(r, "outcome"), Number(r, "count"))).ToList(),
+            feature.GetProperty("byOrganization").EnumerateArray().Select(o => new OrgRow(Text(o, "name"), Flag(o, "enabled"), Number(o, "membersUsing"), o.GetProperty("outcomes") is { ValueKind: JsonValueKind.Object } t ? Number(t, "runs") : null)).ToList());
+    }
+}

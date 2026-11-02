@@ -99,7 +99,7 @@ public sealed class SamlFlow(
         {
             row ??= request;
             if (row?.TestIntentId is { } testIntent) await sso.FailTestAsync(testIntent, "authentication");
-            return ErrorRedirect(row, code, description);
+            return ErrorRedirect(row, code, description, c);
         }
 
         if (!string.IsNullOrEmpty(relayState) && request is null) return await Fail("invalid_state", "invalid_or_expired_relay_state");
@@ -166,7 +166,7 @@ public sealed class SamlFlow(
         if (claimed != 1) return LocalError("state_mismatch", null);
         ctx.Response.Cookies.Delete(BindingCookie, new CookieOptions { Path = "/" });
 
-        IResult Fail(string code, string? description) => ErrorRedirect(row, code, description);
+        IResult Fail(string code, string? description) => ErrorRedirect(row, code, description, c);
         var liveTest = row.TestIntentId is { } intent && SsoService.IsLiveTest(c, intent);
         if (!SsoService.Ready(c) && !liveTest) return Results.Json(new { error = "sso_not_enabled", message = NotEnabled }, statusCode: 403);
         if (row.ConfigRevision != c.ConfigRevision)
@@ -229,9 +229,12 @@ public sealed class SamlFlow(
         return Results.Redirect(trusted.Absolute(isNew && newUserCallbackUrl is { } nu ? nu : callbackUrl));
     }
 
-    private IResult ErrorRedirect(SamlAuthRequest? row, string code, string? description)
+    /// <summary>Where a failed sign-in lands: the error address the sign-in named, else (nothing was started here) the workspace's own sign-in page, which shows the reason.</summary>
+    private IResult ErrorRedirect(SamlAuthRequest? row, string code, string? description, SsoConnection? connection = null)
     {
-        if (row is null) return LocalError(code, description);
+        if (row is null)
+            return connection is null ? LocalError(code, description)
+                : Results.Redirect(OidcFlow.AppendQuery(urls.Web + connection.SignInPath, ("error", code), ("error_description", Clip(description))));
         var url = OidcFlow.AppendQuery(row.ErrorCallbackUrl ?? row.CallbackUrl, ("error", code), ("error_description", Clip(description)));
         return Results.Redirect(trusted.Absolute(url));
     }
