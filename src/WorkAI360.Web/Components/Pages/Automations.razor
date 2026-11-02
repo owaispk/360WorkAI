@@ -1,0 +1,176 @@
+@page "/dashboard/automations"
+@inherits ActionPage
+@using System.Text.Json
+
+<PageTitle>Automations · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="automations-page">
+    @if (_loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>Automations</h1>
+        <p class="den-muted">@_orgName · work your agent does on a schedule. Yours are private to you. They run on your desktop while the app is open.</p>
+
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+
+        <p class="den-panel" data-testid="presence" data-connected="@(_connected ? "true" : "false")">
+            @if (_connected) { <span>Your desktop is connected: Automations will run on time.</span> }
+            else { <span>No desktop is connected. Open the OpenWork desktop app, or runs will be marked as missed.</span> }
+        </p>
+
+        @if (_items.Count == 0)
+        {
+            <p class="den-muted" data-testid="automations-empty">You have no Automations yet.</p>
+        }
+        else
+        {
+            <ul class="den-members" data-testid="automations-list">
+                @foreach (var item in _items)
+                {
+                    <li data-testid="automation-row" data-name="@item.Name" data-state="@item.State">
+                        <span>
+                            <a href="/dashboard/automations/@item.Id" data-testid="automation-open"><strong>@item.Name</strong></a><br />
+                            <span class="den-muted" data-testid="automation-schedule">@item.Schedule</span><br />
+                            <span class="den-muted">@AutomationFormat.State(item.State) · next run <span data-testid="automation-next">@AutomationFormat.When(item.NextDueAt)</span>@if (item.LatestStatus is not null) { <text> · last run <span data-testid="automation-latest">@AutomationFormat.Status(item.LatestStatus)</span></text> }</span>
+                        </span>
+                        <span>
+                            @if (item.State != "archived")
+                            {
+                                <button type="button" class="den-button den-secondary" disabled="@Busy" @onclick="() => RunNowAsync(item.Id)" data-testid="automation-run">Run now</button>
+                            }
+                        </span>
+                    </li>
+                }
+            </ul>
+        }
+
+        <h2>New Automation</h2>
+        <div class="den-panel" data-testid="automation-form">
+            <label for="auto-name">Name</label>
+            <input id="auto-name" @bind="_name" maxlength="120" data-testid="auto-name" />
+            <label for="auto-instructions">What should your agent do each time?</label>
+            <textarea id="auto-instructions" @bind="_instructions" rows="4" data-testid="auto-instructions"></textarea>
+            <label for="auto-provider">Model provider and model (as set up on your desktop)</label>
+            <div>
+                <input id="auto-provider" @bind="_provider" aria-label="Model provider" data-testid="auto-provider" />
+                <input id="auto-model" @bind="_model" aria-label="Model" data-testid="auto-model" />
+            </div>
+            <label for="auto-kind">When</label>
+            <select id="auto-kind" @bind="_kind" data-testid="auto-kind">
+                <option value="daily">Every day</option>
+                <option value="weekly">On certain days of the week</option>
+                <option value="once">Once</option>
+            </select>
+            @if (_kind == "weekly")
+            {
+                <div data-testid="auto-days">
+                    @for (var d = 0; d < 7; d++)
+                    {
+                        var day = d;
+                        <label class="den-inline"><input type="checkbox" checked="@_days[day]" @onchange="e => _days[day] = (bool)(e.Value ?? false)" data-testid="@($"auto-day-{day}")" /> @DayNames[day]</label>
+                    }
+                </div>
+            }
+            @if (_kind == "once")
+            {
+                <input type="date" @bind="_date" aria-label="Date" data-testid="auto-date" />
+            }
+            <input type="time" @bind="_time" aria-label="Time" data-testid="auto-time" />
+            <label for="auto-tz">Time zone</label>
+            <input id="auto-tz" @bind="_zone" data-testid="auto-tz" />
+            <button type="button" class="den-button" disabled="@Busy" @onclick="CreateAsync" data-testid="auto-create">Create Automation</button>
+        </div>
+        <a class="den-link" href="/dashboard">Back to dashboard</a>
+    }
+</section>
+
+@code {
+    private sealed record Row(string Id, string Name, string State, string Schedule, long? NextDueAt, string? LatestStatus);
+
+    private static readonly string[] DayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    private bool _loading = true, _connected;
+    private string _orgName = "", _name = "", _instructions = "", _provider = "anthropic", _model = "claude", _kind = "daily", _zone = "UTC";
+    private TimeOnly _time = new(9, 0);
+    private DateTime _date = DateTime.UtcNow.Date.AddDays(1);
+    private readonly bool[] _days = [false, true, true, true, true, true, false];
+    private List<Row> _items = [];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var me = await Den.RequestAsync("/api/browser/v1/me");
+        if (!me.Ok) { Nav.NavigateTo("/"); return; }
+        MyEmail = me.String("user", "email") ?? "";
+        if (!await LoadAsync()) return;
+        _loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync() => await LoadAsync();
+
+    private async Task<bool> LoadAsync()
+    {
+        var org = await Den.RequestAsync("/api/browser/v1/org");
+        if (org.Status is 404 or 403) { Nav.NavigateTo("/organization"); return false; }
+        _orgName = org.String("organization", "name") ?? "";
+        var list = await Den.RequestAsync("/api/browser/v1/automations?limit=100");
+        if (list.Ok && list.Json is { ValueKind: JsonValueKind.Object } body)
+        {
+            _items = body.GetProperty("items").EnumerateArray().Select(i =>
+            {
+                var a = i.GetProperty("automation");
+                var latest = i.GetProperty("latestRun");
+                return new Row(a.GetProperty("id").GetString()!, a.GetProperty("name").GetString()!, a.GetProperty("state").GetString()!,
+                    AutomationFormat.Schedule(i.GetProperty("revision").GetProperty("schedule")),
+                    a.GetProperty("nextDueAt").ValueKind == JsonValueKind.Number ? a.GetProperty("nextDueAt").GetInt64() : null,
+                    latest.ValueKind == JsonValueKind.Object ? latest.GetProperty("status").GetString() : null);
+            }).ToList();
+        }
+        var presence = await Den.RequestAsync("/api/browser/v1/automation-runners/presence");
+        _connected = presence.Ok && presence.Json is { ValueKind: JsonValueKind.Object } p && p.GetProperty("connected").GetBoolean();
+        return true;
+    }
+
+    private static bool ValidZone(string id)
+    {
+        try { TimeZoneInfo.FindSystemTimeZoneById(id); return true; }
+        catch (Exception e) when (e is TimeZoneNotFoundException or InvalidTimeZoneException) { return false; }
+    }
+
+    private object? BuildSchedule()
+    {
+        int hour = _time.Hour, minute = _time.Minute;
+        if (!ValidZone(_zone)) { Error = "That time zone is not one we know. Try something like Europe/Paris or UTC."; return null; }
+        switch (_kind)
+        {
+            case "weekly":
+                var days = Enumerable.Range(0, 7).Where(d => _days[d]).ToArray();
+                if (days.Length == 0) { Error = "Choose at least one day."; return null; }
+                return new { kind = "weekly", timezone = _zone, daysOfWeek = days, hour, minute };
+            case "once":
+                var local = DateTime.SpecifyKind(_date.Date.AddHours(hour).AddMinutes(minute), DateTimeKind.Unspecified);
+                var at = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(local, TimeZoneInfo.FindSystemTimeZoneById(_zone))).ToUnixTimeMilliseconds();
+                return new { kind = "once", timezone = _zone, at };
+            default:
+                return new { kind = "daily", timezone = _zone, hour, minute };
+        }
+    }
+
+    private async Task CreateAsync()
+    {
+        Error = Notice = null;
+        if (string.IsNullOrWhiteSpace(_name)) { Error = "Give the Automation a name."; return; }
+        if (string.IsNullOrWhiteSpace(_instructions)) { Error = "Say what your agent should do."; return; }
+        var schedule = BuildSchedule();
+        if (schedule is null) return;
+        await RunAsync(() => Den.RequestAsync("/api/browser/v1/automations", "POST", new { name = _name.Trim(), instructions = _instructions.Trim(), schedule, model = new { providerId = _provider.Trim(), modelId = _model.Trim() } }),
+            "Automation created.", r => r.String("message"));
+        if (Error is null) { _name = ""; _instructions = ""; }
+    }
+
+    private async Task RunNowAsync(string id) => await RunAsync(() => Den.RequestAsync($"/api/browser/v1/automations/{id}/run", "POST", new { }), "Run queued. Your desktop will pick it up.", r => r.String("message") ?? r.String("error"));
+}
