@@ -283,6 +283,106 @@ if (want(1)) {
 }
 
 // =====================================================================================================================================
+// 2. oauth-providers
+// =====================================================================================================================================
+if (want(2)) {
+  const ws = await workspace("Gaps OAuth Providers");
+  const other = await workspace("Gaps OAuth Providers Other");
+  const bob = await ws.join("Bob Member");
+  const viewer = await ws.join("Vera Viewer");
+  const api = ws.api;
+  const G = "google-workspace", M = "microsoft-365";
+  const SECRET = "s3cret-value-1234567890";
+  const keyOf = (j) => keys(j);
+  const forbidden = (r, key) => r.status === 403 && r.json?.error === "forbidden" && r.json?.requiredPermission === key;
+  const googleBase = ["openid", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"];
+
+  await t("[2] an app that was never saved reads as not configured, with the provider's default permissions and scopes (Google and Microsoft)", async () => {
+    const g = await api(ws.owner, "GET", `/v1/oauth-providers/${G}/client`);
+    const m = await api(ws.owner, "GET", `/v1/oauth-providers/${M}/client`);
+    return (g.status === 200 && keyOf(g.json) === "clientId,configured,features,providerId,redirectUri,scopes,tenantId" && g.json.configured === false && g.json.clientId === null && g.json.tenantId === null
+      && g.json.features.join() === "calendarRead,gmailDraft,driveFile" && g.json.scopes.join() === [...googleBase, "https://www.googleapis.com/auth/calendar.readonly", "https://www.googleapis.com/auth/gmail.compose", "https://www.googleapis.com/auth/drive.file"].join()
+      && g.json.redirectUri.endsWith(`/v1/oauth-providers/${G}/connect/callback`)
+      && m.status === 200 && m.json.features.join() === "mailRead,calendarRead,filesRead" && m.json.scopes.join() === "openid,profile,email,offline_access,User.Read,Mail.Read,Calendars.Read,Files.Read") || `${g.status} ${g.text.slice(0, 300)} / ${m.text.slice(0, 200)}`;
+  });
+  await t("[2] reading needs 'View OAuth apps' and saving needs 'Manage OAuth apps' (403 with the permission named)", async () => {
+    const a = await api(bob, "GET", `/v1/oauth-providers/${G}/client`);
+    const b = await api(bob, "POST", `/v1/oauth-providers/${G}/client`, { clientId: "x" });
+    const c = await api(bob, "GET", `/v1/oauth-providers/${G}/api-check`);
+    return (forbidden(a, "oauth_clients.view") && forbidden(b, "oauth_clients.manage") && forbidden(c, "oauth_clients.view")) || [a, b, c].map((x) => x.status + x.text.slice(0, 100)).join(" | ");
+  });
+  await t("[2] an unknown provider is 404 unknown_oauth_provider with the reference's message; an over-long id is 400", async () => {
+    const a = await api(ws.owner, "GET", "/v1/oauth-providers/nope/client");
+    const b = await api(ws.owner, "POST", "/v1/oauth-providers/nope/client", { clientId: "x" });
+    const c = await api(bob, "GET", "/v1/oauth-providers/nope/status");
+    const d = await api(bob, "POST", "/v1/oauth-providers/nope/disconnect", {});
+    const e = await api(ws.owner, "GET", `/v1/oauth-providers/${"a".repeat(300)}/client`);
+    const msg = '"nope" is not a known native OAuth provider.';
+    return (a.status === 404 && a.json.error === "unknown_oauth_provider" && a.json.message === msg && b.status === 404 && b.json.message === msg && c.status === 404 && d.status === 404
+      && e.status === 400 && e.json.error === "invalid_request" && e.json.message === "providerId: Too big: expected string to have <=255 characters") || [a, b, c, d, e].map((x) => x.status + x.text.slice(0, 100)).join(" | ");
+  });
+  await t("[2] first-time setup needs a clientId; unknown features and a tenant on Google are refused with the reference's messages", async () => {
+    const a = await api(ws.owner, "POST", `/v1/oauth-providers/${G}/client`, {});
+    const b = await api(ws.owner, "POST", `/v1/oauth-providers/${G}/client`, { clientId: "x", features: ["nope", "gmailRead"] });
+    const c = await api(ws.owner, "POST", `/v1/oauth-providers/${G}/client`, { clientId: "x", tenantId: "contoso.com" });
+    const d = await api(ws.owner, "POST", `/v1/oauth-providers/${G}/client`, { clientId: "" });
+    return (a.status === 400 && a.json.message === "clientId is required for first-time setup." && b.status === 400 && b.json.message === "Unknown optional feature(s): nope."
+      && c.status === 400 && c.json.message === 'tenantId is not supported for "google-workspace".' && d.status === 400 && d.json.error === "invalid_request" && d.json.message.startsWith("clientId:")) || [a, b, c, d].map((x) => x.status + x.text.slice(0, 140)).join(" | ");
+  });
+  await t("[2] nothing was saved by the refused attempts", async () => (await api(ws.owner, "GET", `/v1/oauth-providers/${G}/client`)).json.configured === false);
+  await t("[2] saving: ok shape, features de-duplicated in order, the secret is accepted but never returned (save, read, errors)", async () => {
+    const r = await api(ws.owner, "POST", `/v1/oauth-providers/${G}/client`, { clientId: "my-client.apps.example", clientSecret: SECRET, features: ["gmailRead", "calendarRead", "gmailRead"] });
+    const g = await api(ws.owner, "GET", `/v1/oauth-providers/${G}/client`);
+    return (r.status === 200 && keyOf(r.json) === "clientId,features,ok,providerId,tenantId" && r.json.ok === true && r.json.clientId === "my-client.apps.example" && r.json.features.join() === "gmailRead,calendarRead" && r.json.tenantId === null
+      && g.json.configured === true && g.json.clientId === "my-client.apps.example" && g.json.features.join() === "gmailRead,calendarRead" && g.json.scopes.join() === [...googleBase, "https://www.googleapis.com/auth/gmail.readonly", "https://www.googleapis.com/auth/calendar.readonly"].join()
+      && !r.text.includes(SECRET) && !g.text.includes(SECRET) && !JSON.stringify(g.json).includes("ecret")) || `${r.status} ${r.text.slice(0, 200)} ${g.text.slice(0, 300)}`;
+  });
+  await t("[2] a later save may change only the client id (features stay) or only the features (client id stays)", async () => {
+    const a = await api(ws.owner, "POST", `/v1/oauth-providers/${G}/client`, { clientId: "other-client" });
+    const b = await api(ws.owner, "POST", `/v1/oauth-providers/${G}/client`, { features: [] });
+    const g = (await api(ws.owner, "GET", `/v1/oauth-providers/${G}/client`)).json;
+    return (a.status === 200 && a.json.clientId === "other-client" && a.json.features.join() === "gmailRead,calendarRead" && b.status === 200 && b.json.clientId === "other-client" && b.json.features.length === 0
+      && g.features.length === 0 && g.scopes.join() === googleBase.join()) || `${a.text.slice(0, 160)} ${b.text.slice(0, 160)} ${JSON.stringify(g)}`;
+  });
+  await t("[2] Microsoft needs a tenant (GUID or domain; the shared authorities are refused), which is lowercased; Google features are unknown there", async () => {
+    const a = await api(ws.owner, "POST", `/v1/oauth-providers/${M}/client`, { clientId: "ms-client" });
+    const b = await api(ws.owner, "POST", `/v1/oauth-providers/${M}/client`, { clientId: "ms-client", tenantId: "common" });
+    const c = await api(ws.owner, "POST", `/v1/oauth-providers/${M}/client`, { clientId: "ms-client", tenantId: "Contoso.COM" });
+    const d = await api(ws.owner, "POST", `/v1/oauth-providers/${M}/client`, { features: ["gmailRead"] });
+    const e = await api(ws.owner, "POST", `/v1/oauth-providers/${M}/client`, { clientId: "ms-2", tenantId: "0F4B5C2E-1111-4222-8333-444455556666" });
+    const msg = "A valid Microsoft Entra tenant ID (GUID) or verified tenant domain is required.";
+    return (a.status === 400 && a.json.message === msg && b.status === 400 && b.json.message === msg && c.status === 200 && c.json.tenantId === "contoso.com" && c.json.features.join() === "mailRead,calendarRead,filesRead"
+      && d.status === 400 && d.json.message === "Unknown optional feature(s): gmailRead." && e.status === 200 && e.json.tenantId === "0f4b5c2e-1111-4222-8333-444455556666") || [a, b, c, d, e].map((x) => x.status + x.text.slice(0, 140)).join(" | ");
+  });
+  await t("[2] a person with only 'View OAuth apps' (through a role) can read but not save", async () => {
+    const team = (await api(ws.owner, "POST", "/v1/teams", { name: "App viewers", memberIds: [viewer.memberId] })).json.team.id;
+    await api(ws.owner, "POST", "/v1/permissions/sets", { teamId: team, permissions: [{ key: "oauth_clients.view", status: "allow" }] });
+    const g = await api(viewer, "GET", `/v1/oauth-providers/${G}/client`);
+    const p = await api(viewer, "POST", `/v1/oauth-providers/${G}/client`, { clientId: "sneaky" });
+    const after = (await api(ws.owner, "GET", `/v1/oauth-providers/${G}/client`)).json;
+    return (g.status === 200 && g.json.clientId === "other-client" && forbidden(p, "oauth_clients.manage") && after.clientId === "other-client") || `${g.status} ${p.status}`;
+  });
+  await t("[2] status and disconnect: nobody is signed in with the provider (connected false; disconnect is 404 'Nothing was connected.')", async () => {
+    const a = await api(bob, "GET", `/v1/oauth-providers/${G}/status`);
+    const b = await api(bob, "POST", `/v1/oauth-providers/${G}/disconnect`, {});
+    return (a.status === 200 && keyOf(a.json) === "connected,externalAccountId,providerId,scopes" && a.json.connected === false && a.json.externalAccountId === null && a.json.scopes === null
+      && b.status === 404 && b.json.error === "not_found" && b.json.message === "Nothing was connected.") || `${a.text.slice(0, 200)} ${b.text.slice(0, 200)}`;
+  });
+  await t("[2] api-check (Google only): without a Google sign-in the APIs the saved permissions call are listed as unchecked", async () => {
+    await api(ws.owner, "POST", `/v1/oauth-providers/${G}/client`, { features: ["gmailRead", "sheetsRead", "driveFile"] });
+    const a = await api(ws.owner, "GET", `/v1/oauth-providers/${G}/api-check`);
+    const b = await api(ws.owner, "GET", `/v1/oauth-providers/${M}/api-check`);
+    const ids = (a.json?.apis ?? []).map((x) => x.id).join();
+    return (a.status === 200 && a.json.checked === false && ids === "drive,docs,sheets,gmail" && a.json.apis.every((x) => x.status === "unknown" && x.enableUrl === null && x.detail === null && keys(x) === "detail,enableUrl,features,id,name,service,status")
+      && a.json.apis.find((x) => x.id === "sheets").features.join() === "sheetsRead,driveFile" && b.status === 404 && b.json.message === '"microsoft-365" is not a Google Workspace connector.') || `${a.text.slice(0, 400)} ${b.text.slice(0, 200)}`;
+  });
+  await t("[2] another workspace's app is its own: nothing of this one shows there", async () => {
+    const r = await other.api(other.owner, "GET", `/v1/oauth-providers/${G}/client`);
+    return (r.status === 200 && r.json.configured === false && r.json.clientId === null) || r.text.slice(0, 200);
+  });
+}
+
+// =====================================================================================================================================
 // 3. team-invites
 // =====================================================================================================================================
 if (want(3)) {

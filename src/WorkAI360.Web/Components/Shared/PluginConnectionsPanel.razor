@@ -1,0 +1,109 @@
+@using System.Text.Json
+@inject DenClient Den
+
+@* What a plugin's MCP servers need: which connection serves each, whether the person is signed in, and (for people who manage connections) setting one up. *@
+@if (_loaded && _servers.Count > 0)
+{
+    <div class="plugin-connections" data-testid="plugin-connections">
+        <h2>Connections this plugin needs</h2>
+        @if (_error is not null) { <p class="den-error" role="alert" data-testid="connections-error">@_error</p> }
+        @if (_notice is not null) { <p class="den-notice" role="status" data-testid="connections-notice">@_notice</p> }
+        <ul class="den-members" data-testid="server-list">
+            @foreach (var server in _servers)
+            {
+                <li data-testid="server-row" data-server="@server.ServerName" data-state="@server.State">
+                    <div class="den-member-main">
+                        <strong>@server.ServerName</strong>
+                        <span class="den-muted">@server.Url</span>
+                        @if (server.ConnectionId is not null)
+                        {
+                            <span>Served by <a href="/dashboard/mcp-connections/@server.ConnectionId" data-testid="connection-link">@server.ConnectionName</a></span>
+                        }
+                        <span class="den-badge" data-testid="server-state">@Describe(server)</span>
+                    </div>
+                    @if (CanManage && server.ConnectionId is null)
+                    {
+                        <div class="den-member-actions">
+                            @if (_setUp == server.ConfigObjectId + "/" + server.ServerName)
+                            {
+                                <select aria-label="Sign-in for @server.ServerName" @bind="_authType" data-testid="auth-type">
+                                    <option value="none">No sign-in</option>
+                                    <option value="apikey">API key</option>
+                                    <option value="oauth">Each person signs in</option>
+                                </select>
+                                @if (_authType == "apikey")
+                                {
+                                    <input type="password" autocomplete="off" aria-label="API key" placeholder="API key" @bind="_apiKey" @bind:event="oninput" data-testid="api-key" />
+                                }
+                                <button type="button" class="den-button" disabled="@_busy" @onclick="() => ConfigureAsync(server)" data-testid="save-connection">Set up</button>
+                                <button type="button" class="den-link" @onclick="() => _setUp = null">Cancel</button>
+                            }
+                            else
+                            {
+                                <button type="button" class="den-link" @onclick="() => Start(server)" data-testid="set-up-connection">Set up connection</button>
+                            }
+                        </div>
+                    }
+                </li>
+            }
+        </ul>
+    </div>
+}
+
+@code {
+    private sealed record Server(string ConfigObjectId, string ServerName, string Url, string? ConnectionId, string? ConnectionName, string State, bool SignedIn, string? Mode);
+
+    [Parameter, EditorRequired] public string PluginId { get; set; } = "";
+    /// <summary>Whether the person holds "Manage connections" (the page already knows).</summary>
+    [Parameter] public bool CanManage { get; set; }
+
+    private List<Server> _servers = [];
+    private bool _loaded, _busy;
+    private string? _setUp, _error, _notice, _loadedFor;
+    private string _authType = "none", _apiKey = "";
+
+    private static string Describe(Server s) => s.State switch
+    {
+        "needs_setup" => "Not set up",
+        "needs_signin" => "Sign in needed",
+        _ => "Ready",
+    };
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (_loadedFor == PluginId) return;
+        _loadedFor = PluginId;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        var r = await Den.RequestAsync($"/api/browser/v1/plugins/{PluginId}/mcp-connections");
+        _loaded = r.Ok;
+        if (r.Json is not { ValueKind: JsonValueKind.Object } body || !body.TryGetProperty("requirements", out var list)) { _servers = []; return; }
+        _servers = list.EnumerateArray().Select(e =>
+        {
+            string? Str(string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+            var id = Str("id");
+            var mode = Str("credentialMode");
+            var connected = e.TryGetProperty("connectedForMe", out var c) && c.ValueKind == JsonValueKind.True;
+            var state = id is null ? "needs_setup" : (!connected ? (mode == "shared" ? "needs_setup" : "needs_signin") : "ready");
+            return new Server(Str("configObjectId") ?? "", Str("serverName") ?? "", Str("url") ?? "", id, id is null ? null : Str("name"), state, connected, mode);
+        }).ToList();
+    }
+
+    private void Start(Server server) { _setUp = server.ConfigObjectId + "/" + server.ServerName; _authType = "none"; _apiKey = ""; _error = _notice = null; }
+
+    private async Task ConfigureAsync(Server server)
+    {
+        _error = _notice = null; _busy = true;
+        object body = _authType == "apikey" && _apiKey.Trim().Length > 0
+            ? new { configObjectId = server.ConfigObjectId, serverName = server.ServerName, authType = _authType, apiKey = _apiKey.Trim() }
+            : new { configObjectId = server.ConfigObjectId, serverName = server.ServerName, authType = _authType };
+        var r = await Den.RequestAsync($"/api/browser/v1/plugins/{PluginId}/mcp-connections", "POST", body);
+        _busy = false;
+        _apiKey = "";
+        if (r.Ok) { _setUp = null; _notice = $"{server.ServerName} is set up."; await LoadAsync(); return; }
+        _error = r.String("error") == "reauth" ? "For security, sign in again and retry." : r.Message("That did not work. Try again.");
+    }
+}

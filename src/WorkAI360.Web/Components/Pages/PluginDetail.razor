@@ -56,6 +56,8 @@
             }
         </ul>
 
+        <PluginConnectionsPanel PluginId="@PluginId" CanManage="@Can("connections.manage")" />
+
         @if (CanEdit)
         {
             <h2>Add a skill</h2>
