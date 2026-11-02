@@ -6,6 +6,7 @@ using Microsoft.Extensions.Options;
 using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.Domain;
+using WorkAI360.Api.Domain.Saml;
 using WorkAI360.Api.Domain.Sso;
 using WorkAI360.Api.OAuth;
 
@@ -25,7 +26,7 @@ public sealed record Outcome(bool Ok, string Message = "")
 }
 
 /// <summary>Everything about a workspace's SSO connection that is not the sign-in itself: saving it, proving the domain, testing, enabling.</summary>
-public sealed class SsoService(
+public sealed partial class SsoService(
     DenDbContext db, SecretProtector secrets, IDnsTxtResolver dns, IOptions<SsoOptions> sso, IOptions<AuthOptions> auth, IHostEnvironment env, IHttpClientFactory http, OAuthUrls urls)
 {
     public const string TokenPrefix = "better-auth-token";
@@ -73,43 +74,62 @@ public sealed class SsoService(
         var (settings, error) = await ResolveEndpointsAsync(input, ct);
         if (settings is null) return (null, error);
         var oidcJson = JsonSerializer.Serialize(settings, Json);
-        var providerId = ProviderIdFor(org.Id);
-        var verified = DevLoopbackVerified && Uri.TryCreate(input.Issuer, UriKind.Absolute, out var issuerUri) && OutboundPolicy.IsLoopbackHost(issuerUri.Host);
-        var now = DateTime.UtcNow;
         var revision = Revision("oidc", input.Issuer, input.Domain, oidcJson, input.ClientSecret, null);
+        var connection = await SaveConnectionAsync(org, "oidc", input.Issuer, input.Domain, oidcJson, secrets.Protect(input.ClientSecret), null, revision, ct);
+        return (connection, null);
+    }
 
-        var existing = await db.Set<SsoConnection>().FirstOrDefaultAsync(c => c.OrganizationId == org.Id, ct);
-        if (existing is null)
+    /// <summary>
+    /// Saves (or replaces) a workspace's one connection, whatever its kind. Everything is reset: disabled, untested, domain unverified (unless it is a
+    /// development loopback). Two saves at once race on the one-connection-per-workspace key: the loser retries against what the winner left.
+    /// </summary>
+    private async Task<SsoConnection> SaveConnectionAsync(Organization org, string kind, string issuer, string domain, string? oidcJson, string? secretProtected, string? samlJson, string revision, CancellationToken ct)
+    {
+        var providerId = ProviderIdFor(org.Id);
+        var verified = DevLoopbackVerified && Uri.TryCreate(issuer, UriKind.Absolute, out var issuerUri) && OutboundPolicy.IsLoopbackHost(issuerUri.Host);
+
+        for (var attempt = 0; ; attempt++)
         {
-            existing = new SsoConnection
+            var now = DateTime.UtcNow;
+            var existing = await db.Set<SsoConnection>().FirstOrDefaultAsync(c => c.OrganizationId == org.Id, ct);
+            if (existing is null)
             {
-                Id = Ids.New("ssc"), OrganizationId = org.Id, ProviderId = providerId, Kind = "oidc", Issuer = input.Issuer, Domain = input.Domain,
-                Status = "disabled", SignInPath = SignInPathFor(org.Slug), ConfigRevision = revision, TestStatus = "untested", CreatedAt = now, UpdatedAt = now,
-            };
-            db.Add(existing);
+                existing = new SsoConnection
+                {
+                    Id = Ids.New("ssc"), OrganizationId = org.Id, ProviderId = providerId, Kind = kind, Issuer = issuer, Domain = domain,
+                    Status = "disabled", SignInPath = SignInPathFor(org.Slug), ConfigRevision = revision, TestStatus = "untested", CreatedAt = now, UpdatedAt = now,
+                };
+                db.Add(existing);
+            }
+            existing.Kind = kind;
+            existing.Issuer = issuer;
+            existing.Domain = domain;
+            existing.Status = "disabled";
+            existing.SignInPath = SignInPathFor(org.Slug);
+            existing.ConfigRevision = revision;
+            existing.TestStatus = "untested";
+            existing.LastTestedAt = null;
+            existing.LastTestedRevision = null;
+            existing.LastError = null;
+            existing.DomainVerified = verified;
+            existing.DomainVerificationToken = null;
+            existing.DomainVerificationExpiresAt = null;
+            existing.OidcConfigJson = oidcJson;
+            existing.ClientSecretProtected = secretProtected;
+            existing.SamlConfigJson = samlJson;
+            ClearTest(existing);
+            existing.UpdatedAt = now;
+            try { await db.SaveChangesAsync(ct); }
+            catch (DbUpdateException) when (attempt == 0)
+            {
+                db.ChangeTracker.Clear();
+                continue;
+            }
+            // Earlier sign-ins in flight belong to the old configuration.
+            await db.Set<SsoAuthState>().Where(s => s.ProviderId == providerId).ExecuteDeleteAsync(ct);
+            await db.Set<SamlAuthRequest>().Where(s => s.ProviderId == providerId).ExecuteDeleteAsync(ct);
+            return existing;
         }
-        existing.Kind = "oidc";
-        existing.Issuer = input.Issuer;
-        existing.Domain = input.Domain;
-        existing.Status = "disabled";
-        existing.SignInPath = SignInPathFor(org.Slug);
-        existing.ConfigRevision = revision;
-        existing.TestStatus = "untested";
-        existing.LastTestedAt = null;
-        existing.LastTestedRevision = null;
-        existing.LastError = null;
-        existing.DomainVerified = verified;
-        existing.DomainVerificationToken = null;
-        existing.DomainVerificationExpiresAt = null;
-        existing.OidcConfigJson = oidcJson;
-        existing.ClientSecretProtected = secrets.Protect(input.ClientSecret);
-        existing.SamlConfigJson = null;
-        ClearTest(existing);
-        existing.UpdatedAt = now;
-        await db.SaveChangesAsync(ct);
-        // Earlier sign-ins in flight belong to the old configuration.
-        await db.Set<SsoAuthState>().Where(s => s.ProviderId == providerId).ExecuteDeleteAsync(ct);
-        return (existing, null);
     }
 
     private async Task<(OidcSettings?, string? Error)> ResolveEndpointsAsync(OidcRegistration input, CancellationToken ct)
@@ -325,6 +345,7 @@ public sealed class SsoService(
             .ExecuteUpdateAsync(s => s.SetProperty(i => i.Active, false).SetProperty(i => i.SsoProviderId, (string?)null).SetProperty(i => i.RemoteId, (string?)null), ct);
         await db.Set<ExternalAccount>().Where(a => a.ProviderId == c.ProviderId).ExecuteDeleteAsync(ct);
         await db.Set<SsoAuthState>().Where(s => s.ProviderId == c.ProviderId).ExecuteDeleteAsync(ct);
+        await db.Set<SamlAuthRequest>().Where(s => s.ProviderId == c.ProviderId).ExecuteDeleteAsync(ct);
         await db.Set<SsoConnection>().Where(o => o.Id == c.Id).ExecuteDeleteAsync(ct);
     }
 
@@ -334,6 +355,7 @@ public sealed class SsoService(
     {
         var (testStatus, lastError, testExpires) = Presentation(c, DateTime.UtcNow);
         var oidc = Settings(c);
+        var samlSettings = SamlSettingsOf(c);
         var providerId = c.ProviderId;
         return new
         {
@@ -348,8 +370,8 @@ public sealed class SsoService(
             signInPath = c.SignInPath,
             signInUrl = urls.Web + c.SignInPath,
             redirectUrl = RedirectUrl(providerId),
-            acsUrl = (string?)null,
-            metadataUrl = (string?)null,
+            acsUrl = samlSettings is null ? null : AcsUrl(providerId),
+            metadataUrl = samlSettings is null ? null : MetadataUrl(providerId),
             domainVerified = c.DomainVerified,
             domainVerificationHost = VerificationHost(providerId),
             domainVerificationDnsName = $"{VerificationHost(providerId)}.{c.Domain}",
@@ -364,7 +386,7 @@ public sealed class SsoService(
                 userInfoEndpoint = oidc.UserInfoEndpoint,
                 tokenEndpointAuthentication = (string?)oidc.TokenEndpointAuthentication,
             },
-            saml = (object?)null,
+            saml = samlSettings is null ? null : new { entryPoint = (string?)samlSettings.EntryPoint, audience = (string?)samlSettings.Audience, wantAssertionsSigned = samlSettings.WantAssertionsSigned, binding = samlSettings.Binding },
             lastTestedAt = c.LastTestedAt is { } t ? Responses.IsoUtc(t) : null,
             lastError,
             createdAt = Responses.IsoUtc(c.CreatedAt),
