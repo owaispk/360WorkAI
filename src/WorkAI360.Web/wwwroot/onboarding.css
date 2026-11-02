@@ -5,7 +5,8 @@
 .ob-steps .ob-done { border-top-color: #94a3b8; }
 .ob-steps .ob-active { border-top-color: var(--accent); color: var(--ink); font-weight: 600; }
 .ob-page .ob-row { position: relative; margin: 10px 0; }
-.ob-page .ob-row input { padding-right: 90px; }
+.ob-page .ob-row input { padding-right: 130px; }
+.ob-page .ob-row .den-link.ob-state { margin-top: 0; top: 11px; }
 .ob-page .ob-row .ob-state { position: absolute; right: 12px; top: 12px; font-size: 12px; color: var(--muted); }
 .ob-page .ob-row .ob-sent { color: #166534; }
 .ob-page .ob-actions { display: flex; gap: 10px; justify-content: flex-end; align-items: center; flex-wrap: wrap; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }

@@ -57,8 +57,8 @@
         <h1>Settings</h1>
         <p class="den-muted">Manage your profile and organization memberships.</p>
         <div class="ob-tabs" role="tablist">
-            <button type="button" role="tab" aria-selected="@(_tab == "profile")" @onclick='() => _tab = "profile"' data-testid="tab-profile">Profile</button>
-            <button type="button" role="tab" aria-selected="@(_tab == "organizations")" @onclick='() => _tab = "organizations"' data-testid="tab-organizations">Organizations</button>
+            <button type="button" role="tab" aria-selected="@(_tab == "profile" ? "true" : "false")" @onclick='() => _tab = "profile"' data-testid="tab-profile">Profile</button>
+            <button type="button" role="tab" aria-selected="@(_tab == "organizations" ? "true" : "false")" @onclick='() => _tab = "organizations"' data-testid="tab-organizations">Organizations</button>
         </div>
         @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
         @if (_error is not null) { <p class="den-error" role="alert" data-testid="error">@_error</p> }
