@@ -543,6 +543,10 @@ public sealed class PlatformAdminTests : IClassFixture<PlatformAdminFactory>
         string Caps() => $"/v1/admin/organizations/{w.OrgId}/capabilities";
         var cloud = await CallAsync(admin, HttpMethod.Put, Caps(), new { capabilities = new { autoRouter = true } });
         Assert.Equal("autoRouter is not part of this deployment.", Msg(cloud.Body));
+        var unavailable = (await CallAsync(admin, HttpMethod.Get, Caps())).Body.GetProperty("featureStates").GetProperty("autoRouter");
+        Assert.Equal("unavailable", unavailable.GetProperty("source").GetString());
+        Assert.False(unavailable.GetProperty("enabled").GetBoolean());
+        Assert.False((await w.OrgAsync()).GetProperty("features").GetProperty("autoRouter").GetBoolean());
         Assert.Equal("Invalid input: expected boolean, received string", Msg((await CallAsync(admin, HttpMethod.Put, Caps(), new { capabilities = new { browserDemonstrations = "yes" } })).Body));
         Assert.Equal("Invalid input: expected object, received undefined", Msg((await CallAsync(admin, HttpMethod.Put, Caps(), new { })).Body));
 

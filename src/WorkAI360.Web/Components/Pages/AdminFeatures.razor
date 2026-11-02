@@ -1,0 +1,92 @@
+@page "/admin/features"
+@inherits AdminPage
+@using System.Text.Json
+
+<PageTitle>Features · Platform admin · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="admin-features-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (Denied)
+    {
+        <h1>Features</h1>
+        <p class="den-muted" data-testid="no-access">This area is for the people who run this deployment. Your account is not one of them.</p>
+    }
+    else
+    {
+        <h1>Features</h1>
+        <AdminNav Current="features" />
+        <p class="den-muted">Turn a feature on or off for everyone on this deployment. The kill switch turns it off everywhere at once, whatever a workspace or a lock says. A workspace can be given its own setting on its page.</p>
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @foreach (var group in _features.GroupBy(f => f.CategoryLabel))
+        {
+            <h2>@group.Key</h2>
+            <ul class="den-members" data-testid="feature-list">
+                @foreach (var f in group)
+                {
+                    <li data-testid="feature-row" data-key="@f.Key">
+                        <div class="den-member-main">
+                            <strong>@f.Label
+                                @if (f.Killed) { <span class="den-badge den-badge-pending" data-testid="badge-killed">Killed</span> }
+                                else if (!f.Available) { <span class="den-badge den-badge-pending">Not part of this deployment</span> }
+                                else if (f.Lock is not null) { <span class="den-badge den-badge-admin" data-testid="badge-lock">Locked @(f.Lock == true ? "on" : "off") by the operator</span> }
+                            </strong>
+                            <span class="den-muted">@f.Description</span>
+                            <span class="den-muted">@f.Key · @(f.Enabled ? "On" : "Off") for everyone@(f.LastChange is null ? "" : " · " + f.LastChange)</span>
+                        </div>
+                        <div class="den-member-actions">
+                            @if (f.Available)
+                            {
+                                <button type="button" class="den-link" disabled="@Busy" @onclick="() => SetAsync(f, enabled: !f.Enabled)" data-testid="toggle">@(f.Enabled ? "Turn off" : "Turn on")</button>
+                                <button type="button" class="den-link @(f.Killed ? "" : "den-danger")" disabled="@Busy" @onclick="() => SetAsync(f, killed: !f.Killed)" data-testid="kill">@(f.Killed ? "Restore" : "Kill switch")</button>
+                            }
+                        </div>
+                    </li>
+                }
+            </ul>
+        }
+    }
+</section>
+
+@code {
+    private sealed record FeatureRow(string Key, string Label, string Description, string CategoryLabel, bool Available, bool Enabled, bool Killed, bool? Lock, string? LastChange);
+
+    private List<FeatureRow> _features = [];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await EnterAsync()) return;
+        await LoadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        var response = await Den.RequestAsync("/api/browser/v1/admin/features");
+        if (response.Json is not { ValueKind: JsonValueKind.Object } root) { Error = response.Message("Could not load the features."); return; }
+        _features = root.GetProperty("features").EnumerateArray().Select(f =>
+        {
+            string? last = null;
+            if (f.TryGetProperty("lastChange", out var c) && c.ValueKind == JsonValueKind.Object)
+                last = $"{Text(c, "action")} {Short(Text(c, "at"))}{(c.GetProperty("by").ValueKind == JsonValueKind.Object ? " by " + Text(c.GetProperty("by"), "name") : "")}";
+            bool? @lock = f.GetProperty("lock").ValueKind is JsonValueKind.True ? true : f.GetProperty("lock").ValueKind is JsonValueKind.False ? false : null;
+            return new FeatureRow(Text(f, "key"), Text(f, "label"), Text(f, "description"), Text(f, "categoryLabel"), Flag(f, "available"), Flag(f, "enabled"), Flag(f, "killed"), @lock, last);
+        }).ToList();
+    }
+
+    private async Task SetAsync(FeatureRow f, bool? enabled = null, bool? killed = null)
+    {
+        var body = new Dictionary<string, bool>();
+        if (enabled is { } e) body["enabled"] = e;
+        if (killed is { } k) body["killed"] = k;
+        var what = killed is { } kill ? (kill ? "killed everywhere" : "restored") : enabled == true ? "on for everyone" : "off for everyone";
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/admin/features/{f.Key}", "PUT", body), $"{f.Label} is now {what}.");
+    }
+}
