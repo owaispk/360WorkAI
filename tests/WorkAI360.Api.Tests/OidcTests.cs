@@ -463,10 +463,13 @@ public sealed class OidcTests : IClassFixture<ApiFactory>
         var noCookie = await stranger.PostAsync("/api/auth/oauth2/end-session/confirm", new FormUrlEncodedContent(new Dictionary<string, string> { ["action"] = "confirm" }));
         Assert.Equal(HttpStatusCode.BadRequest, noCookie.StatusCode);
 
-        // A tampered cookie value.
+        // A tampered cookie value, sent by a browser that IS signed in (so the only thing standing in the way is the signature).
+        var signedIn = await _factory.Plain().PostAsJsonAsync("/api/auth/sign-up/email", new { name = "Cookie Person", email = NewEmail(), password = Password });
+        var sessionCookie = signedIn.Headers.GetValues("Set-Cookie").Single(c => c.StartsWith("openwork-den.session_token=")).Split(';')[0];
         var tampered = new HttpRequestMessage(HttpMethod.Post, "/api/auth/oauth2/end-session/confirm") { Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["action"] = "confirm" }) };
-        tampered.Headers.Add("Cookie", "openwork-den.session_token.oauth_logout_confirmation=purpose%3Dend_session%26exp%3D9999999999%26sig%3Dnope");
+        tampered.Headers.Add("Cookie", $"{sessionCookie}; openwork-den.session_token.oauth_logout_confirmation=purpose%3Dend_session%26exp%3D9999999999%26sig%3Dnope");
         Assert.Equal(HttpStatusCode.BadRequest, (await _factory.Plain().SendAsync(tampered)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await _factory.Plain().SendAsync(Bearer(HttpMethod.Get, "/v1/me", (await ReadJsonAsync(signedIn)).GetProperty("token").GetString()!))).StatusCode);   // still signed in
 
         // Without the explicit action nothing happens either.
         var noAction = await browser.PostAsync("/api/auth/oauth2/end-session/confirm", new FormUrlEncodedContent(new Dictionary<string, string>()));
