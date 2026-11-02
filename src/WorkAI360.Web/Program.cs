@@ -10,6 +10,10 @@ builder.Services.AddDenReverseProxy(builder.Configuration);
 
 var app = builder.Build();
 
+// First: everything after this (the origin guard, links, the proxy to the API) sees the real scheme, host and visitor address.
+app.UseTrustedForwardedHeaders();
+app.UseSecurityHeaders();
+
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler("/Error", createScopeForErrors: true);

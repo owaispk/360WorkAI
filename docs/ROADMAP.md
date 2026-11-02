@@ -82,18 +82,19 @@ the parity and browser scripts and the container builds were not run.
 - **Licensing**: the reference code is under the OpenWork EE License and this rewrite is covered by a default MIT annotation in the reference repository's
   `REUSE.toml`. Decide the intended license before release.
 
-## 6. Gaps found in code review (not in the docs)
+## 6. Gaps found in code review (not in the docs): fixed
 
-These came from reading the code, not from the project's own documentation.
+These came from reading the code, not from the project's own documentation. All six are fixed and covered by tests
+(`SecurityHardeningTests`, `LoginThrottleTests`, `SignInLockoutTests` in the API tests; `WebHostSecurityTests` in `tests/WorkAI360.Web.Tests`).
 
-| Gap | Where | Notes |
+| Gap | Fix | What is left |
 |---|---|---|
-| No clickjacking protection or HSTS | `src/WorkAI360.Web/Program.cs` | No `X-Frame-Options`, CSP `frame-ancestors` or HSTS anywhere in `src`. The `/mcp/consent` and `/device` pages approve access and could be framed by another site. |
-| Browser writes likely fail behind HTTPS | `src/WorkAI360.Web/Program.cs`, `Proxy/BrowserOriginGuard.cs`, `deploy/Dockerfile.web` | The guard compares `Origin` with `request.Scheme://Host`, and the web host never calls `UseForwardedHeaders` (the Dockerfile does not set `ASPNETCORE_FORWARDEDHEADERS_ENABLED`). Behind a TLS-terminating proxy the scheme reads as `http`, so `/api/browser/v1/*` writes would get `403 forbidden_origin`. Not run. |
-| Sign-in lockout can be used against a user | `src/WorkAI360.Api/Auth/LoginThrottle.cs` | Locks by email only (5 failures, 15 minutes), so anyone can lock a known user out. Entries are removed only when the same email is looked up again, so many distinct emails grow memory without limit. |
-| Secret not separated by purpose | `Auth/SessionService.cs`, `Features/Sso/SsoService.cs`, `Features/OrgAdmin/BrandAssetEndpoints.cs`, `AuditEndpoints.cs` | These use `Auth:Secret` directly as an HMAC key, while other features derive keys with per-purpose HKDF labels. Rotating the secret invalidates all of them at once. |
-| `Passwords.Verify` can throw | `Auth/Passwords.cs` | A malformed stored hash makes `Convert.FromBase64String` throw instead of returning false. |
-| Doc and comment slips | `README.md` line 131, `Auth/AuthOptions.cs` | An empty "Sign-in lockout:" bullet duplicates line 140; two stacked `<summary>` blocks attach the `PrivilegedSessionMinutes` description to `SigningKeyRotationDays`. |
+| No clickjacking protection or HSTS | Web host and API send `X-Frame-Options: DENY`, `frame-ancestors 'none'` and `nosniff` (overriding Blazor's own `SAMEORIGIN` / `'self'`, which a run of the real host showed); the web host adds `Referrer-Policy`; HSTS over HTTPS outside Development | HSTS was tested through a trusted proxy reporting `https`, not on a real TLS listener. No full CSP (scripts and styles) yet: Blazor Server needs a policy designed for it. |
+| Browser writes likely fail behind HTTPS | The web host now believes `X-Forwarded-For/Proto/Host` from `Den:TrustedProxies` only (addresses or CIDR ranges, loopback by default) and strips them from everyone else | Deployments must set `Den__TrustedProxies` (and `Auth__TrustedProxies` on the API). Without it nothing changes from before. |
+| Sign-in lockout could be used against a user | Lockout and the sign-in rate limit are per account and visitor address; a 50-failure per-account ceiling covers guessing from many addresses; entries are swept as they expire | Past the ceiling, the account is locked for everyone for up to 15 minutes, so an attacker with many addresses can still deny service to one account (it takes 50 attempts, not 5). State is still in memory per instance. The time-based sweep has no test (the clock is not injectable). |
+| Secret not separated by purpose | `SecretKeys.Derive` (HKDF) gives cookies, audit cursors, brand links, SSO revisions and token-limit ids their own keys | Session cookies issued before the change are no longer accepted (web users sign in again once; bearer tokens are unaffected). Brand links stored earlier still verify through a legacy check; remove it once logos have been re-uploaded or the stored URLs rewritten. |
+| `Passwords.Verify` could throw | A damaged stored hash fails verification, so sign-in answers 401 | None. |
+| Doc and comment slips | Empty README bullet removed; the `PrivilegedSessionMinutes` description moved back to its property | None. |
 
 ## Not yet reviewed
 

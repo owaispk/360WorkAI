@@ -73,7 +73,7 @@ public sealed class TokenRateLimit(RateLimiter limiter, IOptions<AuthOptions> op
 
     private string Id(params string[] parts)
     {
-        var key = Encoding.UTF8.GetBytes(options.Value.Secret);
+        var key = SecretKeys.Derive(options.Value.Secret, "token rate limit");
         return Convert.ToBase64String(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(JsonSerializer.Serialize(parts)))).TrimEnd('=').Replace('+', '-').Replace('/', '_')[..32];
     }
 }

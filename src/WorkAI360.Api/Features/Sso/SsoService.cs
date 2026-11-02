@@ -62,7 +62,7 @@ public sealed class SsoService(
     }
 
     private string Revision(string kind, string issuer, string domain, string? oidcJson, string? secret, string? samlJson) =>
-        Convert.ToHexStringLower(HMACSHA256.HashData(Encoding.UTF8.GetBytes(auth.Value.Secret),
+        Convert.ToHexStringLower(HMACSHA256.HashData(SecretKeys.Derive(auth.Value.Secret, "sso config revision"),
             Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { kind, issuer, domain, oidcJson, secret, samlJson }))));
 
     // ---- Saving the configuration ----

@@ -115,8 +115,11 @@ public static class AuthEndpoints
                 return Json(400, new { message = "Invalid email or password.", code = "VALIDATION_ERROR" });
 
             var email = NormalizeEmail(body.Email!);
-            if (limiter.Hit(RateLimiter.SignIn, email, ClientIp(ctx)) is { } limited) return TooManyRequests(ctx, limited);
-            if (throttle.LockedFor(email) is { } wait)
+            // The per-account bucket is per address too: otherwise anyone who knows an email could spend the account's attempts and keep its owner out.
+            // Guessing spread over many addresses is stopped by the per-account ceiling in LoginThrottle.
+            var ip = ClientIp(ctx);
+            if (limiter.Hit(RateLimiter.SignIn, $"{email}|{ip}", ip) is { } limited) return TooManyRequests(ctx, limited);
+            if (throttle.LockedFor(email, ip) is { } wait)
             {
                 ctx.Response.Headers.RetryAfter = ((int)Math.Ceiling(wait.TotalSeconds)).ToString();
                 return Json(429, new { error = "login_locked", message = "Too many failed sign-in attempts. Try again later." });
@@ -130,7 +133,7 @@ public static class AuthEndpoints
             var ok = user is not null ? Passwords.Verify(body.Password, user.PasswordHash) : Passwords.Verify(body.Password, DummyHash);
             if (user is null || !ok)
             {
-                throttle.RecordFailure(email);
+                throttle.RecordFailure(email, ip);
                 // Only a wrong password for a real account is recorded (in that person's workspaces); an unknown address leaves nothing behind.
                 if (user is not null) await audit.RecordForUserAsync(user.Id, new AuditEntry(AuditActions.SessionSignInFailed, [new("user", user.Id, "target")], "security", "failed", ReasonCode: "invalid_credentials"));
                 return Json(401, new { message = "Invalid email or password", code = "INVALID_EMAIL_OR_PASSWORD" });
@@ -143,7 +146,7 @@ public static class AuthEndpoints
                 return Responses.AuthError(403, "Email not verified", "EMAIL_NOT_VERIFIED");
             }
 
-            throttle.Reset(email);
+            throttle.Succeeded(email, ip);
             var active = await db.Members.Where(m => m.UserId == user.Id).OrderBy(m => m.CreatedAt).Select(m => m.OrganizationId).FirstOrDefaultAsync();
             var (token, session) = await sessions.CreateAsync(user, active, "email", ctx);
             sessions.WriteCookie(ctx, token, session);
