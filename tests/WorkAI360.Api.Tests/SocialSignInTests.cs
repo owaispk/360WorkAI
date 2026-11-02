@@ -264,17 +264,42 @@ public sealed class SocialSignInTests : IClassFixture<SocialFactory>
         Assert.DoesNotMatch("^[A-Za-z0-9_-]{43}$", row.CodeVerifierProtected);
     }
 
+    /// <summary>Starts an attempt and returns what a browser would hold: the callback address and the binding cookie, to replay by hand.</summary>
+    private async Task<(string Callback, string Cookie)> StartedAsync(string provider = "google")
+    {
+        var started = await _factory.Plain().PostAsJsonAsync("/api/auth/sign-in/social", new { provider, callbackURL = Back });
+        var cookie = started.Headers.GetValues("Set-Cookie").Single(c => c.StartsWith("openwork-den.social_state=")).Split(';')[0];
+        using var raw = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
+        var hop = await raw.GetAsync(new Uri((await ReadJsonAsync(started)).GetProperty("url").GetString()!));
+        return (hop.Headers.Location!.PathAndQuery, cookie);
+    }
+
+    private static Task<HttpResponseMessage> WithCookieAsync(HttpClient http, string pathAndQuery, string cookie)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, pathAndQuery);
+        request.Headers.Add("Cookie", cookie);
+        return http.SendAsync(request);
+    }
+
     [Fact]
-    public async Task The_state_works_once()
+    public async Task The_state_works_once_even_for_the_right_browser_and_even_when_two_callbacks_race()
     {
         Fake.Google = new(Unique("g"), Mail());
-        var browser = _factory.Browser();
-        var a = await SignInAsync(browser, "google");
-        Assert.Equal(NewBack, a.Location);
-        // Replaying the callback (the same browser still holds no binding cookie after success, so put one back by starting again is not possible).
-        var replay = await browser.GetAsync(a.CallbackPathAndQuery);
+        var http = _factory.Plain();
+        var (callback, cookie) = await StartedAsync();
+        var first = await WithCookieAsync(http, callback, cookie);
+        Assert.Equal(Back, first.Headers.Location!.ToString());
+        // The same callback again with the very same cookie: the state was spent.
+        var replay = await WithCookieAsync(http, callback, cookie);
         Assert.Equal("state_mismatch", ErrorOf(replay.Headers.Location!.ToString()).Error);
-        Assert.False(HasSession(browser, replay));
+
+        // Two callbacks at the same moment: only one reaches the provider and only one can sign in.
+        Fake.Google = new(Unique("g"), Mail());
+        var (raceCallback, raceCookie) = await StartedAsync();
+        var before = Fake.TokenRequests.Count;
+        var results = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => WithCookieAsync(http, raceCallback, raceCookie)));
+        Assert.Equal(1, results.Count(r => r.Headers.Location?.ToString() == Back));
+        Assert.Equal(1, Fake.TokenRequests.Count - before);
     }
 
     [Fact]
