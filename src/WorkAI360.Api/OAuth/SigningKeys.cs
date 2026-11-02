@@ -122,9 +122,14 @@ public sealed class SigningKeyStore(IServiceScopeFactory scopes, IOptions<AuthOp
 /// <summary>Minimal JWT (JWS compact) support for ES256: just what access tokens need.</summary>
 public static class Jwt
 {
-    public static string Create(LoadedKey key, IReadOnlyDictionary<string, object?> payload)
+    /// <param name="type">The JOSE "typ" header: "at+jwt" for access tokens; null for ID tokens (which carry none, as in the reference).</param>
+    public static string Create(LoadedKey key, IReadOnlyDictionary<string, object?> payload, string? type = "at+jwt")
     {
-        var header = SigningKeyStore.Base64Url(JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, object?> { ["typ"] = "at+jwt", ["alg"] = "ES256", ["kid"] = key.Kid }));
+        var headerFields = new Dictionary<string, object?>();
+        if (type is not null) headerFields["typ"] = type;
+        headerFields["alg"] = "ES256";
+        headerFields["kid"] = key.Kid;
+        var header = SigningKeyStore.Base64Url(JsonSerializer.SerializeToUtf8Bytes(headerFields));
         var body = SigningKeyStore.Base64Url(JsonSerializer.SerializeToUtf8Bytes(payload));
         var signingInput = $"{header}.{body}";
         var signature = key.Key.SignData(Encoding.ASCII.GetBytes(signingInput), HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
