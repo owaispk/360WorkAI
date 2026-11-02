@@ -192,6 +192,8 @@ public static class TeamEndpoints
             foreach (var link in await db.PermissionSetTeams.Where(l => l.TeamId == team.Id && l.RemovedAt == null).ToListAsync()) link.RemovedAt = now;
             var deletedMembers = await MemberIdsAsync(db, team.Id);
             db.TeamMembers.RemoveRange(await db.TeamMembers.Where(tm => tm.TeamId == team.Id).ToListAsync());
+            // Pending invitations that named this team keep going without one.
+            await db.Invitations.Where(i => i.TeamId == team.Id).ExecuteUpdateAsync(s => s.SetProperty(i => i.TeamId, (string?)null));
             db.Teams.Remove(team);
             await db.SaveChangesAsync();
             await audit.RecordAsync(context!, new AuditEntry(AuditActions.TeamDeleted, [new("team", team.Id, "target", team.Name), new("organization", context!.Organization.Id, "parent")],
@@ -210,8 +212,10 @@ public static class TeamEndpoints
     private static async Task<List<string>> MemberIdsAsync(DenDbContext db, string teamId) =>
         await db.TeamMembers.AsNoTracking().Where(tm => tm.TeamId == teamId).OrderBy(tm => tm.CreatedAt).ThenBy(tm => tm.Id).Select(tm => tm.MemberId).ToListAsync();
 
+    /// <summary>Every id is a person of this workspace (a person with a pending invitation counts: they already show in the team).</summary>
     private static async Task<bool> AllBelongAsync(DenDbContext db, string organizationId, List<string> memberIds) =>
-        memberIds.Count == 0 || await db.Members.CountAsync(m => m.OrganizationId == organizationId && memberIds.Contains(m.Id)) == memberIds.Count;
+        memberIds.Count == 0 || await db.Members.CountAsync(m => m.OrganizationId == organizationId && memberIds.Contains(m.Id))
+            + await db.Invitations.CountAsync(i => i.OrganizationId == organizationId && i.Status == InvitationStatus.Pending && memberIds.Contains(i.PlaceholderMemberId)) == memberIds.Count;
 
     /// <summary>Reads {name, memberIds, grantsOrganizationAdmin}, answering like the reference's validator does when something is wrong.</summary>
     private static async Task<(TeamInput? Input, IResult? Invalid)> ReadAsync(HttpContext ctx, bool creating)

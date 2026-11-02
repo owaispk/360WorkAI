@@ -353,10 +353,10 @@ if (want(3)) {
     const gone = await mkTeam("Short lived");
     const r = await invite(ws.owner, c.email, { teamId: gone });
     const del = await api(ws.owner, "DELETE", `/v1/teams/${gone}`);
+    const stillPending = (await org()).invitations.some((i) => i.id === r.json.invitationId && i.status === "pending");
     const acc = await accept(c, r.json.invitationId);
     const o = await org();
     const me = o.members.find((m) => m.userId === c.userId);
-    const stillPending = o.invitations.some((i) => i.id === r.json.invitationId);
     return (del.status === 204 && acc.status === 200 && me && o.teams.every((x) => !x.memberIds.includes(me.id)) && stillPending) || `${del.status} ${acc.status} ${JSON.stringify(me)}`;
   });
   await t("[3] choosing a team needs 'Manage teams' (403 teams.manage) on top of 'Invite people'", async () => {
