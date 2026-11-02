@@ -15,6 +15,22 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "AdminAllowlistEntry",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Email = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Note = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_AdminAllowlistEntry", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "ApiKey",
                 columns: table => new
                 {
@@ -763,6 +779,76 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "PlatformFeatureChange",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    FeatureKey = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false),
+                    Scope = table.Column<string>(type: "longtext", nullable: false),
+                    Action = table.Column<string>(type: "longtext", nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: true),
+                    ChangedByUserId = table.Column<string>(type: "longtext", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_PlatformFeatureChange", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "PlatformFeatureRollout",
+                columns: table => new
+                {
+                    FeatureKey = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false),
+                    Enabled = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    Killed = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    UpdatedByUserId = table.Column<string>(type: "longtext", nullable: true),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_PlatformFeatureRollout", x => x.FeatureKey);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "PlatformOrganization",
+                columns: table => new
+                {
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    PlanTier = table.Column<string>(type: "varchar(16)", maxLength: 16, nullable: true),
+                    PlanSeats = table.Column<int>(type: "int", nullable: true),
+                    PlanEndsAt = table.Column<string>(type: "varchar(10)", maxLength: 10, nullable: true),
+                    SeatLimit = table.Column<int>(type: "int", nullable: false),
+                    SeatsFreeAdditional = table.Column<int>(type: "int", nullable: false),
+                    DpaSigned = table.Column<bool>(type: "tinyint(1)", nullable: true),
+                    ComplimentaryWebAccess = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_PlatformOrganization", x => x.OrganizationId);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "PlatformOrganizationFeature",
+                columns: table => new
+                {
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    FeatureKey = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false),
+                    Enabled = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    SetByUserId = table.Column<string>(type: "longtext", nullable: true),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_PlatformOrganizationFeature", x => new { x.OrganizationId, x.FeatureKey });
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "Plugin",
                 columns: table => new
                 {
@@ -1185,6 +1271,12 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateIndex(
+                name: "IX_AdminAllowlistEntry_Email",
+                table: "AdminAllowlistEntry",
+                column: "Email",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
                 name: "IX_AgentPermissionPolicy_OrganizationId_ScopeKey",
                 table: "AgentPermissionPolicy",
                 columns: new[] { "OrganizationId", "ScopeKey" },
@@ -1517,6 +1609,16 @@ namespace WorkAI360.Api.Migrations
                 column: "TeamId");
 
             migrationBuilder.CreateIndex(
+                name: "IX_PlatformFeatureChange_FeatureKey_CreatedAt",
+                table: "PlatformFeatureChange",
+                columns: new[] { "FeatureKey", "CreatedAt" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_PlatformFeatureChange_OrganizationId",
+                table: "PlatformFeatureChange",
+                column: "OrganizationId");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_Plugin_ActiveKey",
                 table: "Plugin",
                 column: "ActiveKey",
@@ -1669,6 +1771,9 @@ namespace WorkAI360.Api.Migrations
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(
+                name: "AdminAllowlistEntry");
+
+            migrationBuilder.DropTable(
                 name: "AgentPermissionPolicy");
 
             migrationBuilder.DropTable(
@@ -1787,6 +1892,18 @@ namespace WorkAI360.Api.Migrations
 
             migrationBuilder.DropTable(
                 name: "PermissionSetTeams");
+
+            migrationBuilder.DropTable(
+                name: "PlatformFeatureChange");
+
+            migrationBuilder.DropTable(
+                name: "PlatformFeatureRollout");
+
+            migrationBuilder.DropTable(
+                name: "PlatformOrganization");
+
+            migrationBuilder.DropTable(
+                name: "PlatformOrganizationFeature");
 
             migrationBuilder.DropTable(
                 name: "Plugin");

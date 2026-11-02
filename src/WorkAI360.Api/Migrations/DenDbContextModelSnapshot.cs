@@ -1606,6 +1606,157 @@ namespace WorkAI360.Api.Migrations
                     b.ToTable("PermissionSetTeams");
                 });
 
+            modelBuilder.Entity("WorkAI360.Api.Domain.PlatformAdmin.AdminAllowlistEntry", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("Note")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Email")
+                        .IsUnique();
+
+                    b.ToTable("AdminAllowlistEntry");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.PlatformAdmin.PlatformFeatureChange", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ChangedByUserId")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("FeatureKey")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<string>("OrganizationId")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("Scope")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.HasIndex("FeatureKey", "CreatedAt");
+
+                    b.ToTable("PlatformFeatureChange");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.PlatformAdmin.PlatformFeatureRollout", b =>
+                {
+                    b.Property<string>("FeatureKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<bool>("Killed")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("UpdatedByUserId")
+                        .HasColumnType("longtext");
+
+                    b.HasKey("FeatureKey");
+
+                    b.ToTable("PlatformFeatureRollout");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.PlatformAdmin.PlatformOrganization", b =>
+                {
+                    b.Property<string>("OrganizationId")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<bool>("ComplimentaryWebAccess")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<bool?>("DpaSigned")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<string>("PlanEndsAt")
+                        .HasMaxLength(10)
+                        .HasColumnType("varchar(10)");
+
+                    b.Property<int?>("PlanSeats")
+                        .HasColumnType("int");
+
+                    b.Property<string>("PlanTier")
+                        .HasMaxLength(16)
+                        .HasColumnType("varchar(16)");
+
+                    b.Property<int>("SeatLimit")
+                        .HasColumnType("int");
+
+                    b.Property<int>("SeatsFreeAdditional")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("OrganizationId");
+
+                    b.ToTable("PlatformOrganization");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.PlatformAdmin.PlatformOrganizationFeature", b =>
+                {
+                    b.Property<string>("OrganizationId")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("FeatureKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<string>("SetByUserId")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("OrganizationId", "FeatureKey");
+
+                    b.ToTable("PlatformOrganizationFeature");
+                });
+
             modelBuilder.Entity("WorkAI360.Api.Domain.Policy.AgentPermissionPolicy", b =>
                 {
                     b.Property<string>("Id")
