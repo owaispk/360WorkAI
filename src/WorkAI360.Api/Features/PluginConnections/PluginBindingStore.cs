@@ -69,7 +69,7 @@ public sealed class PluginBindingStore(DenDbContext db, LibraryAccess lib)
     }
 
     private static bool Applies(LibraryGrant g, string memberId, IReadOnlyCollection<string> teamIds) =>
-        g.RemovedAt is null && (g.OrgWide || g.MemberId == memberId || (g.TeamId is not null && teamIds.Contains(g.TeamId)));
+        (g.OrgWide || g.MemberId == memberId || (g.TeamId is not null && teamIds.Contains(g.TeamId)));
 
     /// <summary>The connections of this workspace the person may use because a plugin that needs them is shared with them.</summary>
     public async Task<HashSet<string>> UsableConnectionIdsAsync(string orgId, string memberId, IReadOnlyCollection<string> teamIds)

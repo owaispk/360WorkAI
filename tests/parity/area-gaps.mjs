@@ -282,4 +282,105 @@ if (want(1)) {
   await fake.close();
 }
 
+// =====================================================================================================================================
+// 3. team-invites
+// =====================================================================================================================================
+if (want(3)) {
+  const ws = await workspace("Gaps Team Invites");
+  const other = await workspace("Gaps Team Invites Other");
+  const api = ws.api;
+  const org = async () => (await api(ws.owner, "GET", "/v1/org")).json;
+  const teamMembers = async (teamId) => (await org()).teams.find((x) => x.id === teamId)?.memberIds ?? null;
+  const invite = (who, email, body = {}) => api(who, "POST", "/v1/invitations", { email, role: "member", ...body });
+  const mkTeam = async (name) => (await api(ws.owner, "POST", "/v1/teams", { name, memberIds: [] })).json.team.id;
+  const accept = (u, id) => call(A, "/v1/orgs/invitations/accept", { method: "POST", bearer: u.token, body: { id } });
+  const placeholderOf = async (email) => (await org()).members.find((m) => m.userId === null && (m.user?.email ?? m.email) === email)?.id;
+  const teamsDenied = (r, key) => r.status === 403 && r.json?.requiredPermission === key;
+
+  const alpha = await mkTeam("Alpha team");
+  const bobU = await person("Bob Invitee");
+  let inv, placeholder;
+  await t("[3] inviting with a teamId: 201 as before, and the pending person already shows in the team", async () => {
+    const r = await invite(ws.owner, bobU.email, { teamId: alpha }); inv = r.json?.invitationId;
+    placeholder = await placeholderOf(bobU.email);
+    const m = await teamMembers(alpha);
+    return (r.status === 201 && keys(r.json) === "email,expiresAt,inviteToken,invitationId,role".split(",").sort().join(",") && placeholder && m.includes(placeholder)) || `${r.status} ${r.text.slice(0, 200)} ${placeholder} ${JSON.stringify(m)}`;
+  });
+  await t("[3] resending without teamId keeps the team; with teamId null clears it; with a team sets it again", async () => {
+    const a = await invite(ws.owner, bobU.email);
+    const keep = (await teamMembers(alpha)).includes(placeholder);
+    const b = await invite(ws.owner, bobU.email, { teamId: null });
+    const cleared = !(await teamMembers(alpha)).includes(placeholder);
+    const c = await invite(ws.owner, bobU.email, { teamId: alpha });
+    const back = (await teamMembers(alpha)).includes(placeholder);
+    return (a.status === 200 && keep && b.status === 200 && cleared && c.status === 200 && back && c.json.invitationId === inv) || JSON.stringify({ a: a.status, keep, b: b.status, cleared, c: c.status, back });
+  });
+  await t("[3] moving the invitation to another team takes it out of the first", async () => {
+    const beta = await mkTeam("Beta team");
+    await invite(ws.owner, bobU.email, { teamId: beta });
+    const r = (await teamMembers(beta)).includes(placeholder) && !(await teamMembers(alpha)).includes(placeholder);
+    await invite(ws.owner, bobU.email, { teamId: alpha });
+    return r || "not moved";
+  });
+  await t("[3] a team that does not exist here (another workspace's, unknown, malformed) is refused", async () => {
+    const theirs = (await other.api(other.owner, "POST", "/v1/teams", { name: "Theirs", memberIds: [] })).json.team.id;
+    const a = await invite(ws.owner, "a." + bobU.email, { teamId: theirs });
+    const b = await invite(ws.owner, "b." + bobU.email, { teamId: NOPE("tem") });
+    const c = await invite(ws.owner, "c." + bobU.email, { teamId: "bad" });
+    const msg = "Choose a team in this organization that is not managed by your identity provider.";
+    return (a.status === 400 && a.json.error === "invalid_request" && a.json.message === msg && b.status === 400 && b.json.message === msg && c.status === 400 && c.json.message.startsWith("teamId: TypeID must be 30 characters")) || [a, b, c].map((x) => x.status + x.text.slice(0, 120)).join(" | ");
+  });
+  await t("[3] nothing leaked into the other workspace's team", async () => {
+    const o = (await other.api(other.owner, "GET", "/v1/org")).json;
+    return o.teams.every((x) => x.memberIds.length === 0) || "their team changed";
+  });
+  await t("[3] accepting: the person is in the team, as the same member the pending list showed", async () => {
+    const r = await accept(bobU, inv);
+    const o = await org();
+    const me = o.members.find((m) => m.userId === bobU.userId);
+    return (r.status === 200 && me && me.id === placeholder && (await teamMembers(alpha)).includes(me.id)) || `${r.status} ${JSON.stringify(me)}`;
+  });
+  await t("[3] canceling a pending invitation takes the pending person out of the team", async () => {
+    const d = await person("Dan Invitee");
+    const r = await invite(ws.owner, d.email, { teamId: alpha });
+    const ph = await placeholderOf(d.email);
+    const inTeam = (await teamMembers(alpha)).includes(ph);
+    await api(ws.owner, "POST", `/v1/invitations/${r.json.invitationId}/cancel`, {});
+    return (inTeam && !(await teamMembers(alpha)).includes(ph)) || "still in the team";
+  });
+  await t("[3] deleting a team clears it from pending invitations: the invitation survives and the person joins without a team", async () => {
+    const c = await person("Carol Invitee");
+    const gone = await mkTeam("Short lived");
+    const r = await invite(ws.owner, c.email, { teamId: gone });
+    const del = await api(ws.owner, "DELETE", `/v1/teams/${gone}`);
+    const acc = await accept(c, r.json.invitationId);
+    const o = await org();
+    const me = o.members.find((m) => m.userId === c.userId);
+    const stillPending = o.invitations.some((i) => i.id === r.json.invitationId);
+    return (del.status === 204 && acc.status === 200 && me && o.teams.every((x) => !x.memberIds.includes(me.id)) && stillPending) || `${del.status} ${acc.status} ${JSON.stringify(me)}`;
+  });
+  await t("[3] choosing a team needs 'Manage teams' (403 teams.manage) on top of 'Invite people'", async () => {
+    const m = await ws.join("Inviter Member");
+    const rt = await mkTeam("Inviters");
+    await api(ws.owner, "PATCH", `/v1/teams/${rt}`, { memberIds: [m.memberId] });
+    await api(ws.owner, "POST", "/v1/permissions/sets", { teamId: rt, permissions: [{ key: "invitations.manage", status: "allow" }] });
+    const withTeam = await invite(m, "m1." + bobU.email, { teamId: alpha });
+    const without = await invite(m, "m2." + bobU.email);
+    const nullTeam = await invite(m, "m3." + bobU.email, { teamId: null });
+    return (teamsDenied(withTeam, "teams.manage") && without.status === 201 && nullTeam.status === 201) || [withTeam, without, nullTeam].map((x) => x.status + x.text.slice(0, 120)).join(" | ");
+  });
+  await t("[3] a team that grants permissions the inviter does not hold is refused (403)", async () => {
+    const m = await ws.join("Limited Inviter");
+    const rt = await mkTeam("Limited inviters");
+    await api(ws.owner, "PATCH", `/v1/teams/${rt}`, { memberIds: [m.memberId] });
+    await api(ws.owner, "POST", "/v1/permissions/sets", { teamId: rt, permissions: [{ key: "invitations.manage", status: "allow" }, { key: "teams.manage", status: "allow" }] });
+    const strong = await mkTeam("Strong team");
+    await api(ws.owner, "POST", "/v1/permissions/sets", { teamId: strong, permissions: [{ key: "members.delete", status: "allow" }] });
+    const plain = await mkTeam("Plain team");
+    const refused = await invite(m, "g1." + bobU.email, { teamId: strong });
+    const allowed = await invite(m, "g2." + bobU.email, { teamId: plain });
+    return (refused.status === 403 && refused.json.error === "forbidden" && /grants permissions you don't have/.test(refused.json.message) && allowed.status === 201) || [refused, allowed].map((x) => x.status + x.text.slice(0, 200)).join(" | ");
+  });
+}
+
 s.done();
