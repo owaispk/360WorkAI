@@ -29,6 +29,7 @@ public sealed class WorkspaceFeature : IFeature
         services.AddScoped<IMyLibrarySource, WorkflowLibrarySource>();
         services.AddScoped<WorkspaceRunner>();
         services.AddScoped<ICapabilityProvider, WorkflowCapabilityProvider>();
+        services.AddScoped<IMcpToolProvider, WorkflowAuthoringTools>();
     }
 
     public void MapEndpoints(WebApplication app)

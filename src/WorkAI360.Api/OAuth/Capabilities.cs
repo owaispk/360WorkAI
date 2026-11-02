@@ -36,6 +36,20 @@ public interface ICapabilityProvider
         (await ListAsync(principal, services)).FirstOrDefault(c => c.Id == id);
 }
 
+/// <summary>A tool <c>/mcp/agent</c> offers besides <c>search_capabilities</c> and <c>execute_capability</c>.</summary>
+public sealed record McpToolDefinition(string Name, string Description, JsonNode InputSchema);
+
+/// <summary>
+/// Lets an area add tools to <c>/mcp/agent</c> (register with <c>services.AddScoped&lt;IMcpToolProvider, T&gt;()</c>). <see cref="CallAsync"/> is called only with
+/// a name listed in <see cref="Tools"/>, and answers with a complete MCP tool result (see <c>McpEndpoints.ToolResult</c> and <c>ToolError</c>).
+/// </summary>
+public interface IMcpToolProvider
+{
+    IReadOnlyList<McpToolDefinition> Tools { get; }
+
+    Task<JsonObject> CallAsync(string name, JsonObject arguments, McpPrincipal principal, IServiceProvider services);
+}
+
 /// <summary>The capabilities that read from the workspace itself.</summary>
 public sealed class BuiltInCapabilities : ICapabilityProvider
 {

@@ -132,7 +132,7 @@ public static class McpEndpoints
             case "ping":
                 return isNotification ? null : RpcResult(id, new JsonObject());
             case "tools/list":
-                return RpcResult(id, new JsonObject { ["tools"] = ToolDefinitions() });
+                return RpcResult(id, new JsonObject { ["tools"] = ToolDefinitions(services) });
             case "tools/call":
                 return RpcResult(id, await CallToolAsync(parameters, principal, services));
             default:
@@ -140,7 +140,16 @@ public static class McpEndpoints
         }
     }
 
-    private static JsonArray ToolDefinitions() => new()
+    private static JsonArray ToolDefinitions(IServiceProvider services)
+    {
+        var tools = BuiltInToolDefinitions();
+        foreach (var provider in services.GetServices<IMcpToolProvider>())
+            foreach (var tool in provider.Tools)
+                tools.Add(new JsonObject { ["name"] = tool.Name, ["description"] = tool.Description, ["inputSchema"] = tool.InputSchema.DeepClone() });
+        return tools;
+    }
+
+    private static JsonArray BuiltInToolDefinitions() => new()
     {
         new JsonObject
         {
@@ -191,18 +200,22 @@ public static class McpEndpoints
                 return ToolError("unknown_capability", $"No capability named '{id}'. Use search_capabilities to list them.");
             }
             default:
+                // Areas can add tools of their own (see IMcpToolProvider).
+                foreach (var provider in services.GetServices<IMcpToolProvider>())
+                    if (provider.Tools.Any(t => t.Name == name))
+                        return await provider.CallAsync(name!, arguments, principal, services);
                 return ToolError("unknown_tool", $"No tool named '{name}'.");
         }
     }
 
-    private static JsonObject ToolResult(JsonObject structured) => new()
+    public static JsonObject ToolResult(JsonObject structured) => new()
     {
         ["content"] = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = structured.ToJsonString() }),
         ["structuredContent"] = structured,
         ["isError"] = false,
     };
 
-    private static JsonObject ToolError(string code, string message) => new()
+    public static JsonObject ToolError(string code, string message) => new()
     {
         ["content"] = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = new JsonObject { ["error"] = code, ["message"] = message }.ToJsonString() }),
         ["isError"] = true,

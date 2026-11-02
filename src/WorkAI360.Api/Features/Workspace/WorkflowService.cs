@@ -438,7 +438,7 @@ public sealed class WorkflowService(DenDbContext db, LibraryAccess lib, LibraryU
 
     // ---------------------------------------------------------------- running
 
-    private async Task<string?> RecordAsync(RunRecord r)
+    public async Task<string?> RecordAsync(RunRecord r)
     {
         var id = Ids.New("wfr");
         try

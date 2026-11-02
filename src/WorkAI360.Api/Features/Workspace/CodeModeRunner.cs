@@ -153,7 +153,8 @@ public static class CodeModeRunner
             engine.SetValue("console", console);
 
             engine.SetValue("input", input is null ? JsValue.Undefined : ToJs(engine, input));
-            if (freezeInput && input is not null) engine.Execute("Object.freeze(input)");
+            // A live run's generated input is read-only all the way down.
+            if (freezeInput && input is not null) engine.Execute("(function f(o) { Object.values(o).forEach((v) => { if (typeof v === 'object' && v !== null) f(v); }); Object.freeze(o); })(input)");
 
             // The source is the body of an async function: `await` and `return` work at the top level.
             var program = "(async function () {\"use strict\";" + code + "\n})()";
@@ -178,6 +179,7 @@ public static class CodeModeRunner
         catch (MemoryLimitExceededException) { return Fail("ExecutionFailure", "The script used too much memory."); }
         catch (RecursionDepthOverflowException) { return Fail("ExecutionFailure", "The script nested too deeply."); }
         catch (StatementsCountOverflowException) { return Fail("ExecutionFailure", "The script ran too many statements."); }
+        catch (JavaScriptException e) when (e.Error.IsObject() && e.Error.AsObject().Get("name") is { } n && n.IsString() && n.AsString() == "SyntaxError") { return Fail("ParseError", "Failed to parse script: " + e.Message); }
         catch (JavaScriptException e) { return Fail("ExecutionFailure", "Uncaught: " + e.Message); }
         catch (JintException e) { return Fail("ExecutionFailure", e.Message); }
     }

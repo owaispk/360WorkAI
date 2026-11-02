@@ -71,8 +71,17 @@ public static class WorkflowArtifacts
     {
         if (double.IsNaN(d) || double.IsInfinity(d)) return "null";
         if (d == 0) return "0";
-        if (d == Math.Floor(d) && Math.Abs(d) < 1e21) return d.ToString("0", CultureInfo.InvariantCulture);
         var r = d.ToString("R", CultureInfo.InvariantCulture);
+        if (d == Math.Floor(d) && Math.Abs(d) < 1e21)
+        {
+            // Shortest round-trip digits, then padded with zeros (what JavaScript prints for a large whole number).
+            if (!r.Contains('E')) return r;
+            var parts = r.Split('E');
+            var negative = parts[0].StartsWith('-');
+            var digits = parts[0].TrimStart('-').Replace(".", "");
+            var exponent = int.Parse(parts[1], CultureInfo.InvariantCulture);
+            return (negative ? "-" : "") + digits + new string('0', Math.Max(0, exponent - (digits.Length - 1)));
+        }
         if (r.Contains('E'))
         {
             var parts = r.Split('E');

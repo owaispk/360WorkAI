@@ -174,7 +174,8 @@ public static class JsonSchemaCheck
             for (var i = 0; i < tuple.Count && i < a.Count; i++) Check(root, tuple[i]!, a[i], $"{path}/{i}", errors, depth + 1);
             offset = tuple.Count;
         }
-        var rest = s["prefixItems"] is JsonArray ? s["items"] : s["additionalItems"];
+        // `items` as a schema covers every element (after any prefix); with the older tuple form of `items`, `additionalItems` covers the rest.
+        var rest = s["items"] is JsonArray ? s["additionalItems"] : s["items"];
         if (rest is not null && rest is not JsonArray)
             for (var i = offset; i < a.Count; i++) Check(root, rest, a[i], $"{path}/{i}", errors, depth + 1);
         if (s["contains"] is { } contains && !a.Any(x => Passes(root, contains, x, path, depth))) errors.Add($"{at} must contain at least 1 valid item");
