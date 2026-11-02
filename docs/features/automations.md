@@ -105,8 +105,13 @@ runs and script runs.
 
 ## Checks
 
-Mutation checks (one rule removed at a time, each caught by a failing test): claim ignores that the run is still queued, the claim window, or whose run it is; heartbeat revives
-an expired lease or ignores the lease holder; complete ignores the attempt or an expired lease; a different result after the end is accepted; events skip ahead or ignore the
-lease; a lost run is always re-queued; recovery takes a run whose lease is valid; overlap not detected; an occurrence starts twice; cancel of a queued run waits; another
-person's Automation, list or run is readable; a switched-off desktop can still claim. The race tests (eight desktops claiming, six simultaneous completes with mixed results,
-concurrent events, eight "run now" calls, two schedulers ticking, a heartbeat racing recovery, racing telemetry batches) pass on SQLite and on MySQL.
+Mutation checks (one rule removed at a time, 19 tried, 18 caught by a failing test): claim ignores that the run is still queued, the claim window, or whose run it is;
+heartbeat revives an expired lease or ignores the lease holder; complete ignores the attempt or an expired lease; a different result after the end is accepted; events skip
+ahead or ignore the lease; a lost run is always re-queued; overlap not detected; an occurrence starts twice; cancel of a queued run waits; another person's Automation, list or
+run is readable; a switched-off desktop can still claim. Two first survived (a stranger's claim and another desktop's heartbeat were refused only by the read-back, while the row
+changed), which is why `Only_the_holder_can_touch_a_run_and_nobody_else_changes_its_state` asserts the row itself. The one survivor is equivalent: the recovery update's own
+`LeaseExpiresAt < now` guard repeats the select's filter, and an expired lease cannot be revived by a heartbeat anyway, so no interleaving can reach it.
+
+The race tests (eight desktops claiming, one desktop claiming six times at once, six simultaneous completes with mixed results, concurrent and repeated events, eight "run now"
+calls, six schedulers ticking, a heartbeat racing recovery, racing telemetry batches) pass on SQLite and on MySQL (checked with a throwaway local migration, which is not
+committed: the integrator regenerates the single migration).

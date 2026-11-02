@@ -17,7 +17,7 @@
         @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
         @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
 
-        <p class="den-panel" data-testid="presence" data-connected="@_connected">
+        <p class="den-panel" data-testid="presence" data-connected="@(_connected ? "true" : "false")">
             @if (_connected) { <span>Your desktop is connected: Automations will run on time.</span> }
             else { <span>No desktop is connected. Open the OpenWork desktop app, or runs will be marked as missed.</span> }
         </p>
@@ -93,7 +93,8 @@
 
     private static readonly string[] DayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     private bool _loading = true, _connected;
-    private string _orgName = "", _name = "", _instructions = "", _provider = "anthropic", _model = "claude", _kind = "daily", _time = "09:00", _zone = "UTC";
+    private string _orgName = "", _name = "", _instructions = "", _provider = "anthropic", _model = "claude", _kind = "daily", _zone = "UTC";
+    private TimeOnly _time = new(9, 0);
     private DateTime _date = DateTime.UtcNow.Date.AddDays(1);
     private readonly bool[] _days = [false, true, true, true, true, true, false];
     private List<Row> _items = [];
@@ -142,8 +143,7 @@
 
     private object? BuildSchedule()
     {
-        var parts = _time.Split(':');
-        if (parts.Length < 2 || !int.TryParse(parts[0], out var hour) || !int.TryParse(parts[1], out var minute)) { Error = "Choose a time."; return null; }
+        int hour = _time.Hour, minute = _time.Minute;
         if (!ValidZone(_zone)) { Error = "That time zone is not one we know. Try something like Europe/Paris or UTC."; return null; }
         switch (_kind)
         {
