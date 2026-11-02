@@ -360,7 +360,7 @@ public static partial class AuditEndpoints
     private static string Sign(Binding binding, State state, string a, string b, string secret)
     {
         var payload = Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(new Cursor(binding.Org, binding.Mode, binding.FilterHash, binding.Operation, state.VisibleBefore, state.IssuedAt, state.ExpiresAt, a, b))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-        var signature = Convert.ToBase64String(HMACSHA256.HashData(Encoding.UTF8.GetBytes(secret), Encoding.UTF8.GetBytes(payload))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        var signature = Convert.ToBase64String(HMACSHA256.HashData(SecretKeys.Derive(secret, "audit cursor"), Encoding.UTF8.GetBytes(payload))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         return $"{payload}.{signature}";
     }
 
@@ -369,7 +369,7 @@ public static partial class AuditEndpoints
         var dot = token.IndexOf('.');
         if (dot <= 0) return null;
         var payload = token[..dot];
-        var expected = Convert.ToBase64String(HMACSHA256.HashData(Encoding.UTF8.GetBytes(secret), Encoding.UTF8.GetBytes(payload))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        var expected = Convert.ToBase64String(HMACSHA256.HashData(SecretKeys.Derive(secret, "audit cursor"), Encoding.UTF8.GetBytes(payload))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         if (!CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(expected), Encoding.UTF8.GetBytes(token[(dot + 1)..]))) return null;
         try
         {

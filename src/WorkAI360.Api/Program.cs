@@ -94,6 +94,21 @@ forwarded.KnownIPNetworks.Clear();
 foreach (var proxy in trustedProxies) forwarded.KnownProxies.Add(proxy);
 app.UseForwardedHeaders(forwarded);
 
+// Nothing the API serves is meant to be framed or sniffed as another type. HSTS is sent only over HTTPS outside Development.
+app.Use((context, next) =>
+{
+    context.Response.OnStarting(() =>
+    {
+        var headers = context.Response.Headers;
+        headers["X-Frame-Options"] = "DENY";
+        headers["Content-Security-Policy"] = "frame-ancestors 'none'";
+        headers.TryAdd("X-Content-Type-Options", "nosniff");
+        if (!app.Environment.IsDevelopment() && context.Request.IsHttps) headers.TryAdd("Strict-Transport-Security", "max-age=31536000");
+        return Task.CompletedTask;
+    });
+    return next(context);
+});
+
 var secret = app.Configuration[$"{AuthOptions.Section}:Secret"];
 if (string.IsNullOrWhiteSpace(secret) || secret.Length < 32)
     throw new InvalidOperationException("Auth:Secret must be set to at least 32 characters (environment variable Auth__Secret).");

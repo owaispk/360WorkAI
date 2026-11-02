@@ -120,7 +120,7 @@ public static class BrandAssetEndpoints
     // ----- signed URLs -----------------------------------------------------------------------------------------------------------------
 
     private static string Sign(string organizationId, string kind, string version, string extension, string secret) =>
-        Convert.ToBase64String(HMACSHA256.HashData(Encoding.UTF8.GetBytes(secret), Encoding.UTF8.GetBytes(string.Join('\0', organizationId, kind, version, extension)))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        Convert.ToBase64String(HMACSHA256.HashData(SecretKeys.Derive(secret, "brand asset url"), Encoding.UTF8.GetBytes(string.Join('\0', organizationId, kind, version, extension)))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
     private static bool Verify(string organizationId, string kind, string version, string extension, string signature, string secret) =>
         CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(Sign(organizationId, kind, version, extension, secret)), Encoding.UTF8.GetBytes(signature));

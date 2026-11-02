@@ -463,13 +463,16 @@ public sealed class OrgAdminTests : IClassFixture<OrgAdminFactory>
         Assert.Equal("audit_invalid_cursor", (await w.CallAsync(w.Owner, HttpMethod.Get, "/v1/audit/operations?cursor=abc.def")).Error());
         Assert.Equal("audit_invalid_cursor", (await w.CallAsync(w.Owner, HttpMethod.Get, $"/v1/audit/export?cursor={Uri.EscapeDataString(cursor)}")).Error());   // an operations cursor is not an export cursor
 
-        // A genuine cursor past its 24 hours is 410 (re-signed with the server secret to move its expiry).
+        // A genuine cursor past its 24 hours is 410 (re-signed with the cursor key to move its expiry).
         var dot = cursor.IndexOf('.');
         var payload = Encoding.UTF8.GetString(Convert.FromBase64String(PadBase64(cursor[..dot])));
         using var doc = JsonDocument.Parse(payload);
         var expired = payload.Replace($"\"ExpiresAt\":{doc.RootElement.GetProperty("ExpiresAt").GetInt64()}", "\"ExpiresAt\":1000");
         var body = Convert.ToBase64String(Encoding.UTF8.GetBytes(expired)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-        var signature = Convert.ToBase64String(HMACSHA256.HashData(Encoding.UTF8.GetBytes(Secret), Encoding.UTF8.GetBytes(body))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        string SignWith(byte[] key) => Convert.ToBase64String(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(body))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        // Cursors have their own key: one signed with the secret itself (or any other purpose's key) is not a cursor at all.
+        Assert.Equal("audit_invalid_cursor", (await w.CallAsync(w.Owner, HttpMethod.Get, $"/v1/audit/operations?limit=3&cursor={body}.{SignWith(Encoding.UTF8.GetBytes(Secret))}")).Error());
+        var signature = SignWith(SecretKeys.Derive(Secret, "audit cursor"));
         var gone = await w.CallAsync(w.Owner, HttpMethod.Get, $"/v1/audit/operations?limit=3&cursor={body}.{signature}");
         Assert.Equal(HttpStatusCode.Gone, gone.Status);
         Assert.Equal("audit_cursor_expired", gone.Error());

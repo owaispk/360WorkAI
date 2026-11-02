@@ -5,5 +5,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/WorkAI360.Api.Tests/WorkAI360.Api.Tests.csproj" />
+    <Project Path="tests/WorkAI360.Web.Tests/WorkAI360.Web.Tests.csproj" />
   </Folder>
 </Solution>

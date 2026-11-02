@@ -19,6 +19,7 @@ model gateways, cloud sandboxes, Google/Microsoft integrations). Each area has a
 | `src/WorkAI360.Api` | ASP.NET Core minimal API: `/api/auth/*`, `/v1/*`, EF Core (SQLite or MySQL). Areas live in `Features/<Area>/` and register themselves |
 | `src/WorkAI360.Web` | Blazor (Interactive Server) app and the same-origin reverse proxy (YARP) in front of the API |
 | `tests/WorkAI360.Api.Tests` | xUnit tests, in-process (`WebApplicationFactory`) |
+| `tests/WorkAI360.Web.Tests` | xUnit tests for the web host: security headers, trusted proxies, the same-origin guard |
 | `tests/parity` | Contract tests that run unchanged against the **reference** Den and this rewrite |
 | `scripts/dev.sh` | Start / stop the API (`:5080`) and web (`:5081`) |
 | `docs/` | `AREA_GUIDE.md` (how to build an area), `database.md`, and `features/*.md` (what each area implements and how it differs from the reference) |
@@ -40,7 +41,7 @@ Open `http://localhost:5081`. The API needs `Auth__Secret` (32+ characters). Dev
 ## Test
 
 ```bash
-dotnet test                                                    # 567 in-process API tests (~1 min)
+dotnet test                                                    # in-process API and web-host tests (~1.5 min)
 WORKAI_TEST_MYSQL="Server=127.0.0.1;User=root;Password=..." dotnet test   # the same tests on MySQL (a throwaway database per test class)
 
 # Contract tests against the running rewrite (web is W, API is A):
@@ -103,6 +104,7 @@ Set with environment variables (`Auth__Secret`) or `appsettings`.
 |---|---|
 | `Auth__Secret` | Required, 32+ characters. Signs cookies and OAuth requests; protects signing keys and hashes email codes. |
 | `Auth__WebUrl`, `Auth__ApiPublicUrl` | The public web and API origins. The OAuth issuer is `WebUrl/api/auth`; changing it signs every MCP client out. |
+| `Den__TrustedProxies__0`, `__1`… | **Web host.** Addresses or CIDR ranges (for example `10.0.0.0/8`) of the load balancer in front of it, whose `X-Forwarded-For/Proto/Host` are believed. Empty means loopback only. **Set this behind any TLS-terminating proxy**: otherwise the host sees `http`, the same-origin check on `/api/browser/v1/*` refuses every browser write, and the API sees the proxy as the visitor. |
 | `Auth__RequireEmailVerification` | `true` to require an emailed code before sign-in (default `false`). |
 | `Auth__TrustedProxies__0`, `__1`… | Addresses of proxies whose `X-Forwarded-*` headers are believed. Empty means loopback only. **Set this whenever the web host runs somewhere else**: until you do, the API sees every visitor as the web host, so the per-address rate limits share one bucket. |
 | `Auth__TrustedOrigins__0`… | Extra origins a password-reset link may return to, besides the web origin. |
@@ -126,9 +128,10 @@ Set with environment variables (`Auth__Secret`) or `appsettings`.
 - **Password policy** matches the reference's rules, codes and messages (8+ characters with an uppercase letter, a lowercase letter, a special character and a digit; the first rule broken is reported). Two differences: the cap is 128 characters instead of the reference's 32, so passphrases work, and the strength score and breached-password screening are not built.
 - **Email codes** are 6 digits, valid 10 minutes, stored only as a keyed hash, and replaced whenever a new one is requested. At most five guesses are possible per code even under concurrent requests (the attempt is counted atomically before the code is compared); the sixth is refused with `403 TOO_MANY_ATTEMPTS` and the code is deleted, as in the reference.
 - **Reset links** are single-use and valid 1 hour, stored hashed, and only the newest link works. A reset signs the person out everywhere and lifts any sign-in lockout. Links may only return to this site (or a configured origin); the check also rejects tricks like `http://localhost@evil.example` and `//evil.example`.
+- **Pages and API answers cannot be framed or sniffed**: every response from the web host (Blazor pages included, whose framework default would allow the same site) and the API carries `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'` and `X-Content-Type-Options: nosniff` (the consent and device pages approve access, so a hidden frame must not be able to host them); the web host adds `Referrer-Policy`; `Strict-Transport-Security` (one year) is sent over HTTPS outside Development.
+- **One key per purpose**: cookies, audit cursors, brand-image links, SSO revisions and token-limit ids are each signed with a key derived from `Auth__Secret` for that purpose (HKDF), like the signing-key, email-code, OAuth-query, SSO-secret and connection-secret keys already were.
 - **Nothing reveals whether an account exists**: requesting a code or a reset link answers the same for known and unknown addresses, and a mail outage is logged but never shown.
 - **Forwarded headers are believed only from configured proxies.** The framework's own middleware checks the caller only when `X-Forwarded-For` is present, so a spoofed `X-Forwarded-Host` sent alone would be accepted. Every forwarding header is stripped from other callers before it runs, so deep links and device-login links cannot be pointed at another site.
-- **Sign-in lockout**:
 - **Access tokens are ES256 JWTs**, not EdDSA like the reference: .NET has no built-in Ed25519, and ES256 is supported by every JWT library. The private key is created on first use and stored encrypted (AES-GCM, key derived from `Auth:Secret`); `/api/auth/jwks` publishes only the public half. Lifetimes match the reference: access 45 minutes, refresh 30 days.
 - **The authorization request travels as a signed query string** (HMAC, 30-minute expiry) between the authorize endpoint, the sign-in page and the consent page, so no request state is kept on the server and nothing can be altered, mixed or replayed after it expires.
 - **OAuth hardening**: PKCE S256 is required for every client; redirect URIs must be exact (a registered loopback URI matches on any port, per RFC 8252); resources must be ours (RFC 8707); a replayed authorization code revokes the tokens it produced; refresh tokens rotate, and presenting a rotated one after a 30-second grace window revokes the whole family; a refresh can narrow scopes but never add them; secrets, codes and refresh tokens are stored as SHA-256 only.
@@ -137,7 +140,7 @@ Set with environment variables (`Auth__Secret`) or `appsettings`.
 - **Client ID Metadata Documents** (what spec-following MCP clients use instead of registering): the HTTPS client_id is fetched once under an SSRF-safe policy (public addresses only, chosen when connecting so DNS cannot swap one in; no redirects; 5 KB cap; never this deployment's own origins), must name itself, be a public client with no secret, and pass the redirect policy; it is refreshed hourly, and an unreachable document leaves a known client as it was.
 - **Token endpoint limits** follow the reference: attempts per client and address (60 a minute; 20 with no client), per address (300), failures per caller (15 in five minutes) and per address (60); a dead refresh token is charged to that token only. In memory, per instance.
 - **Signing keys rotate**: the newest key signs; a replaced key stays published for a grace period so tokens it signed still verify, then is retired (the row is kept).
-- **Sign-in lockout**: 5 failures per address in 15 minutes returns `429 login_locked` with `Retry-After`. The email endpoints also have the reference's per-address and per-source limits (for example 5 reset requests per address per hour). All limits are in memory, per instance.
+- **Sign-in lockout** is per account **and visitor address**: 5 wrong passwords from one address for one account in 15 minutes returns `429 login_locked` with `Retry-After` for that address only, so someone who merely knows a person's email cannot keep them out (the sign-in rate limit is per account and address too). A higher per-account ceiling (50 failures in 15 minutes from any addresses) stops guessing spread over many addresses; past it the account is locked for everyone until the window ends or the password is reset. Behind a proxy, set `Auth__TrustedProxies` and `Den__TrustedProxies` or every visitor shares one address. The email endpoints also have the reference's per-address and per-source limits (for example 5 reset requests per address per hour). All limits are in memory, per instance.
 
 - **Members who have not accepted yet are listed as placeholder members** (no user id, `inviteId` set), as in the reference, so one list shows everyone. Removing a placeholder **cancels the invitation**; the reference leaves it pending.
 - **Removing, demoting or transferring revokes access immediately**: every session, refresh token, consent, MCP token and authorization code the person holds for that workspace is deleted, so an agent they connected stops working at once. Transferring ownership signs out **both** people, as in the reference.

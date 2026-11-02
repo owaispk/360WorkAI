@@ -113,5 +113,5 @@ public sealed class SessionService(DenDbContext db, IOptions<AuthOptions> option
     }
 
     private string Sign(string token) =>
-        Convert.ToBase64String(HMACSHA256.HashData(Encoding.UTF8.GetBytes(_options.Secret), Encoding.UTF8.GetBytes(token)));
+        Convert.ToBase64String(HMACSHA256.HashData(SecretKeys.Derive(_options.Secret, "session cookie"), Encoding.UTF8.GetBytes(token)));
 }
