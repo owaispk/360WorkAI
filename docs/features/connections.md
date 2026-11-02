@@ -74,13 +74,15 @@ person out (`needsReconnect`).
 ## Differences from the reference
 
 * **Not built**: Google Workspace, Microsoft 365 and Gmail integrations and every `native_provider` connection (create answers a 400 saying so),
-  `GET /v1/oauth-providers/*` (native providers, API checks), GitHub **connector instances** (`/v1/connector-instances/*`), the per-connection MCP
-  server (`exposeDirectly` is stored and returned but there is no `/mcp/connections/{id}`), plugin MCP requirement bindings (`requiredBy` is always
-  empty and `marketplace_managed` never happens), OAuth issuer review (`…/oauth/issuer-review`), Client ID Metadata Document registration with
+  the browser sign-in of native providers (`/v1/oauth-providers/*/connect/*`; saving an organization's own OAuth app is built, see `gaps.md`), GitHub **connector instances** (`/v1/connector-instances/*`), the per-connection MCP
+  server (`exposeDirectly` is stored and returned but there is no `/mcp/connections/{id}`), OAuth issuer review (`…/oauth/issuer-review`), Client ID Metadata Document registration with
   outside servers (only dynamic registration and admin-entered clients; `/oauth/client-metadata.json` is served), the Slack assistant routes, Workbot hand-off,
   readiness fingerprints (a check is reset when settings change instead), MCP App rendering in the host (the `mcp-apps` list is built).
 * Agent search keeps this server's existing shape (`capabilities[]` with `id`, `description`, `requiredScope`, `inputSchema`) rather than the
   reference's `matches[]` with scores and `schemaDigest`; there is no advisory schema guidance on arguments.
+* Plugin bindings are built (see `gaps.md`): `requiredBy` names only plugins the reader may view, a plugin-owned connection refuses address and sign-in
+  edits (`409 marketplace_managed`), and a plugin shared with a person lets them use the connection it needs. A connection made for an archived
+  plugin is retired from the lists.
 * A person, team or workspace id in access that does not belong to the workspace is `404` (the reference accepts it silently, and answers `500` for a
   malformed one; here it is `400`).
 * Without protected-resource metadata a server is treated as having no OAuth (as the reference), so there is no fallback to the server's own origin.

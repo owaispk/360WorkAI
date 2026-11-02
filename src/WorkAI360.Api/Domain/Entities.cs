@@ -72,6 +72,8 @@ public sealed class Invitation
     public DateTime ExpiresAt { get; set; }
     public DateTime? AcceptedAt { get; set; }
     public string? AcceptedByUserId { get; set; }
+    /// <summary>The team the person joins (the pending person already shows in it, under <see cref="PlaceholderMemberId"/>). Cleared when the team is deleted.</summary>
+    public string? TeamId { get; set; }
 
     public string EffectiveStatus(DateTime now) => Status == InvitationStatus.Pending && ExpiresAt <= now ? InvitationStatus.Expired : Status;
 }

@@ -59,9 +59,9 @@ ones, and archives (never deletes) skills the repository no longer has.
 
 ## Differences from the reference (on purpose or not built)
 
-* **Remote MCP servers in a plugin are not built** (connections are another area): the import lists them and says they are not imported;
-  `components[].connection`/`connectionId`, `POST /v1/plugins/{id}/mcp-connections` and the "cloud readiness" of a marketplace plugin are
-  not built. `source` in `GET /v1/marketplaces/{id}/resolved` is always `null`. Connectors, connector accounts, targets, sync events and the
+* **Remote MCP servers in a plugin** are bound to connections (`components[].connection` / `connectionId`, `POST /v1/plugins/{id}/mcp-connections`, the
+  `cloudReadiness` of marketplace plugins): see `gaps.md`. The GitHub import still lists the servers in `.mcp.json` and says they are not
+  imported, and `source` in `GET /v1/marketplaces/{id}/resolved` is always `null`. Connectors, connector accounts, targets, sync events and the
   GitHub App install routes (`/v1/connectors/github/*`, `/v1/connector-*`) are not built; `/v1/me/library` lists plugins only (no
   connections or workflows), and the library-usage `connectors` kind is always empty.
 * The reference creates a built-in **"OpenWork Marketplace"** with three built-in plugins the first time marketplaces are listed. The
