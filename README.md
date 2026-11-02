@@ -50,6 +50,7 @@ SECTIONS=health,auth,orgs,handoff,device,login-options,oauth-mcp,passwords,email
 # Real-browser flows (need Playwright):
 W=http://localhost:5081 node tests/parity/ui-flows.js                       # sign-in, workspace, device approval
 W=http://localhost:5081 A=http://localhost:5080 node tests/parity/ui-mcp.js  # an agent connecting, end to end
+W=http://localhost:5081 A=http://localhost:5080 node tests/parity/real-mcp-client.mjs  # the official MCP SDK: discovery, registration, PKCE, tools, refresh
 W=http://localhost:5081 A=http://localhost:5080 node tests/parity/ui-members.js  # invite, join, change role, remove
 W=http://localhost:5081 A=http://localhost:5080 node tests/parity/ui-teams.js    # teams, Admin teams, roles and permissions
 # One contract script and one browser script per area (each header says how to start the server for it; the reference is the default target):
