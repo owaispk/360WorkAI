@@ -4,7 +4,8 @@ using WorkAI360.Web.Proxy;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+// The browser hands API answers back to the circuit; the platform admin feature list is about 45 KB, over the 32 KB default.
+builder.Services.AddRazorComponents().AddInteractiveServerComponents().AddHubOptions(options => options.MaximumReceiveMessageSize = 1024 * 1024);
 builder.Services.AddScoped<WorkAI360.Web.Services.DenClient>();
 builder.Services.AddDenReverseProxy(builder.Configuration);
 

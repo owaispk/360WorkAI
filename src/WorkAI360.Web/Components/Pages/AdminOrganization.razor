@@ -91,7 +91,7 @@
                     <div class="den-member-actions">
                         @if (f.Source != "unavailable")
                         {
-                            <select aria-label="Setting for @f.Label" value="@f.Choice" @onchange="e => f.Choice = e.Value?.ToString() ?? \"follow\"" data-testid="override-select">
+                            <select aria-label="Setting for @f.Label" value="@f.Choice" @onchange="e => Choose(f, e.Value?.ToString())" data-testid="override-select">
                                 <option value="follow">Follow everyone</option>
                                 <option value="on">On</option>
                                 <option value="off">Off</option>
@@ -167,6 +167,8 @@
             }).ToList();
         }
     }
+
+    private static void Choose(FeatureChoice f, string? value) => f.Choice = value is "on" or "off" ? value : "follow";
 
     private async Task SavePlanAsync()
     {
