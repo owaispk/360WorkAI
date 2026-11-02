@@ -4,6 +4,8 @@ using Microsoft.EntityFrameworkCore;
 using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.Domain.Library;
+using WorkAI360.Api.Domain.Connections;
+using WorkAI360.Api.Features.PluginConnections;
 using WorkAI360.Api.OAuth;
 
 namespace WorkAI360.Api.Features.Library;
@@ -49,27 +51,46 @@ public sealed class LibraryFeature : IFeature
         app.MapGet("/v1/plugins", (HttpContext ctx, LibraryRunner run, LibraryStore store) =>
             run.RunAsync(ctx, async a => Ok(await store.ListPluginsAsync(a, ctx))));
 
-        app.MapPost("/v1/plugins", (HttpContext ctx, LibraryRunner run, LibraryStore store) => run.RunAsync(ctx, async a =>
+        app.MapPost("/v1/plugins", (HttpContext ctx, LibraryRunner run, LibraryStore store, PluginConnectionService pluginConnections) => run.RunAsync(ctx, async a =>
         {
             var body = await Zod.BodyAsync(ctx);
             var name = Zod.Str(body, "name", max: 255)!;
             var description = Zod.NullableStr(body, "description");
             var repo = Zod.Str(body, "sourceRepositoryUrl", required: false, max: 1024);
             var components = new List<(string, ConfigInput)>();
+            var wanted = new List<(McpSetup? Setup, ExternalMcpConnection? Existing)>();
             var raw = Zod.Array(body, "components", 100);
             for (var i = 0; raw is not null && i < raw.Count; i++)
             {
                 var c = raw[i];
                 if (c.ValueKind != JsonValueKind.Object) throw new Invalid($"components.{i}", $"Invalid input: expected object, received {Zod.Kind(c)}");
                 var type = Zod.Enum(c, "type", LibraryStore.ObjectTypes, $"components.{i}.type");
-                if (Zod.Has(c, "connection") || Zod.Has(c, "connectionId"))
-                    throw new LibraryFailure(400, "connections_not_supported", "Connecting MCP servers to a plugin is not available yet. Create the plugin without a connection.");
-                if (!Zod.Has(c, "input")) throw new Invalid($"components.{i}.input", "input is required unless connectionId is provided.", "custom");
+                McpSetup? setup = Zod.Has(c, "connection") ? McpSetup.Parse(Zod.Object(c, "connection"), $"components.{i}.connection") : null;
+                var connectionId = Zod.Str(c, "connectionId", required: false, max: 160, path: $"components.{i}.connectionId");
+                if (setup is not null && type != "mcp") throw new Invalid($"components.{i}.connection", "connection is only allowed on mcp components.", "custom");
+                if (connectionId is not null && type != "mcp") throw new Invalid($"components.{i}.connectionId", "connectionId is only allowed on mcp components.", "custom");
+                if (setup is not null && connectionId is not null) throw new Invalid($"components.{i}.connectionId", "Provide either connection or connectionId, not both.", "custom");
+                if (!Zod.Has(c, "input") && connectionId is null) throw new Invalid($"components.{i}.input", "input is required unless connectionId is provided.", "custom");
+                if (connectionId is not null)
+                {
+                    var (backed, existing) = await pluginConnections.ConnectionBackedInputAsync(a, connectionId);
+                    components.Add((type, backed));
+                    wanted.Add((null, existing));
+                    continue;
+                }
                 components.Add((type, LibraryStore.ReadInput(c.GetProperty("input"), $"components.{i}.input")));
+                if (setup is not null)
+                {
+                    if (!a.Has("connections.manage")) throw new LibraryForbidden("Only organization owners and admins can configure plugin MCP connections.");
+                    PluginConnectionService.ValidateAuth(setup, setup.Mode, false);
+                }
+                wanted.Add((setup, null));
             }
             var orgWide = Zod.Bool(body, "orgWide") ?? false;
             var marketplaceId = OptionalId(body, "marketplaceId", "mkt");
-            var plugin = await store.CreatePluginAsync(a, name, description.Value, repo, null, null, components, orgWide, marketplaceId);
+            var objectIds = new List<string>();
+            var plugin = await store.CreatePluginAsync(a, name, description.Value, repo, null, null, components, orgWide, marketplaceId, objectIds);
+            if (wanted.Any(w => w.Setup is not null || w.Existing is not null)) await pluginConnections.ApplyAsync(a, plugin, objectIds, wanted, ctx.RequestAborted);
             return Ok(new { ok = true, item = await store.PluginJsonAsync(plugin) }, 201);
         }));
 

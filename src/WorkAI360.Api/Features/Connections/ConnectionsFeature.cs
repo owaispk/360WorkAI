@@ -84,7 +84,7 @@ public sealed partial class ConnectionsFeature : IFeature
             {
                 if (!caller.Has("connections.view")) return Forbidden("Only workspace owners and admins can list all MCP connections.");
                 var names = await service.MemberNamesAsync(caller.OrgId);
-                var rows = await service.ListAllAsync(caller.OrgId);
+                var rows = await service.ListVisibleAsync(caller.OrgId);
                 var list = new List<Dictionary<string, object?>>();
                 foreach (var row in rows) list.Add(await service.ToJsonAsync(row, caller, true, true, names));
                 return Ok(new { connections = list });

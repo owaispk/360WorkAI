@@ -222,7 +222,7 @@ public sealed partial class ConnectionsFeature
                 return Results.Json(new { error = "connection_name_mismatch", message = $"This connection is named \"{c.Name}\", not \"{expected}\". Nothing was prepared. Check with the user which connection they mean.", connection = new { id = c.Id, name = c.Name } }, statusCode: 409);
             return Ok(new
             {
-                status = "confirmation_required", connection = new { id = c.Id, name = c.Name, url = c.Url }, requiredBy = Array.Empty<object>(),
+                status = "confirmation_required", connection = new { id = c.Id, name = c.Name, url = c.Url }, requiredBy = (await service.ProvenanceAsync(caller, c.Id)).RequiredBy.Select(x => new { pluginId = x.PluginId, name = x.Name }).ToList(),
                 handoff = new { action = "open_link", url = $"{service.WebUrl}/dashboard/mcp-connections/{c.Id}?remove=1", instructions = $"Open the link signed in to {caller.Context.Organization.Name} and choose Remove to remove {c.Name}. Nothing is removed until you do." },
             });
         }));
@@ -267,6 +267,16 @@ public sealed partial class ConnectionsFeature
     {
         var db = ctx.RequestServices.GetRequiredService<DenDbContext>();
         var http = ctx.RequestServices.GetRequiredService<GuardedHttp>();
+        // A plugin that needs this connection owns its address and sign-in: renaming and resharing stay open, the rest is refused.
+        var declaredScheme = input.AuthType == "apikey" ? input.ApiKeyAuthScheme ?? c.ApiKeyAuthScheme : "bearer";
+        var ownedFieldsChanged = c.Url != input.Url || c.AuthType != input.AuthType || c.CredentialMode != input.CredentialMode || input.ApiKey is not null
+            || c.ApiKeyAuthScheme != declaredScheme || input.IssuerPresent || input.RequestedScopes is not null || input.ManualEndpointsPresent;
+        if (ownedFieldsChanged && await service.IsManagedByPluginAsync(c.OrganizationId, c.Id))
+        {
+            var owners = (await service.ProvenanceAsync(caller, c.Id)).IdentityManagedBy.Select(x => x.Name).Distinct().ToList();
+            if (owners.Count == 0) owners = (await service.ProvenanceAsync(caller, c.Id)).RequiredBy.Select(x => x.Name).Distinct().ToList();
+            return Ok(new { error = "marketplace_managed", message = $"{(owners.Count == 0 ? "A marketplace plugin" : string.Join(", ", owners))} owns this connection's server and authentication settings. Edit those values in the marketplace definition." }, 409);
+        }
         if (!SameMillisecond(c.UpdatedAt, input.ExpectedUpdatedAt!.Value)) return Conflict("This connection changed after you opened it. Close the dialog, review the latest settings, and try again.");
 
         static string Norm(string u) => u.TrimEnd('/').ToLowerInvariant();
