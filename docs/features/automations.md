@@ -4,7 +4,7 @@ Code: `src/WorkAI360.Api/Features/Automations/` (schedule math, rules, routes, t
 `Domain/Automations/` (`AutomationEntities.cs`, `TelemetryEntities.cs`), pages `src/WorkAI360.Web/Components/Pages/Automations.razor`
 (`/dashboard/automations`), `AutomationDetail.razor` (`/dashboard/automations/{id}`) and `Analytics.razor` (`/dashboard/analytics`), dashboard buttons in
 `Components/AutomationLinks.cs`, plain-words labels in `Components/AutomationFormat.cs`.
-Tests: `tests/WorkAI360.Api.Tests/AutomationScheduleTests.cs` (41, pure functions), `AutomationTests.cs` (44, through the API, including the races),
+Tests: `tests/WorkAI360.Api.Tests/AutomationScheduleTests.cs` (41, pure functions), `AutomationTests.cs` (45, through the API, including the races and the cloud runtime fixture),
 `tests/parity/area-automations.mjs` (61, runs on the reference and the rewrite), `tests/parity/ui-automations.js` (browser).
 
 ## What it is
