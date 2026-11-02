@@ -40,7 +40,7 @@ Open `http://localhost:5081`. The API needs `Auth__Secret` (32+ characters). Dev
 ## Test
 
 ```bash
-dotnet test                                                    # 655 in-process API tests (~2 min)
+dotnet test                                                    # 741 in-process API tests (~2 min)
 WORKAI_TEST_MYSQL="Server=127.0.0.1;User=root;Password=..." dotnet test   # the same tests on MySQL (a throwaway database per test class)
 
 # Contract tests against the running rewrite (web is W, API is A):
@@ -96,6 +96,7 @@ It is the yardstick for "does the rewrite behave like Den": a route is done when
 | Onboarding and the person's own routes ([docs](docs/features/onboarding.md)) | `/v1/me/profile`, `/v1/me/invitations`, `/v1/me/send-download-link`, install config and links (`/v1/install*`, `/v1/me/install*`, `POST /v1/orgs/{id}/install-links`), bootstrap workspaces and claim links/codes (`/v1/bootstrap/*`), diagnostics and egress checks, `/v1/resources*`, `/v1/app-version`. Pages: create workspace and settings (`/organization`), `/dashboard/onboarding` (invite people, tools), `/install`, `/claim`, `/workspace-claim`, `/setup`, `/reauth/*` |
 | Platform admin ([docs](docs/features/platform-admin.md)) | `/v1/admin/*` for the operator of a deployment: overview and metrics, users (search, delete), organizations (detail, plan, free seats, DPA, web access, capabilities), feature flags with per-workspace overrides, platform admins (a table plus `PlatformAdmin__BootstrapEmails`). The flags drive `GET /v1/features` and the `features` fields of `GET /v1/org`. Pages under `/admin` |
 | Approved web origins in use ([docs](docs/features/web-origins.md)) | CORS for operator-configured and workspace-approved origins (cached, fail-closed), and approved web return URLs for desktop handoff |
+| Automations and telemetry ([docs](docs/features/automations.md)) | `/v1/automations*` (CRUD, activate/deactivate, run now, archive), schedules with the reference's DST rules, runs with leases and the desktop-runner protocol (token, work, claim, heartbeat, events, complete, cancel), runner presence, cloud Automations stored and answered like the reference when no cloud runner exists, `/v1/telemetry/*` ingest and analytics (12 weeks, computed locally). A background scheduler starts due Automations and recovers expired leases. Pages `/dashboard/automations`, `/analytics` |
 | Web host | `/api/auth/*`, `/api/browser/v1/*` (same-origin guard, cookie filter) proxied to the API; the aliases `login-options`, `sso-resolve`, `desktop-handoff`; `/api/health`, `/api/ready`, `/api/runtime-config`, `/api/auth/clear-session-cookie` |
 | Blazor pages | `/` (email-first sign-in or sign-up; resumes an agent's authorization afterwards), `/organization`, `/dashboard`, `/dashboard/members` (list, invite, change role, remove, make owner, copy or cancel an invitation), `/dashboard/teams` (create, rename, delete, choose people, Admin teams), `/dashboard/permissions` (roles by area, shared roles, give to teams, history), `/join-org` (open an invitation link), `/device`, `/mcp/consent` and `/mcp/select-organization` (allow or deny an agent, choose or create a workspace), `/connect/error`, `/reset-password` (and the verify-code and forgot-password steps on `/`) |
 
@@ -166,7 +167,7 @@ The reference has about 400 distinct `/v1` paths and 129 web pages; this covers 
 - **Google Workspace, Microsoft 365 and Gmail** integrations (and every connection of kind `native_provider`), the Slack assistant, and the GitHub App install routes.
 
 **Not reached yet (no outside dependency):**
-- **Automations**, workflows and workflow/script runs (`/v1/automations*`, `/v1/automation-runs*`, `/v1/codemode*`), and **telemetry/analytics** (`/v1/telemetry*`) are in progress (see the repository's commit log).
+- **Workflows** and workflow/script runs (`/v1/workflows*`, `/v1/codemode*`, the den-web workflow-runs and script-runs pages), the runner events SSE stream and runner inventory, calendar triggers, and cloud execution of Automations (it needs a cloud runner).
 - The rest of platform admin (inference usage, security, feature usage, sandbox organizations, services), first-administrator setup, activation and "my agent", and real egress probes (see [docs/features/platform-admin.md](docs/features/platform-admin.md) and [onboarding.md](docs/features/onboarding.md)).
 - **SAML** sign-in (the SSO route answers 501), plugin–connection bindings, `/v1/oauth-providers*`, invite-into-a-team, declarative team keys.
 - **OAuth**: `client_credentials`, introspection, `private_key_jwt`, ID tokens and `userinfo`, a rate limit on client registration. **Email**: the sign-in, forget-password and change-email code types. **Social sign-in** (Google, GitHub).
