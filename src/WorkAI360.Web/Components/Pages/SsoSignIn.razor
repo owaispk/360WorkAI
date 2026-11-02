@@ -63,7 +63,10 @@
         StateHasChanged();
         var self = $"/sso/{Uri.EscapeDataString(Slug)}";
         var module = await Js.InvokeAsync<IJSObjectReference>("import", "./js/sso.js");
-        var body = System.Text.Json.JsonSerializer.Serialize(new { organizationSlug = Slug, callbackURL = _callback, errorCallbackURL = self, loginHint = _loginHint });
+        // A hint that is not there is left out (the API refuses a null), so the workspace address works on its own.
+        var fields = new Dictionary<string, string?> { ["organizationSlug"] = Slug, ["callbackURL"] = _callback, ["errorCallbackURL"] = self };
+        if (!string.IsNullOrEmpty(_loginHint)) fields["loginHint"] = _loginHint;
+        var body = System.Text.Json.JsonSerializer.Serialize(fields);
         var raw = await module.InvokeAsync<DenRaw>("post", "/api/auth/sign-in/sso", null, body);
         var response = new DenResponse(raw.Status, raw.Text);
         if (!response.Ok || response.String("url") is not { Length: > 0 } url)
