@@ -146,7 +146,7 @@ public static class OrgSettingsEndpoints
             return Results.Json(new { revision = await InventoryRevisionAsync(db, context!.Organization.Id) });
         });
 
-        app.MapPost("/v1/org/feature-usage", async (HttpContext ctx, OrgAccess access) =>
+        app.MapPost("/v1/org/feature-usage", async (HttpContext ctx, OrgAccess access, WorkAI360.Api.Features.PlatformAdmin.FeatureResolver resolver, WorkAI360.Api.Features.PlatformAdmin.FeatureUsageStore usage) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -168,7 +168,14 @@ public static class OrgSettingsEndpoints
             }
             if (Zod.Unrecognized(root, "features") is { } extra) issues.Add(extra);
             if (issues.Count > 0) return Zod.Respond(issues);
-            // The reference stores member, feature and day for platform admins. There is no platform-admin view here, so reports are accepted and dropped.
+            // Stores member, feature and day only, for features that are on for the caller; unknown keys are ignored. Best effort: always answers ok.
+            try
+            {
+                var on = await resolver.EffectiveAsync(context!.Organization.Id);
+                var keys = features.EnumerateArray().Select(f => f.GetString()!).Where(k => on.GetValueOrDefault(k)).ToList();
+                if (keys.Count > 0) await usage.RecordAsync(context.Organization.Id, context.Member.Id, keys);
+            }
+            catch (Exception e) when (e is Microsoft.EntityFrameworkCore.DbUpdateException or InvalidOperationException) { }
             return Results.Json(new { ok = true });
         });
 
