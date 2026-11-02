@@ -70,7 +70,9 @@ public static class McpEndpoints
         var principal = await authenticator.AuthenticateAsync(ctx.Request);
         if (principal is null)
         {
-            ctx.Response.Headers.WWWAuthenticate = $"Bearer resource_metadata=\"{urls.ProtectedResourceMetadata}\", scope=\"{OAuthConstants.DefaultScope}\"";
+            ctx.Response.Headers.WWWAuthenticate = authenticator.DpopFailure is { } dpopFailure
+                ? $"DPoP error=\"{dpopFailure.Code}\", error_description=\"{dpopFailure.Message.Replace('"', '\'')}\", algs=\"{string.Join(' ', DpopVerifier.SigningAlgorithms)}\""
+                : $"Bearer resource_metadata=\"{urls.ProtectedResourceMetadata}\", scope=\"{OAuthConstants.DefaultScope}\"";
             return Results.Json(new { error = "unauthorized", error_description = "A valid OAuth access token is required." }, statusCode: 401);
         }
 

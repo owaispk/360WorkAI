@@ -7,6 +7,8 @@ using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.Domain;
 using WorkAI360.Api.Domain.Oidc;
+using WorkAI360.Api.Domain.OAuthExtras;
+using WorkAI360.Api.Endpoints;
 
 namespace WorkAI360.Api.OAuth;
 
@@ -71,12 +73,16 @@ public static class OAuthEndpoints
         claims_parameter_supported = false,
         request_parameter_supported = false,
         request_uri_parameter_supported = false,
-        introspection_endpoint_auth_methods_supported = new[] { "client_secret_basic", "client_secret_post" },
+        introspection_endpoint_auth_methods_supported = new[] { "client_secret_basic", "client_secret_post", "private_key_jwt" },
+        introspection_endpoint_auth_signing_alg_values_supported = Jose.AssertionAlgorithms,
         response_types_supported = new[] { "code" },
         response_modes_supported = new[] { "query" },
-        grant_types_supported = new[] { "authorization_code", "refresh_token" },
-        token_endpoint_auth_methods_supported = new[] { "none", "client_secret_basic", "client_secret_post" },
-        revocation_endpoint_auth_methods_supported = new[] { "none", "client_secret_basic", "client_secret_post" },
+        grant_types_supported = new[] { "authorization_code", "client_credentials", "refresh_token" },
+        token_endpoint_auth_methods_supported = new[] { "none", "client_secret_basic", "client_secret_post", "private_key_jwt" },
+        token_endpoint_auth_signing_alg_values_supported = Jose.AssertionAlgorithms,
+        revocation_endpoint_auth_methods_supported = new[] { "none", "client_secret_basic", "client_secret_post", "private_key_jwt" },
+        revocation_endpoint_auth_signing_alg_values_supported = Jose.AssertionAlgorithms,
+        dpop_signing_alg_values_supported = DpopVerifier.SigningAlgorithms,
         code_challenge_methods_supported = new[] { "S256" },
         authorization_response_iss_parameter_supported = false,
         client_id_metadata_document_supported = true,
@@ -92,7 +98,7 @@ public static class OAuthEndpoints
 
     // ============================== registration ==============================
 
-    private static async Task<IResult> RegisterAsync(HttpContext ctx, DenDbContext db, SessionService sessions)
+    private static async Task<IResult> RegisterAsync(HttpContext ctx, DenDbContext db, SessionService sessions, ClientJwksStore jwksStore, TrustedUrls trusted)
     {
         JsonElement body;
         try { body = (await JsonDocument.ParseAsync(ctx.Request.Body)).RootElement.Clone(); }
@@ -103,18 +109,39 @@ public static class OAuthEndpoints
             e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Array ? v.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToList() : [];
         static string? Str(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 
-        var redirectUris = Strings(body, "redirect_uris");
-        if (redirectUris.Count == 0 || redirectUris.Count > 10) return Error(400, "invalid_redirect_uri", "redirect_uris must list between 1 and 10 URIs.");
-        if (redirectUris.Any(u => !RedirectPolicy.IsAllowed(u))) return Error(400, "invalid_redirect_uri", RedirectPolicy.ErrorDescription);
-
+        var signedIn = await sessions.ResolveAsync(ctx) is not null;
         var grantTypes = Strings(body, "grant_types");
-        if (grantTypes.Count == 0) grantTypes = ["authorization_code", "refresh_token"];
-        if (grantTypes.Any(g => g is not ("authorization_code" or "refresh_token"))) return Error(400, "invalid_client_metadata", "Only the authorization_code and refresh_token grants are supported.");
+        // The reference lets only a signed-in person register a client that can act as itself.
+        if (grantTypes.Contains("client_credentials") && !signedIn) return Error(400, "invalid_client_metadata", "client_credentials grant requires authenticated registration");
+        var grantsGiven = grantTypes.Count > 0;
+        if (!grantsGiven) grantTypes = [.. OAuthExtrasService.DefaultGrants];
+        var unsupported = grantTypes.FirstOrDefault(g => g is not ("authorization_code" or "refresh_token" or "client_credentials"));
+        if (unsupported is not null) return Error(400, "invalid_client_metadata", $"unsupported grant_type {unsupported}");
         var responseTypes = Strings(body, "response_types");
         if (responseTypes.Any(r => r != "code")) return Error(400, "invalid_client_metadata", "Only the code response type is supported.");
+        if (responseTypes.Contains("code") && !grantTypes.Contains("authorization_code")) return Error(400, "invalid_client_metadata", "When 'code' response type is used, 'authorization_code' grant type must be included");
+
+        var redirectUris = Strings(body, "redirect_uris");
+        var needsRedirects = grantTypes.Contains("authorization_code");
+        if (needsRedirects && redirectUris.Count == 0 || redirectUris.Count > 10) return Error(400, "invalid_redirect_uri", "redirect_uris must list between 1 and 10 URIs.");
+        if (redirectUris.Any(u => !RedirectPolicy.IsAllowed(u))) return Error(400, "invalid_redirect_uri", RedirectPolicy.ErrorDescription);
 
         var method = Str(body, "token_endpoint_auth_method") ?? "none";
-        if (method is not ("none" or "client_secret_basic" or "client_secret_post")) return Error(400, "invalid_client_metadata", "Unsupported token_endpoint_auth_method.");
+        if (method is not ("none" or "client_secret_basic" or "client_secret_post" or "private_key_jwt")) return Error(400, "invalid_client_metadata", "Unsupported token_endpoint_auth_method.");
+
+        // Keys for private_key_jwt (inline or by address, never both), and whether the client's tokens must be DPoP-bound.
+        JsonElement? jwks = body.TryGetProperty("jwks", out var jwksValue) && jwksValue.ValueKind != JsonValueKind.Null ? jwksValue.Clone() : null;
+        var jwksUri = body.TryGetProperty("jwks_uri", out var uriValue) && uriValue.ValueKind != JsonValueKind.Null ? (uriValue.ValueKind == JsonValueKind.String ? uriValue.GetString() : "") : null;
+        if (jwks is not null && jwksUri is not null) return Error(400, "invalid_client_metadata", "jwks and jwks_uri are mutually exclusive");
+        if (jwks is { } set && ClientJwksStore.Validate(set) is { } jwksProblem) return Error(400, "invalid_client_metadata", jwksProblem);
+        if (jwksUri is not null && jwksStore.CheckUri(jwksUri, trusted) is { } uriProblem) return Error(400, "invalid_client_metadata", uriProblem);
+        if (method == "private_key_jwt" && jwks is null && jwksUri is null) return Error(400, "invalid_client_metadata", "private_key_jwt requires either jwks or jwks_uri");
+        var dpopBound = false;
+        if (body.TryGetProperty("dpop_bound_access_tokens", out var dpopValue))
+        {
+            if (dpopValue.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) return Error(400, "invalid_client_metadata", "dpop_bound_access_tokens must be a boolean");
+            dpopBound = dpopValue.GetBoolean();
+        }
 
         var scopes = OAuthConstants.SplitScope(Str(body, "scope") ?? OAuthConstants.DefaultScope);
         if (scopes.Any(s => !OAuthConstants.Scopes.Contains(s))) return Error(400, "invalid_client_metadata", "Unsupported scope requested.");
@@ -128,13 +155,18 @@ public static class OAuthEndpoints
         // registration is made by a signed-in person (an anonymous registration cannot give a client the right to log people out).
         var postLogout = Strings(body, "post_logout_redirect_uris");
         if (postLogout.Count > 10 || postLogout.Any(u => !RedirectPolicy.IsAllowed(u))) return Error(400, "invalid_redirect_uri", "post_logout_redirect_uris must use HTTPS callbacks or HTTP loopback callbacks and must not include fragments.");
-        var enableEndSession = body.TryGetProperty("enable_end_session", out var ees) && ees.ValueKind == JsonValueKind.True && await sessions.ResolveAsync(ctx) is not null;
+        var enableEndSession = body.TryGetProperty("enable_end_session", out var ees) && ees.ValueKind == JsonValueKind.True && signedIn;
 
         var clientId = Ids.RandomAlnum(32);
-        string? secret = method == "none" ? null : OAuthConstants.ClientSecretPrefix + Ids.RandomAlnum(40);
+        string? secret = method is "none" or "private_key_jwt" ? null : OAuthConstants.ClientSecretPrefix + Ids.RandomAlnum(40);
         var now = DateTime.UtcNow;
         if (postLogout.Count > 0 || enableEndSession)
             db.Set<OidcClientSettings>().Add(new OidcClientSettings { ClientId = clientId, EnableEndSession = enableEndSession, PostLogoutRedirectUrisJson = postLogout.Count > 0 ? JsonSerializer.Serialize(postLogout) : null });
+        if (grantsGiven || jwks is not null || jwksUri is not null || dpopBound)
+            db.Set<OAuthClientExtras>().Add(new OAuthClientExtras
+            {
+                ClientId = clientId, GrantTypesJson = grantsGiven ? JsonSerializer.Serialize(grantTypes) : null, JwksJson = jwks?.GetRawText(), JwksUri = jwksUri, DpopBoundAccessTokens = dpopBound,
+            });
         db.OAuthClients.Add(new OAuthClient
         {
             Id = clientId,
@@ -156,12 +188,15 @@ public static class OAuthEndpoints
             ["redirect_uris"] = redirectUris,
             ["token_endpoint_auth_method"] = method,
             ["grant_types"] = grantTypes,
-            ["response_types"] = new[] { "code" },
+            ["response_types"] = grantTypes.Contains("authorization_code") ? new[] { "code" } : Array.Empty<string>(),
             ["scope"] = OAuthConstants.JoinScope(scopes),
         };
         if (secret is not null) { response["client_secret"] = secret; response["client_secret_expires_at"] = 0; }
         if (logo is not null) response["logo_uri"] = logo;
         if (postLogout.Count > 0) response["post_logout_redirect_uris"] = postLogout;
+        if (jwks is not null) response["jwks"] = jwks;
+        if (jwksUri is not null) response["jwks_uri"] = jwksUri;
+        if (dpopBound) response["dpop_bound_access_tokens"] = true;
         ctx.Response.Headers.CacheControl = "no-store";
         return Results.Json(response, statusCode: 201);
     }
@@ -195,6 +230,9 @@ public static class OAuthEndpoints
         var challenge = p.GetValueOrDefault("code_challenge");
         if (string.IsNullOrEmpty(challenge) || p.GetValueOrDefault("code_challenge_method") != "S256" || challenge.Length is < 43 or > 128)
             return (null, Redirect("invalid_request", "PKCE with code_challenge_method=S256 is required."));
+        // RFC 9449 section 10: the client may bind the code to the key it will present a proof with at the token endpoint.
+        if (p.TryGetValue("dpop_jkt", out var dpopJkt) && !DpopVerifier.IsThumbprint(dpopJkt))
+            return (null, Redirect("invalid_request", "dpop_jkt must be a base64url-encoded SHA-256 JWK thumbprint"));
 
         var requested = OAuthConstants.SplitScope(p.GetValueOrDefault("scope"));
         if (requested.Length == 0) requested = OAuthConstants.SplitScope(client.Scope);
@@ -321,6 +359,8 @@ public static class OAuthEndpoints
             CodeChallenge = req.CodeChallenge,
             ExpiresAt = DateTime.UtcNow + OAuthConstants.CodeLifetime,
         });
+        if (req.Parameters.FirstOrDefault(p => p.Key == "dpop_jkt").Value is { Length: > 0 } dpopJkt)
+            db.Set<OAuthDpopBinding>().Add(new OAuthDpopBinding { Id = codeHash, Jkt = dpopJkt, ExpiresAt = DateTime.UtcNow + OAuthConstants.CodeLifetime });
         await db.SaveChangesAsync();
         var ps = new Dictionary<string, string?> { ["code"] = code };
         if (req.State is not null) ps["state"] = req.State;
@@ -330,33 +370,40 @@ public static class OAuthEndpoints
 
     // ============================== tokens ==============================
 
-    private static async Task<IResult> TokenAsync(HttpContext ctx, DenDbContext db, ClientResolver clients, TokenService tokens, OAuthUrls urls, TokenRateLimit rateLimit)
+    private static async Task<IResult> TokenAsync(HttpContext ctx, DenDbContext db, ClientResolver clients, TokenService tokens, OAuthUrls urls, TokenRateLimit rateLimit, ClientAssertionVerifier assertions, OAuthExtrasService extras)
     {
         ctx.Response.Headers.CacheControl = "no-store";
         ctx.Response.Headers.Pragma = "no-cache";
         var form = await ReadParamsAsync(ctx.Request);
-        var admission = rateLimit.Admit(ctx, form, BasicClientId(ctx.Request));
+        // A client that authenticates with a signed assertion may leave client_id out: the assertion's subject picks the rate-limit bucket (nothing is trusted from it here).
+        var admission = rateLimit.Admit(ctx, form, BasicClientId(ctx.Request) ?? ClientAssertionVerifier.PeekClientId(form.GetValueOrDefault("client_assertion")));
         if (admission.Refused is { } refused) return refused;
-        var result = await HandleTokenRequestAsync(ctx, form, db, clients, tokens, urls);
+        var result = await HandleTokenRequestAsync(ctx, form, db, clients, tokens, urls, assertions, extras);
         rateLimit.RecordFailure(admission, result);
         return result;
     }
 
-    private static async Task<IResult> HandleTokenRequestAsync(HttpContext ctx, Dictionary<string, string> form, DenDbContext db, ClientResolver clients, TokenService tokens, OAuthUrls urls)
+    private static async Task<IResult> HandleTokenRequestAsync(HttpContext ctx, Dictionary<string, string> form, DenDbContext db, ClientResolver clients, TokenService tokens, OAuthUrls urls, ClientAssertionVerifier assertions, OAuthExtrasService extras)
     {
-
-        var (client, clientFailure) = await AuthenticateClientAsync(ctx, clients, form);
+        var (client, clientFailure) = await AuthenticateClientAsync(ctx, clients, form, assertions, "oauth2/token");
         if (clientFailure is not null) return clientFailure;
 
-        return form.GetValueOrDefault("grant_type") switch
+        var grant = form.GetValueOrDefault("grant_type");
+        if (grant is not ("authorization_code" or "refresh_token" or "client_credentials"))
+            return Error(400, "unsupported_grant_type", "Only authorization_code, client_credentials and refresh_token are supported.");
+        // A client may use only the grants it registered for (the reference's `clientAllowsGrant`).
+        var clientExtras = await extras.ExtrasAsync(client!.Id);
+        if (!OAuthExtrasService.AllowsGrant(clientExtras, grant)) return Error(400, "unauthorized_client", $"client is not authorized to use grant type {grant}");
+
+        return grant switch
         {
-            "authorization_code" => await AuthorizationCodeGrantAsync(client!, form, db, tokens, urls),
-            "refresh_token" => await RefreshGrantAsync(client!, form, db, tokens, urls),
-            _ => Error(400, "unsupported_grant_type", "Only authorization_code and refresh_token are supported."),
+            "authorization_code" => await AuthorizationCodeGrantAsync(ctx, client!, clientExtras, form, db, tokens, urls, extras),
+            "refresh_token" => await RefreshGrantAsync(ctx, client!, clientExtras, form, db, tokens, urls, extras),
+            _ => await extras.ClientCredentialsGrantAsync(ctx, client!, form),
         };
     }
 
-    private static async Task<IResult> AuthorizationCodeGrantAsync(OAuthClient client, Dictionary<string, string> form, DenDbContext db, TokenService tokens, OAuthUrls urls)
+    private static async Task<IResult> AuthorizationCodeGrantAsync(HttpContext ctx, OAuthClient client, Domain.OAuthExtras.OAuthClientExtras? clientExtras, Dictionary<string, string> form, DenDbContext db, TokenService tokens, OAuthUrls urls, OAuthExtrasService extras)
     {
         var code = form.GetValueOrDefault("code");
         if (string.IsNullOrEmpty(code)) return Error(400, "invalid_request", "code is required.");
@@ -383,6 +430,11 @@ public static class OAuthEndpoints
         if (form.TryGetValue("resource", out var requestedResource) && urls.NormalizeResource(requestedResource) != row.Resource)
             return Error(400, "invalid_target", "The requested resource does not match the authorization request.");
 
+        // DPoP (RFC 9449): required when the client wants bound tokens or the code was requested with dpop_jkt; a proof that is sent must verify and binds the tokens.
+        // Checked before the code is spent, so a client that forgot the proof can try again with one.
+        var (dpopJkt, dpopFailure) = await extras.TokenBindingAsync(ctx, clientExtras, await extras.CodeBindingAsync(hash));
+        if (dpopFailure is not null) return dpopFailure;
+
         // Exactly one caller can flip ConsumedAt from null.
         var claimed = await db.AuthorizationCodes.Where(c => c.Id == hash && c.ConsumedAt == null).ExecuteUpdateAsync(s => s.SetProperty(c => c.ConsumedAt, DateTime.UtcNow));
         if (claimed == 0)
@@ -394,10 +446,10 @@ public static class OAuthEndpoints
         if (!await db.Members.AnyAsync(m => m.OrganizationId == row.OrganizationId && m.UserId == row.UserId))
             return Error(400, "invalid_grant", "The person is no longer a member of this organization.");
 
-        return Results.Json(await tokens.IssueAsync(client.Id, row.UserId, row.OrganizationId, row.Scope, row.Resource, hash));
+        return Results.Json(await tokens.IssueAsync(client.Id, row.UserId, row.OrganizationId, row.Scope, row.Resource, hash, dpopJkt: dpopJkt));
     }
 
-    private static async Task<IResult> RefreshGrantAsync(OAuthClient client, Dictionary<string, string> form, DenDbContext db, TokenService tokens, OAuthUrls urls)
+    private static async Task<IResult> RefreshGrantAsync(HttpContext ctx, OAuthClient client, Domain.OAuthExtras.OAuthClientExtras? clientExtras, Dictionary<string, string> form, DenDbContext db, TokenService tokens, OAuthUrls urls, OAuthExtrasService extras)
     {
         var presented = form.GetValueOrDefault("refresh_token");
         if (string.IsNullOrEmpty(presented)) return Error(400, "invalid_request", "refresh_token is required.");
@@ -430,17 +482,21 @@ public static class OAuthEndpoints
             return Error(400, "invalid_grant", "The person is no longer a member of this organization.");
         }
 
+        // DPoP: a bound refresh token needs a proof by the same key; an unbound one that arrives with a proof is bound to it from here on.
+        var (dpopJkt, dpopFailure) = await extras.TokenBindingAsync(ctx, clientExtras, await extras.FamilyBindingAsync(row.FamilyId));
+        if (dpopFailure is not null) return dpopFailure;
+
         row.RotatedAt ??= now;
         await db.SaveChangesAsync();
         // The new token keeps offline_access so the client can keep refreshing.
         var issuedScope = OAuthConstants.SplitScope(row.Scope).Contains(OAuthConstants.OfflineScope) ? OAuthConstants.JoinScope(OAuthConstants.SplitScope(scope).Append(OAuthConstants.OfflineScope)) : scope;
-        return Results.Json(await tokens.IssueAsync(client.Id, row.UserId, row.OrganizationId, issuedScope, row.Resource, row.CodeHash, row.FamilyId));
+        return Results.Json(await tokens.IssueAsync(client.Id, row.UserId, row.OrganizationId, issuedScope, row.Resource, row.CodeHash, row.FamilyId, dpopJkt));
     }
 
-    private static async Task<IResult> RevokeAsync(HttpContext ctx, DenDbContext db, ClientResolver clients, TokenService tokens)
+    private static async Task<IResult> RevokeAsync(HttpContext ctx, DenDbContext db, ClientResolver clients, TokenService tokens, ClientAssertionVerifier assertions)
     {
         var form = await ReadParamsAsync(ctx.Request);
-        var (client, failure) = await AuthenticateClientAsync(ctx, clients, form);
+        var (client, failure) = await AuthenticateClientAsync(ctx, clients, form, assertions, "oauth2/revoke");
         if (failure is not null) return failure;
 
         // RFC 7009: the response never reveals whether the token existed.
@@ -470,10 +526,22 @@ public static class OAuthEndpoints
         catch (Exception e) when (e is FormatException or UriFormatException) { return null; }
     }
 
-    private static async Task<(OAuthClient? Client, IResult? Failure)> AuthenticateClientAsync(HttpContext ctx, ClientResolver clients, Dictionary<string, string> form)
+    private static async Task<(OAuthClient? Client, IResult? Failure)> AuthenticateClientAsync(HttpContext ctx, ClientResolver clients, Dictionary<string, string> form, ClientAssertionVerifier assertions, string endpointPath)
     {
-        string? id = form.GetValueOrDefault("client_id"), secret = form.GetValueOrDefault("client_secret");
         var header = ctx.Request.Headers.Authorization.ToString();
+        // private_key_jwt: a signed assertion instead of a secret. Only one way of authenticating per request (RFC 6749 section 2.3).
+        if (form.ContainsKey("client_assertion") || form.ContainsKey("client_assertion_type"))
+        {
+            if (header.Length > 0 || form.ContainsKey("client_secret")) return (null, Error(400, "invalid_request", "A request must use only one client authentication method"));
+            try
+            {
+                var authenticated = await assertions.AuthenticateAsync(form.GetValueOrDefault("client_assertion"), form.GetValueOrDefault("client_assertion_type"), form.GetValueOrDefault("client_id"), endpointPath, ctx.RequestAborted);
+                return (authenticated, null);
+            }
+            catch (OAuthProblem problem) { return (null, problem.ToResult()); }
+        }
+
+        string? id = form.GetValueOrDefault("client_id"), secret = form.GetValueOrDefault("client_secret");
         if (header.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
         {
             try
@@ -488,6 +556,7 @@ public static class OAuthEndpoints
 
         var client = await clients.ResolveAsync(id);
         if (client is null) return (null, InvalidClient());
+        if (client.AuthMethod == "private_key_jwt") return (null, Error(400, "invalid_client", "client registered for private_key_jwt must use client_assertion"));
         if (client.AuthMethod != "none")
         {
             if (string.IsNullOrEmpty(secret) || client.SecretHash is null
