@@ -320,7 +320,7 @@ public sealed class WorkspaceFeature : IFeature
         var script = await svc.DetailAsync(a, configObjectId, maxAgeMs);
         var id = script["configObjectId"]!.GetValue<string>();
         var card = (await svc.CardsAsync(a, id)).FirstOrDefault() ?? throw new WorkflowException("workflow_not_found");
-        var viewList = views.Enabled ? (await views.ListForWorkflowAsync(a, id)).Select(v => (JsonObject)v!).ToList() : [];
+        var viewList = views.Enabled ? (await views.ListForWorkflowAsync(a, id)).Select(v => (JsonObject)v!.DeepClone()).ToList() : [];
         script["canRun"] = true;
         return new JsonObject
         {

@@ -75,7 +75,7 @@ public sealed class ArtifactViewService(DenDbContext db, WorkflowService workflo
     private async Task<ArtifactView> AccessibleAsync(Actor a, string viewId, bool manage)
     {
         var id = TypeIds.ArtifactView(viewId);
-        var row = await db.Set<ArtifactView>().FirstOrDefaultAsync(v => v.Id == id && v.OrganizationId == a.OrgId) ?? throw new WorkflowException("artifact_view_not_found");
+        var row = await db.Set<ArtifactView>().AsNoTracking().FirstOrDefaultAsync(v => v.Id == id && v.OrganizationId == a.OrgId) ?? throw new WorkflowException("artifact_view_not_found");
         var access = await WorkflowAccessAsync(a, row.ConfigObjectId);
         if (manage && !access.CanManage) throw new WorkflowException("artifact_view_not_found");
         return row;

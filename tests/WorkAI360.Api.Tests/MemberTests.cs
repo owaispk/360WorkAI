@@ -77,7 +77,8 @@ public sealed class Workspace
     {
         var r = await Http.SendAsync(As(p, method, url, body));
         var text = await r.Content.ReadAsStringAsync();
-        return (r.StatusCode, string.IsNullOrEmpty(text) ? default : JsonDocument.Parse(text).RootElement.Clone());
+        try { return (r.StatusCode, string.IsNullOrEmpty(text) ? default : JsonDocument.Parse(text).RootElement.Clone()); }
+        catch (JsonException) { throw new InvalidOperationException($"{(int)r.StatusCode} {method} {url} answered something that is not JSON: {text[..Math.Min(text.Length, 600)]}"); }
     }
 
     public static string Error(JsonElement body) => body.ValueKind == JsonValueKind.Object && body.TryGetProperty("error", out var e) ? e.GetString() ?? "" : "";
