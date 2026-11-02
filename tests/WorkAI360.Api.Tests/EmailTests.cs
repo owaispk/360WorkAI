@@ -225,7 +225,10 @@ public sealed class VerificationTests : IClassFixture<VerificationFactory>
         Assert.Equal("INVALID_EMAIL", (await Send("/api/auth/email-otp/send-verification-otp", new { email = "nope", type = "email-verification" })).Item3);
         Assert.Equal("INVALID_EMAIL", (await Send("/api/auth/email-otp/verify-email", new { email = "nope", otp = "123456" })).Item3);
         Assert.Equal("[body.otp] Invalid input: expected string, received undefined", (await Send("/api/auth/email-otp/verify-email", new { email = "a@b.co" })).Item2);
-        Assert.Equal("UNSUPPORTED_OTP_TYPE", (await Send("/api/auth/email-otp/send-verification-otp", new { email = "a@b.co", type = "sign-in" })).Item3);
+        // Codes for signing in and for resetting a password exist now (EmailCodeTests); changing the address by code is off, as in the reference.
+        var changeEmail = await client.PostAsJsonAsync("/api/auth/email-otp/send-verification-otp", new { email = "a@b.co", type = "change-email" });
+        Assert.Equal(HttpStatusCode.BadRequest, changeEmail.StatusCode);
+        Assert.Equal("Invalid OTP type", (await ReadJsonAsync(changeEmail)).GetProperty("message").GetString());
         Assert.Equal("INVALID_OTP", (await Send("/api/auth/email-otp/verify-email", new { email = NewEmail("ghost"), otp = "123456" })).Item3);
     }
 
