@@ -1,30 +1,133 @@
 @page "/organization"
-@inject DenClient Den
-@inject NavigationManager Nav
+@inherits OnboardingPage
+@using System.Text.Json
 
 <PageTitle>Create your workspace · OpenWork Cloud</PageTitle>
+<OnboardingStyles />
 
-<section class="den-card">
-    <h1>Create your workspace.</h1>
-    <p class="den-muted">A workspace is where your team's skills, connections and agents live.</p>
-    <form @onsubmit="CreateAsync">
-        <label for="workspace">Workspace name</label>
-        <input id="workspace" type="text" name="workspace" @bind="_name" @bind:event="oninput" />
-        @if (_error is not null) { <p class="den-error" role="alert">@_error</p> }
-        <button type="submit" class="den-button" disabled="@_busy">Create workspace</button>
-    </form>
+<section class="den-card ob-page" data-testid="organization-page">
+    @if (!Ready)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (_orgs.Count == 0 || _showCreate)
+    {
+        <OnboardingSteps Active="1" />
+        <h1>Create your workspace.</h1>
+        <p class="den-muted">A workspace is where your team's skills, connections and agents live.</p>
+        <form @onsubmit="CreateAsync">
+            <label for="workspace">Workspace name</label>
+            <input id="workspace" type="text" name="workspace" placeholder="My workspace" maxlength="80" @bind="_name" @bind:event="oninput" />
+            @if (_error is not null) { <p class="den-error" role="alert" data-testid="error">@_error</p> }
+            <button type="submit" class="den-button" disabled="@(_busy || _name.Trim().Length < 2)">Create workspace</button>
+        </form>
+
+        @if (_invitations.Count > 0)
+        {
+            <div class="ob-invites" data-testid="my-invitations">
+                <h2>Invitations waiting for you</h2>
+                <ul class="ob-orgs">
+                    @foreach (var invitation in _invitations)
+                    {
+                        <li data-testid="my-invitation" data-name="@invitation.Organization">
+                            <span class="den-member-main"><strong>@invitation.Organization</strong><span class="den-muted">Join as @invitation.Role</span></span>
+                            <button type="button" class="den-button ob-small" disabled="@_busy" @onclick="() => AcceptAsync(invitation)">Join</button>
+                        </li>
+                    }
+                </ul>
+            </div>
+        }
+
+        <details>
+            <summary>Join an existing workspace</summary>
+            <label for="invitation-link">Team invitation link</label>
+            <input id="invitation-link" type="text" placeholder="Paste your invitation link" @bind="_link" @bind:event="oninput" />
+            @if (_linkError is not null) { <p class="den-error" role="alert" data-testid="link-error">@_linkError</p> }
+            <button type="button" class="den-button den-secondary" disabled="@string.IsNullOrWhiteSpace(_link)" @onclick="ReviewInvitation">Review invitation</button>
+        </details>
+
+        <div class="ob-footer">
+            <span>@MyEmail</span>
+            @if (_orgs.Count > 0) { <button type="button" class="den-link" @onclick="() => _showCreate = false">Cancel</button> }
+            else { <button type="button" class="den-link" @onclick="SignOutAsync" data-testid="sign-out">Log out</button> }
+        </div>
+    }
+    else
+    {
+        <h1>Settings</h1>
+        <p class="den-muted">Manage your profile and organization memberships.</p>
+        <div class="ob-tabs" role="tablist">
+            <button type="button" role="tab" aria-selected="@(_tab == "profile" ? "true" : "false")" @onclick='() => _tab = "profile"' data-testid="tab-profile">Profile</button>
+            <button type="button" role="tab" aria-selected="@(_tab == "organizations" ? "true" : "false")" @onclick='() => _tab = "organizations"' data-testid="tab-organizations">Organizations</button>
+        </div>
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (_error is not null) { <p class="den-error" role="alert" data-testid="error">@_error</p> }
+
+        @if (_tab == "profile")
+        {
+            <form @onsubmit="SaveProfileAsync" data-testid="profile-form">
+                <label for="first-name">First name</label>
+                <input id="first-name" type="text" @bind="_first" @bind:event="oninput" />
+                <label for="last-name">Last name</label>
+                <input id="last-name" type="text" @bind="_last" @bind:event="oninput" />
+                <label for="profile-email">Email</label>
+                <input id="profile-email" type="email" value="@MyEmail" readonly />
+                <button type="submit" class="den-button" disabled="@Busy">Save profile</button>
+            </form>
+        }
+        else
+        {
+            <button type="button" class="den-button" @onclick="StartCreate" data-testid="new-organization">+ Create New Organization</button>
+            <ul class="ob-orgs" data-testid="organizations">
+                @foreach (var org in _orgs)
+                {
+                    <li data-testid="organization-row" data-name="@org.Name">
+                        <span class="den-member-main"><strong>@org.Name</strong><span class="den-muted">@org.Role</span></span>
+                        <span class="den-member-actions">
+                            @if (org.Active) { <span class="den-badge">Current</span> }
+                            <button type="button" class="den-button den-secondary ob-small" disabled="@Busy" @onclick="() => OpenAsync(org)">@(org.Active ? "Open" : "Switch")</button>
+                        </span>
+                    </li>
+                }
+            </ul>
+        }
+        <div class="ob-footer"><span>@MyEmail</span><button type="button" class="den-link" @onclick="SignOutAsync">Log out</button></div>
+    }
 </section>
 
 @code {
-    private string _name = "";
-    private bool _busy;
-    private string? _error;
+    private sealed record OrgRow(string Id, string Name, string Role, bool Active);
+    private sealed record InvitationRow(string Id, string Organization, string Role);
+
+    private List<OrgRow> _orgs = [];
+    private List<InvitationRow> _invitations = [];
+    private string _name = "", _link = "", _first = "", _last = "", _tab = "organizations";
+    private string? _error, _linkError;
+    private bool _busy, _showCreate;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender) return;
-        if (!(await Den.RequestAsync("/api/browser/v1/me")).Ok) Nav.NavigateTo("/");
+        if (!await RequireSignInAsync("/organization")) return;
+        var parts = MyName.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        _first = parts.Length > 0 ? parts[0] : "";
+        _last = parts.Length > 1 ? parts[1] : "";
+
+        var orgs = await Den.RequestAsync("/api/browser/v1/me/orgs");
+        if (orgs.Json is { ValueKind: JsonValueKind.Object } root && root.TryGetProperty("orgs", out var list))
+            _orgs = list.EnumerateArray().Select(o => new OrgRow(o.GetProperty("id").GetString() ?? "", o.GetProperty("name").GetString() ?? "", o.GetProperty("role").GetString() ?? "", o.TryGetProperty("isActive", out var a) && a.ValueKind == JsonValueKind.True)).ToList();
+        if (_orgs.Count == 0)
+        {
+            // Someone waiting to be let in sees their invitations first (only a verified address has any).
+            var mine = await Den.RequestAsync("/api/browser/v1/me/invitations");
+            if (mine.Json is { ValueKind: JsonValueKind.Object } body && body.TryGetProperty("invitations", out var invitations))
+                _invitations = invitations.EnumerateArray().Select(i => new InvitationRow(i.GetProperty("id").GetString() ?? "", i.GetProperty("organization").GetProperty("name").GetString() ?? "", i.GetProperty("role").GetString() ?? "")).ToList();
+        }
+        Ready = true;
+        StateHasChanged();
     }
+
+    private void StartCreate() { _showCreate = true; _name = ""; _error = null; Notice = null; }
 
     private async Task CreateAsync()
     {
@@ -34,6 +137,56 @@
         var created = await Den.RequestAsync("/api/browser/v1/org", "POST", new { name = _name.Trim() });
         _busy = false;
         if (!created.Ok) { _error = created.Message("Could not create the workspace. Try again."); return; }
+        // The next step of the sign-up path: invite people (optional).
+        Nav.NavigateTo("/dashboard/onboarding/people");
+    }
+
+    private async Task AcceptAsync(InvitationRow invitation)
+    {
+        _error = null;
+        _busy = true;
+        var accepted = await Den.RequestAsync("/api/browser/v1/orgs/invitations/accept", "POST", new { id = invitation.Id });
+        _busy = false;
+        if (!accepted.Ok) { _error = accepted.Message("Could not join this workspace. Try again."); return; }
         Nav.NavigateTo("/dashboard");
+    }
+
+    private void ReviewInvitation()
+    {
+        _linkError = null;
+        if (Uri.TryCreate(_link.Trim(), UriKind.Absolute, out var url) && url.AbsolutePath == "/join-org"
+            && string.Equals(url.GetLeftPart(UriPartial.Authority), new Uri(Nav.BaseUri).GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase)
+            && System.Web.HttpUtility.ParseQueryString(url.Query)["invite"] is { Length: > 0 } invite)
+        {
+            Nav.NavigateTo("/join-org?invite=" + Uri.EscapeDataString(invite));
+            return;
+        }
+        _linkError = "Paste the invitation link for this OpenWork Cloud. Ask your team owner if you do not have one yet.";
+    }
+
+    private async Task SaveProfileAsync()
+    {
+        await RunAsync(() => Den.RequestAsync("/api/browser/v1/me/profile", "PATCH", new { firstName = _first.Trim(), lastName = _last.Trim() }), "Profile saved.");
+    }
+
+    protected override async Task ReloadAsync()
+    {
+        var me = await Den.RequestAsync("/api/browser/v1/me");
+        MyName = me.String("user", "name") ?? MyName;
+    }
+
+    private async Task OpenAsync(OrgRow org)
+    {
+        Busy = true;
+        var switched = await Den.RequestAsync("/api/browser/v1/me/active-organization", "POST", new { organizationId = org.Id });
+        Busy = false;
+        if (!switched.Ok) { _error = switched.Message("Could not open this organization."); return; }
+        Nav.NavigateTo("/dashboard");
+    }
+
+    private async Task SignOutAsync()
+    {
+        await Den.RequestAsync("/api/auth/sign-out", "POST", new { });
+        Nav.NavigateTo("/", forceLoad: true);
     }
 }

@@ -1,0 +1,103 @@
+@page "/install"
+@inherits OnboardingPage
+
+<PageTitle>Download OpenWork · OpenWork Cloud</PageTitle>
+<OnboardingStyles />
+
+<section class="den-card ob-page ob-wide" data-testid="install-page">
+    @if (!Ready)
+    {
+        <p class="den-muted" role="status">Checking your team's OpenWork setup…</p>
+    }
+    else if (_error is not null)
+    {
+        <h1>This install link can't be opened.</h1>
+        <p class="den-muted" data-testid="install-error">@_error</p>
+    }
+    else
+    {
+        <h1>Download @_appName</h1>
+        <p class="den-muted">Choose the version for your computer, install it, and open @_appName. @_clientName · version @_version.</p>
+
+        @if (_mobile)
+        {
+            <p data-testid="install-mobile-note"><strong>@_appName runs on your computer.</strong> Open this link on your Mac, Windows, or Linux machine, or have it emailed to you.</p>
+        }
+        else
+        {
+            <div class="ob-platforms" data-testid="install-platforms">
+                <div class="ob-platform">
+                    <h3>macOS@(Is("mac") ? Detected : "")</h3>
+                    <a href="@Href("mac-arm64")" data-testid="install-mac-arm64" data-recommended="@(_platform == "mac-arm64" ? "true" : "false")">Apple Silicon (M1+)</a>
+                    <a href="@Href("mac-x64")" data-testid="install-mac-x64" data-recommended="@(_platform == "mac-x64" ? "true" : "false")">Intel</a>
+                </div>
+                <div class="ob-platform">
+                    <h3>Windows@(Is("win") ? Detected : "")</h3>
+                    <a href="@Href("win-x64")" data-testid="install-win-x64" data-recommended="@(_platform == "win-x64" ? "true" : "false")">x64 app</a>
+                </div>
+                <div class="ob-platform">
+                    <h3>Linux@(Is("linux") ? Detected : "")</h3>
+                    <a href="@Href("linux-x64")" data-testid="install-linux-x64" data-recommended="@(_platform == "linux-x64" ? "true" : "false")">AppImage (x64)</a>
+                    <a href="@Href("linux-arm64")" data-testid="install-linux-arm64" data-recommended="@(_platform == "linux-arm64" ? "true" : "false")">AppImage (ARM64)</a>
+                </div>
+            </div>
+        }
+
+        <h2>Then connect</h2>
+        <p class="den-muted">In the app, enter your workspace address and choose Sign in. Sign-in finishes in this browser and sends you back to the app.</p>
+        <div class="ob-address" data-testid="install-workspace-address">
+            <input readonly value="@_webUrl" aria-label="Workspace address" />
+            <button type="button" class="den-button den-secondary" @onclick="CopyAsync">@(_copied ? "Copied" : "Copy")</button>
+        </div>
+
+        <div class="ob-actions" style="justify-content:flex-start">
+            <button type="button" class="den-button den-secondary" disabled="@_sending" @onclick="EmailLinkAsync" data-testid="email-link">Email me the link</button>
+            <a class="den-button den-secondary" href="/dashboard" data-testid="to-dashboard">Go to the dashboard</a>
+        </div>
+        @if (_notice is not null) { <p class="den-notice" role="status" data-testid="email-notice">@_notice</p> }
+        @if (_mailError is not null) { <p class="den-error" role="alert" data-testid="mail-error">@_mailError</p> }
+    }
+</section>
+
+@code {
+    private const string Detected = " · detected";
+    private string? _error, _notice, _mailError;
+    private string _appName = "OpenWork", _clientName = "", _version = "", _webUrl = "", _platform = "";
+    private bool _mobile, _copied, _sending;
+
+    private static string Href(string platform) => $"/api/browser/v1/me/install/{platform}";
+    private bool Is(string family) => _platform.StartsWith(family, StringComparison.Ordinal);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await RequireSignInAsync("/install")) return;
+        var config = await Den.RequestAsync("/api/browser/v1/me/install-config");
+        if (config.Status == 404) { Nav.NavigateTo("/organization"); return; }
+        if (!config.Ok) _error = config.Status == 401 ? "Sign in to your Den portal to install OpenWork." : config.Message("Ask your workspace admin for a fresh install link.");
+        else
+        {
+            _appName = config.String("appName") ?? "OpenWork";
+            _clientName = config.String("clientName") ?? "";
+            _version = config.String("desktopVersion") ?? "";
+            var module = await Module();
+            _webUrl = await module.InvokeAsync<string>("origin");
+            _platform = await module.InvokeAsync<string>("detectPlatform");
+            _mobile = await module.InvokeAsync<bool>("isMobile");
+        }
+        Ready = true;
+        StateHasChanged();
+    }
+
+    private async Task CopyAsync() => _copied = await Den.CopyAsync(_webUrl);
+
+    private async Task EmailLinkAsync()
+    {
+        _notice = _mailError = null;
+        _sending = true;
+        var result = await Den.RequestAsync("/api/browser/v1/me/send-download-link", "POST", new { });
+        _sending = false;
+        if (result.Ok) _notice = $"We sent the download link to {MyEmail}.";
+        else _mailError = result.Status == 429 ? "Too many download link emails. Try again later." : result.Message("Could not send the email. Try again.");
+    }
+}

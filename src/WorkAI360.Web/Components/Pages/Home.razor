@@ -85,16 +85,23 @@
     private string? _error;
     private string? _info;
     private string? _invite;
+    private string? _returnTo;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender) return;
         var query = System.Web.HttpUtility.ParseQueryString(new Uri(Nav.Uri).Query);
         _invite = string.IsNullOrWhiteSpace(query["invite"]) ? null : query["invite"];
+        // Sent here from a page that needs a signed-in person (install, claim...): come back to it afterwards. Only known pages are followed.
+        _returnTo = OnboardingPage.SafeReturnTo(query["returnTo"]);
         // Already signed in: go where the person left off.
         var me = await Den.RequestAsync("/api/browser/v1/me");
         if (me.Ok) { await GoAfterSignInAsync(); return; }
         _checking = false;
+        // A claim link carries the address it was made for: offered, not forced.
+        if (_returnTo is not null && _invite is null && new Uri(new Uri(Nav.BaseUri), _returnTo).Query is { Length: > 1 } returnQuery
+            && System.Web.HttpUtility.ParseQueryString(returnQuery)["email"] is { Length: > 0 } suggested && suggested.Contains('@'))
+            _email = suggested;
         // Arriving from an invitation link: the invited address is already known.
         if (_invite is not null && !string.IsNullOrWhiteSpace(query["email"]))
         {
@@ -227,6 +234,7 @@
             return;
         }
         if (_invite is not null) { Nav.NavigateTo($"/join-org?invite={Uri.EscapeDataString(_invite)}"); return; }
+        if (_returnTo is not null) { Nav.NavigateTo(_returnTo); return; }
         var orgs = await Den.RequestAsync("/api/browser/v1/me/orgs");
         var hasOrg = orgs.Json is { ValueKind: System.Text.Json.JsonValueKind.Object } root
             && root.TryGetProperty("orgs", out var list) && list.GetArrayLength() > 0;

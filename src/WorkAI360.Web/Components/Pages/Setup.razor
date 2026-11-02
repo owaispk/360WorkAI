@@ -1,0 +1,41 @@
+@page "/setup"
+@inherits OnboardingPage
+
+<PageTitle>Private deployment setup · OpenWork Cloud</PageTitle>
+<OnboardingStyles />
+
+<section class="den-card ob-page" data-testid="initial-admin-setup">
+    <p class="den-muted">PRIVATE DEPLOYMENT SETUP</p>
+    @if (_status == "loading")
+    {
+        <h1>Set up your administrator account</h1>
+        <p class="den-muted" role="status">Checking setup availability…</p>
+    }
+    else if (_status == "complete")
+    {
+        <h1>Setup is complete</h1>
+        <p class="den-muted">This deployment already has its first administrator. Continue with the normal sign-in flow.</p>
+        <p data-testid="setup-state">Initial administrator setup is permanently disabled for this deployment.</p>
+        <a class="den-button" href="/">Sign in</a>
+    }
+    else
+    {
+        <h1>Set up your administrator account</h1>
+        <p class="den-muted">Create the first administrator for this private deployment. Public signup remains disabled during setup.</p>
+        <p data-testid="setup-state">Initial administrator setup is not available. Ask the deployment operator to verify the bootstrap configuration.</p>
+        <a class="den-button" href="/">Sign in</a>
+    }
+</section>
+
+@code {
+    private string _status = "loading";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        // Only "complete" is a state this build can be in; "available" would need the operator's one-time setup code, which is not built here.
+        var status = await Den.RequestAsync("/api/browser/v1/auth/bootstrap/status");
+        _status = status.Ok && status.String("status") == "complete" ? "complete" : "unavailable";
+        StateHasChanged();
+    }
+}
