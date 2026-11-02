@@ -4,6 +4,7 @@ using Microsoft.Extensions.Options;
 using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.Domain;
+using WorkAI360.Api.Features.WebOrigins;
 
 namespace WorkAI360.Api.Endpoints;
 
@@ -27,9 +28,22 @@ public static class HandoffEndpoints
             var current = await sessions.ResolveAsync(ctx);
             if (current is null) return Responses.Unauthorized();
 
-            // No Cloud web return URLs are approved yet; refuse rather than redirect somewhere unvetted.
-            if (!string.IsNullOrWhiteSpace(body?.ReturnUrl))
-                return Responses.Error(400, "invalid_return_url", "The Cloud web handoff return URL is not approved for this organization.");
+            // A web return URL is honored only when a workspace approved that exact origin (Org settings); anything else is refused rather than redirected.
+            string? approvedReturnUrl = null;
+            string? handoffOrganizationId = current.Session.ActiveOrganizationId;
+            if (body?.ReturnUrl is not null)
+            {
+                var approval = await WebHandoffReturnUrls.ResolveAsync(db, body.ReturnUrl.Trim(), current.Session.ActiveOrganizationId, current.User.Id);
+                if (approval is null)
+                    return Responses.Error(400, "invalid_return_url", "The Cloud web handoff return URL is not approved for this organization.");
+                approvedReturnUrl = approval.ReturnUrl;
+                // The grant hands over this session, so it becomes active in the approving workspace before the web instance exchanges it.
+                if (approval.OrganizationId != current.Session.ActiveOrganizationId)
+                {
+                    await db.Sessions.Where(x => x.Id == current.Session.Id).ExecuteUpdateAsync(x => x.SetProperty(y => y.ActiveOrganizationId, approval.OrganizationId));
+                    handoffOrganizationId = approval.OrganizationId;
+                }
+            }
 
             var scheme = string.IsNullOrWhiteSpace(body?.DesktopScheme) ? "openwork" : body!.DesktopScheme!.Trim();
             if (!System.Text.RegularExpressions.Regex.IsMatch(scheme, "^[a-z][a-z0-9+.-]{1,31}$"))
@@ -37,7 +51,7 @@ public static class HandoffEndpoints
 
             var grant = Base64Url(RandomNumberGenerator.GetBytes(24));
             var expiresAt = DateTime.UtcNow + GrantLifetime;
-            db.HandoffGrants.Add(new DesktopHandoffGrant { Id = grant, UserId = current.User.Id, OrganizationId = current.Session.ActiveOrganizationId, ExpiresAt = expiresAt });
+            db.HandoffGrants.Add(new DesktopHandoffGrant { Id = grant, UserId = current.User.Id, OrganizationId = handoffOrganizationId, ExpiresAt = expiresAt });
             await db.SaveChangesAsync();
 
             var denBaseUrl = $"{PublicOrigin(ctx.Request, options.Value)}/api/den";
@@ -46,6 +60,7 @@ public static class HandoffEndpoints
                 grant,
                 expiresAt = Responses.IsoUtc(expiresAt),
                 openworkUrl = $"{scheme}://den-auth?grant={Uri.EscapeDataString(grant)}&denBaseUrl={Uri.EscapeDataString(denBaseUrl)}",
+                returnUrl = approvedReturnUrl,
             });
         });
 

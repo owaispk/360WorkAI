@@ -43,7 +43,7 @@ public static class WebOriginEndpoints
             return Results.Json(new { origins = rows.Select(Wire), limit = Limit });
         });
 
-        app.MapPost("/v1/org/web-origins", async (HttpContext ctx, OrgAccess access, DenDbContext db, IAuditLog audit) =>
+        app.MapPost("/v1/org/web-origins", async (HttpContext ctx, OrgAccess access, DenDbContext db, IAuditLog audit, WebOrigins.WebOriginApprovals approvals) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -71,12 +71,13 @@ public static class WebOriginEndpoints
                 catch (DbUpdateException) { return AlreadyApproved(); }
                 await tx.CommitAsync();
             }
+            approvals.Invalidate(origin);
             await audit.RecordAsync(context, new AuditEntry(AuditActions.WebOriginApproved, [new("web_origin", row.Id, "target", origin), new("organization", organizationId, "parent")],
                 After: new() { ["id"] = row.Id, ["origin"] = origin }));
             return Results.Json(Wire(row), statusCode: 201);
         });
 
-        app.MapDelete("/v1/org/web-origins/{webOriginId}", async (string webOriginId, HttpContext ctx, OrgAccess access, DenDbContext db, IAuditLog audit) =>
+        app.MapDelete("/v1/org/web-origins/{webOriginId}", async (string webOriginId, HttpContext ctx, OrgAccess access, DenDbContext db, IAuditLog audit, WebOrigins.WebOriginApprovals approvals) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -85,6 +86,7 @@ public static class WebOriginEndpoints
             var row = await db.Set<OrganizationWebOrigin>().FirstOrDefaultAsync(o => o.Id == webOriginId && o.OrganizationId == context!.Organization.Id);
             if (row is null || await db.Set<OrganizationWebOrigin>().Where(o => o.Id == row.Id).ExecuteDeleteAsync() == 0)
                 return Results.Json(new { error = "web_origin_not_found", message = "This approved origin no longer exists." }, statusCode: 404);
+            approvals.Invalidate(row.Origin);
             await audit.RecordAsync(context!, new AuditEntry(AuditActions.WebOriginRemoved, [new("web_origin", row.Id, "target", row.Origin), new("organization", context!.Organization.Id, "parent")],
                 Before: new() { ["id"] = row.Id, ["origin"] = row.Origin }));
             return Results.NoContent();

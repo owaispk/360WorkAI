@@ -162,7 +162,7 @@ The reference has about 400 distinct `/v1` paths and 129 web pages; this covers 
 **Not reached yet (no outside dependency):**
 - **Automations**, workflows and workflow/script runs (`/v1/automations*`, `/v1/automation-runs*`, `/v1/codemode*`), and **telemetry/analytics** (`/v1/telemetry*`).
 - **Platform admin** (`/v1/admin/*`: users, organizations, admins, feature flags, overview and metrics, the `/admin` pages), and the install-link and `/v1/me/*` extras listed in [docs/features/org-admin.md](docs/features/org-admin.md).
-- **SAML** sign-in (the SSO route answers 501), web-origin *enforcement* (the list is stored but nothing reads it), plugin–connection bindings, `/v1/oauth-providers*`, invite-into-a-team, declarative team keys.
+- **SAML** sign-in (the SSO route answers 501), plugin–connection bindings, `/v1/oauth-providers*`, invite-into-a-team, declarative team keys.
 - **OAuth**: `client_credentials`, introspection, `private_key_jwt`, ID tokens and `userinfo`, a rate limit on client registration. **Passwords**: the reference's strength score and breached-password screening. **Email**: the sign-in, forget-password and change-email code types. **Social sign-in** (Google, GitHub).
 - **Operations**: Helm packaging; a shared store for rate limits and caches (they are per instance); the container images were written and the publishes verified, but not built (no Docker daemon here); the CI template is not enabled in the repository's own CI.
 
