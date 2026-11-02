@@ -428,7 +428,9 @@ public sealed class OnboardingTests : IClassFixture<OnboardingFactory>
         var forgedToken = $"{parts[0]}.{Convert.ToBase64String(Encoding.UTF8.GetBytes(forged)).TrimEnd('=').Replace('+', '-').Replace('/', '_')}.{parts[2]}";
         Assert.Equal(HttpStatusCode.Unauthorized, (await SendAsync(http, Json(HttpMethod.Get, url(b.BootstrapId), bearer: forgedToken))).Status);
         // The right payload with a wrong signature is refused (the signature is the proof, not just the token id inside).
-        var flipped = parts[2][..^1] + (parts[2][^1] == 'A' ? 'B' : 'A');
+        // Flip a character in the middle: the last one carries only two data bits, so changing it can change nothing but padding and still verify.
+        var mid = parts[2].Length / 2;
+        var flipped = parts[2][..mid] + (parts[2][mid] == 'A' ? 'B' : 'A') + parts[2][(mid + 1)..];
         Assert.Equal(HttpStatusCode.Unauthorized, (await SendAsync(http, Json(HttpMethod.Get, url(a.BootstrapId), bearer: $"{parts[0]}.{parts[1]}.{flipped}"))).Status);
         Assert.Equal(HttpStatusCode.Unauthorized, (await SendAsync(http, Json(HttpMethod.Get, url(a.BootstrapId), bearer: $"{parts[0]}.{parts[1]}."))).Status);
         // The header's algorithm cannot be changed to "none".

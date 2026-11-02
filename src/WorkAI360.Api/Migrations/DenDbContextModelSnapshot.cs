@@ -1540,6 +1540,55 @@ namespace WorkAI360.Api.Migrations
                     b.ToTable("OAuthConsents");
                 });
 
+            modelBuilder.Entity("WorkAI360.Api.Domain.Oidc.OidcClientSettings", b =>
+                {
+                    b.Property<string>("ClientId")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<bool>("EnableEndSession")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<string>("PostLogoutRedirectUrisJson")
+                        .HasColumnType("longtext");
+
+                    b.HasKey("ClientId");
+
+                    b.ToTable("OidcClientSettings");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Oidc.OidcGrant", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<DateTime>("AuthTime")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("ClientId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Nonce")
+                        .HasMaxLength(512)
+                        .HasColumnType("varchar(512)");
+
+                    b.Property<string>("SessionId")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("OidcGrant");
+                });
+
             modelBuilder.Entity("WorkAI360.Api.Domain.Onboarding.DesktopStartupReport", b =>
                 {
                     b.Property<string>("Id")
@@ -2877,6 +2926,56 @@ namespace WorkAI360.Api.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("SigningKeys");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Social.SocialAuthState", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("BrowserBindingHash")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("CallbackUrl")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("CodeVerifierProtected")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime?>("ConsumedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("ErrorCallbackUrl")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("NewUserCallbackUrl")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("NonceHash")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<bool>("RequestSignUp")
+                        .HasColumnType("tinyint(1)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.ToTable("SocialAuthState");
                 });
 
             modelBuilder.Entity("WorkAI360.Api.Domain.Sso.ExternalAccount", b =>

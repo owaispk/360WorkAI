@@ -395,7 +395,7 @@ public static class PermissionEndpoints
         foreach (var teamId in teamIds)
         {
             // Strictly increasing stamps keep "the first team" the first one named, even when several are linked in the same instant.
-            var stamp = now.AddTicks(order++);
+            var stamp = now.AddTicks(order++ * 10);   // a microsecond apart: the finest step every database keeps
             var links = await db.PermissionSetTeams.Where(l => l.TeamId == teamId).ToListAsync();
             var replaced = links.Where(l => l.RemovedAt == null && l.PermissionSetId != setId).ToList();
             foreach (var active in replaced) active.RemovedAt = now;

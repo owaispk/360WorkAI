@@ -685,6 +685,38 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "OidcClientSettings",
+                columns: table => new
+                {
+                    ClientId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    EnableEndSession = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    PostLogoutRedirectUrisJson = table.Column<string>(type: "longtext", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_OidcClientSettings", x => x.ClientId);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "OidcGrant",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ClientId = table.Column<string>(type: "longtext", nullable: false),
+                    UserId = table.Column<string>(type: "longtext", nullable: false),
+                    Nonce = table.Column<string>(type: "varchar(512)", maxLength: 512, nullable: true),
+                    AuthTime = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    SessionId = table.Column<string>(type: "longtext", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_OidcGrant", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "OnboardingRateLimit",
                 columns: table => new
                 {
@@ -1100,6 +1132,29 @@ namespace WorkAI360.Api.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_SigningKeys", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "SocialAuthState",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Provider = table.Column<string>(type: "longtext", nullable: false),
+                    BrowserBindingHash = table.Column<string>(type: "longtext", nullable: false),
+                    NonceHash = table.Column<string>(type: "longtext", nullable: true),
+                    CodeVerifierProtected = table.Column<string>(type: "longtext", nullable: false),
+                    CallbackUrl = table.Column<string>(type: "longtext", nullable: false),
+                    ErrorCallbackUrl = table.Column<string>(type: "longtext", nullable: true),
+                    NewUserCallbackUrl = table.Column<string>(type: "longtext", nullable: true),
+                    RequestSignUp = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    ExpiresAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    ConsumedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_SocialAuthState", x => x.Id);
                 })
                 .Annotation("MySQL:Charset", "utf8mb4");
 
@@ -2125,6 +2180,11 @@ namespace WorkAI360.Api.Migrations
                 column: "UserId");
 
             migrationBuilder.CreateIndex(
+                name: "IX_SocialAuthState_ExpiresAt",
+                table: "SocialAuthState",
+                column: "ExpiresAt");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_SsoAuthState_ExpiresAt",
                 table: "SsoAuthState",
                 column: "ExpiresAt");
@@ -2346,6 +2406,12 @@ namespace WorkAI360.Api.Migrations
                 name: "OAuthConsents");
 
             migrationBuilder.DropTable(
+                name: "OidcClientSettings");
+
+            migrationBuilder.DropTable(
+                name: "OidcGrant");
+
+            migrationBuilder.DropTable(
                 name: "OnboardingRateLimit");
 
             migrationBuilder.DropTable(
@@ -2416,6 +2482,9 @@ namespace WorkAI360.Api.Migrations
 
             migrationBuilder.DropTable(
                 name: "SigningKeys");
+
+            migrationBuilder.DropTable(
+                name: "SocialAuthState");
 
             migrationBuilder.DropTable(
                 name: "SsoAuthState");
