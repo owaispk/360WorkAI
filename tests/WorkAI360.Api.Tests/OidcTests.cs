@@ -444,7 +444,11 @@ public sealed class OidcTests : IClassFixture<ApiFactory>
         var page = await browser.SendAsync(EndSession(query, navigation: true));
         Assert.Equal(HttpStatusCode.OK, page.StatusCode);
         Assert.Contains("data-oidc-logout-confirmation", await page.Content.ReadAsStringAsync());
-        Assert.Contains("default-src 'none'", page.Headers.GetValues("Content-Security-Policy").Single());
+        var csp = page.Headers.GetValues("Content-Security-Policy").Single();
+        Assert.Contains("default-src 'none'", csp);
+        Assert.Contains("form-action 'self' http://127.0.0.1:9999;", csp);   // browsers apply form-action to the redirect after the form: the registered address is allowed, nothing else
+        var plain = await browser.SendAsync(EndSession($"client_id={client.Id}", navigation: true));
+        Assert.Contains("form-action 'self';", plain.Headers.GetValues("Content-Security-Policy").Single());
         Assert.True(_factory.WithDb(db => db.Sessions.Any(s => s.Id == sid)));   // showing the page ended nothing
         var confirm = await browser.PostAsync("/api/auth/oauth2/end-session/confirm", new FormUrlEncodedContent(new Dictionary<string, string> { ["action"] = "confirm" }));
         Assert.Equal(HttpStatusCode.Redirect, confirm.StatusCode);

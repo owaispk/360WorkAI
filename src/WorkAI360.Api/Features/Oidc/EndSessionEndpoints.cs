@@ -198,11 +198,11 @@ public static class EndSessionEndpoints
         {
             if (!IsBrowserNavigation(http)) return Fail(http, 400, "invalid_request", "No active session is available for logout");
             SetConfirmationCookie(http, c, null, confirmation);
-            return Page(200, "Confirm logout", ConfirmBody());
+            return Page(200, "Confirm logout", ConfirmBody(), RedirectOrigin(confirmation));
         }
         if (!IsBrowserNavigation(http)) return Fail(http, 400, "invalid_request", "User confirmation is required to complete logout");
         SetConfirmationCookie(http, c, current.Id, confirmation);
-        return Page(200, "Confirm logout", ConfirmBody());
+        return Page(200, "Confirm logout", ConfirmBody(), RedirectOrigin(confirmation));
     }
 
     private static string CookieName(Context c) => $"{c.Options.Value.CookieName}.oauth_logout_confirmation";
@@ -257,15 +257,20 @@ public static class EndSessionEndpoints
     private static string SuccessBody(bool redirectInvalid) =>
         $"<main><p data-oidc-logout-state=\"logged-out\">Logged out.{(redirectInvalid ? " The requested post-logout redirect was not registered." : "")}</p></main>";
 
-    private static IResult Page(int status, string title, string body) =>
-        new PageResult(Results.Content($"<!doctype html><html><head><meta charset=\"utf-8\"><title>{WebUtility.HtmlEncode(title)}</title></head><body>{body}</body></html>", "text/html; charset=utf-8", Encoding.UTF8, status));
+    /// <summary>Browsers apply a page's form-action to the redirect that follows the form, so the registered address the person goes on to must be allowed (it was checked against the client's list).</summary>
+    private static string? RedirectOrigin(Confirmation confirmation) =>
+        confirmation.PostLogoutRedirectUri is { } uri && Uri.TryCreate(uri, UriKind.Absolute, out var parsed) && parsed.GetLeftPart(UriPartial.Authority) is var origin
+            && System.Text.RegularExpressions.Regex.IsMatch(origin, @"^https?://[A-Za-z0-9.\-\[\]:]+$") ? origin : null;   // plain host and port only: nothing that could add a CSP directive
+
+    private static IResult Page(int status, string title, string body, string? formActionOrigin = null) =>
+        new PageResult(formActionOrigin, Results.Content($"<!doctype html><html><head><meta charset=\"utf-8\"><title>{WebUtility.HtmlEncode(title)}</title></head><body>{body}</body></html>", "text/html; charset=utf-8", Encoding.UTF8, status));
 
     /// <summary>The page, with the security headers the reference sends (no framing, no scripts, forms only to this origin).</summary>
-    private sealed class PageResult(IResult inner) : IResult
+    private sealed class PageResult(string? formActionOrigin, IResult inner) : IResult
     {
         public Task ExecuteAsync(HttpContext httpContext)
         {
-            httpContext.Response.Headers["Content-Security-Policy"] = "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+            httpContext.Response.Headers["Content-Security-Policy"] = $"default-src 'none'; form-action 'self'{(formActionOrigin is null ? "" : " " + formActionOrigin)}; base-uri 'none'; frame-ancestors 'none'";
             httpContext.Response.Headers["X-Content-Type-Options"] = "nosniff";
             httpContext.Response.Headers.CacheControl = "no-store";
             httpContext.Response.Headers.Pragma = "no-cache";
