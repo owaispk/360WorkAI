@@ -34,6 +34,13 @@ public static class AuditActions
     public const string CaptureEnabled = "audit.capture.enabled";
     public const string CaptureDisabled = "audit.capture.disabled";
     public const string PolicyInitialized = "audit.policy.initialized";
+    // Changes a platform admin makes to a workspace (origin platform_admin; see Features/PlatformAdmin).
+    public const string DpaSignedUpdated = "organization.dpa_signed.updated";
+    public const string ComplimentaryAccessGranted = "organization.complimentary_access.granted";
+    public const string ComplimentaryAccessRevoked = "organization.complimentary_access.revoked";
+    public const string OrganizationPlanUpdated = "organization.plan.updated";
+    public const string OrganizationFreeSeatsUpdated = "organization.free_seats.updated";
+    public const string OrganizationCapabilitiesUpdated = "organization.capabilities.updated";
 
     /// <summary>Reading audit history is itself recorded (as a requested/served pair), like the reference's audit-read events.</summary>
     public static string Requested(string read) => $"audit.{read}.requested";

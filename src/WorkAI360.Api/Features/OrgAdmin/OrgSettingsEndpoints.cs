@@ -172,11 +172,13 @@ public static class OrgSettingsEndpoints
             return Results.Json(new { ok = true });
         });
 
-        app.MapGet("/v1/features", (HttpContext ctx, IConfiguration configuration) =>
+        app.MapGet("/v1/features", async (HttpContext ctx, WorkAI360.Api.Features.PlatformAdmin.FeatureResolver resolver) =>
         {
             ctx.Response.Headers.CacheControl = "public, max-age=60, stale-if-error=86400";
+            // The deployment-wide state: configuration locks, then what platform admins set for everyone (no workspace is named here).
+            var effective = await resolver.EffectiveAsync(null);
             var features = new Dictionary<string, bool>();
-            foreach (var key in FeatureDefaults.Public) features[key] = FeatureState.Resolve(configuration, key);
+            foreach (var key in FeatureDefaults.Public) features[key] = effective.GetValueOrDefault(key);
             features["engineV2ForceUpgrade"] = true;
             return Results.Json(new { version = 1, deployment = "self_hosted", features });
         });
@@ -294,8 +296,11 @@ public static class FeatureState
     {
         var overridden = configuration.GetSection("Features:Overrides")[key];
         if (overridden is not null && bool.TryParse(overridden, out var value)) return value;
-        return !NeedsUnbuiltServerAreas.Contains(key) && FeatureDefaults.Organization.TryGetValue(key, out var state) && state;
+        return Default(key);
     }
+
+    /// <summary>This build's default for a feature: the reference's, unless it needs server areas this build lacks. Platform admins change it per deployment and per workspace (Features/PlatformAdmin).</summary>
+    public static bool Default(string key) => !NeedsUnbuiltServerAreas.Contains(key) && FeatureDefaults.Organization.TryGetValue(key, out var state) && state;
 
     public static Dictionary<string, bool> All(IConfiguration configuration)
     {
