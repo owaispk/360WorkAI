@@ -119,22 +119,11 @@ public static class BrandAssetEndpoints
 
     // ----- signed URLs -----------------------------------------------------------------------------------------------------------------
 
-    private static string Sign(string organizationId, string kind, string version, string extension, byte[] key) =>
-        Convert.ToBase64String(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(string.Join('\0', organizationId, kind, version, extension)))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-
     private static string Sign(string organizationId, string kind, string version, string extension, string secret) =>
-        Sign(organizationId, kind, version, extension, SecretKeys.Derive(secret, "brand asset url"));
+        Convert.ToBase64String(HMACSHA256.HashData(SecretKeys.Derive(secret, "brand asset url"), Encoding.UTF8.GetBytes(string.Join('\0', organizationId, kind, version, extension)))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
-    /// <summary>
-    /// Links are signed with a key made for this purpose. Links stored before that (the URL is kept in the organization's metadata) were signed with the
-    /// secret itself, so those still verify; nothing signs that way any more, so the older form cannot be used to forge anything new.
-    /// </summary>
-    private static bool Verify(string organizationId, string kind, string version, string extension, string signature, string secret)
-    {
-        var presented = Encoding.UTF8.GetBytes(signature);
-        return CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(Sign(organizationId, kind, version, extension, secret)), presented)
-            || CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(Sign(organizationId, kind, version, extension, Encoding.UTF8.GetBytes(secret))), presented);
-    }
+    private static bool Verify(string organizationId, string kind, string version, string extension, string signature, string secret) =>
+        CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(Sign(organizationId, kind, version, extension, secret)), Encoding.UTF8.GetBytes(signature));
 
     // ----- image checks ----------------------------------------------------------------------------------------------------------------
 

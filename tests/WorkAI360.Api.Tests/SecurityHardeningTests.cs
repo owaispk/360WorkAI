@@ -69,7 +69,7 @@ public sealed class SecurityHardeningTests : IClassFixture<ApiFactory>
     }
 
     [Fact]
-    public async Task Brand_links_signed_with_the_old_key_still_work_and_other_purposes_do_not()
+    public async Task Brand_links_use_their_own_key_and_nothing_else_verifies()
     {
         var w = await Workspace.CreateAsync(_factory);
         var upload = await w.UploadAsync(w.Owner, ("logo", OrgAdminHelpers.Png(256, 64), "image/png"));
@@ -86,9 +86,8 @@ public sealed class SecurityHardeningTests : IClassFixture<ApiFactory>
         // The link just issued uses the purpose key.
         Assert.Equal("?signature=" + Signature(SecretKeys.Derive(Secret, "brand asset url"), signed), url.Query);
         Assert.Equal(HttpStatusCode.OK, (await w.Http.GetAsync(url)).StatusCode);
-        // A link stored before the change (signed with the secret itself) is still honoured.
-        Assert.Equal(HttpStatusCode.OK, (await w.Http.GetAsync(url.AbsolutePath + "?signature=" + Signature(Encoding.UTF8.GetBytes(Secret), signed))).StatusCode);
-        // A signature from another purpose's key is not.
+        // A signature made with the secret itself, or with another purpose's key, is not honoured.
+        Assert.Equal(HttpStatusCode.NotFound, (await w.Http.GetAsync(url.AbsolutePath + "?signature=" + Signature(Encoding.UTF8.GetBytes(Secret), signed))).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await w.Http.GetAsync(url.AbsolutePath + "?signature=" + Signature(SecretKeys.Derive(Secret, "audit cursor"), signed))).StatusCode);
     }
 
