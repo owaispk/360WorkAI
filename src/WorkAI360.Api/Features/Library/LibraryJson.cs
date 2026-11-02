@@ -50,7 +50,8 @@ public static class LibraryJson
         ["latestVersion"] = latest is null ? null : Version(latest),
         ["objectType"] = o.ObjectType,
         ["organizationId"] = o.OrganizationId,
-        ["searchText"] = o.SearchText,
+        // A Workflow's source belongs to the role-aware Workflow routes, so the text made for searching must not carry it either.
+        ["searchText"] = latest?.SchemaVersion == CodemodeSchema ? string.Join("\n", new[] { o.Title, o.Description }.Where(s => !string.IsNullOrEmpty(s))) : o.SearchText,
         ["sourceMode"] = o.SourceMode,
         ["status"] = o.Status,
         ["title"] = o.Title,

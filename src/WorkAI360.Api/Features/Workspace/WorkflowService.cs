@@ -790,7 +790,7 @@ public sealed class WorkflowService(DenDbContext db, LibraryAccess lib, LibraryU
     }
 
     public Task<WorkflowExecution?> RunSavedAsync(Actor a, (Plugin Plugin, ConfigObject Object, ConfigObjectVersion Version) found, JsonNode? input, bool live, string? timeZone, CancellationToken ct) =>
-        RunSavedAsync(Who.Of(a), found, input, live, timeZone, live, ct);
+        RunSavedAsync(Who.Of(a), found, input, live, timeZone, validateOutput: true, ct);
 
     public async Task<WorkflowExecution?> RunSavedAsync(Who a, (Plugin Plugin, ConfigObject Object, ConfigObjectVersion Version) found, JsonNode? input, bool live, string? timeZone, bool validateOutput, CancellationToken ct)
     {
