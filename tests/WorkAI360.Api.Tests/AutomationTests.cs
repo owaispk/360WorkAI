@@ -523,6 +523,41 @@ public sealed class AutomationTests : IClassFixture<AutomationFactory>
     }
 
     [Fact]
+    public async Task Only_the_holder_can_touch_a_run_and_nobody_else_changes_its_state()
+    {
+        var w = await Workspace.CreateAsync(_factory);
+        var member = await w.AddAsync();
+        var id = await CreateAsync(w, w.Owner);
+        var holder = await Runner.RegisterAsync(w, w.Owner, "install-touch-1");
+        var other = await Runner.RegisterAsync(w, w.Owner, "install-touch-2");
+        var stranger = await Runner.RegisterAsync(w, member, "install-touch-3");
+        var runId = await RunNowAsync(w, w.Owner, id);
+        // Someone else's desktop cannot take a queued run: it stays queued, unclaimed.
+        Assert.Null(await stranger.ClaimAsync(runId));
+        var untouched = RunRow(runId);
+        Assert.Equal("queued", untouched.Status);
+        Assert.Equal(0, untouched.AttemptCount);
+        Assert.Null(untouched.LeaseOwner);
+        await holder.ClaimAsync(runId);
+        var before = RunRow(runId);
+        // Another desktop of the same owner, and another person's desktop, can neither extend, record into, nor end it; the row does not change.
+        foreach (var intruder in new[] { other, stranger })
+        {
+            Assert.Equal(HttpStatusCode.Conflict, (await intruder.HeartbeatAsync(runId)).Status);
+            Assert.Equal(HttpStatusCode.Conflict, (await intruder.EventAsync(runId, 1)).Status);
+            Assert.Equal(HttpStatusCode.Conflict, (await intruder.CompleteAsync(runId)).Status);
+            Assert.Null(await intruder.ClaimAsync(runId));
+        }
+        var after = RunRow(runId);
+        Assert.Equal("running", after.Status);
+        Assert.Equal(before.LeaseOwner, after.LeaseOwner);
+        Assert.Equal(before.LeaseExpiresAt, after.LeaseExpiresAt);
+        Assert.Equal(before.HeartbeatAt, after.HeartbeatAt);
+        Assert.Equal(0, after.EngineSequence);
+        Assert.Equal(0, Db(db => db.Set<AutomationRunEvent>().Count(e => e.RunId == runId)));
+    }
+
+    [Fact]
     public async Task Events_must_arrive_in_order_and_a_repeat_returns_the_event_it_made()
     {
         var w = await Workspace.CreateAsync(_factory);
