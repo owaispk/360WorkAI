@@ -7,6 +7,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Ed25519 (EdDSA) for client assertions and DPoP proofs; already in the graph through MailKit, referenced directly because the code uses it. -->
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
     <PackageReference Include="Jint" Version="4.17.0" />
     <PackageReference Include="MailKit" Version="4.18.2" />
     <PackageReference Include="Zxcvbn-Core" Version="7.0.92" />

@@ -23,7 +23,7 @@ namespace WorkAI360.Api.Features.Sso;
 /// </summary>
 public sealed class SamlFlow(
     DenDbContext db, SsoService sso, SessionService sessions, TrustedUrls trusted, OAuthUrls urls, SsoProvisioning provisioning, ReplayGuard replay,
-    IOptions<SsoOptions> options)
+    IOptions<SsoOptions> options, SamlServiceProvider sp, SamlLogoutFlow logout)
 {
     public const string BindingCookie = "openwork-den.saml_state";
     public const string ReplayKind = "saml-assertion";
@@ -45,6 +45,8 @@ public sealed class SamlFlow(
         var now = DateTime.UtcNow;
         var xml = SamlProtocol.AuthnRequest(requestId, sso.SpEntityId(settings), settings.EntryPoint, sso.AcsUrl(c.ProviderId), now);
         var post = settings.Binding == "post";
+        using var signingKey = settings.SignAuthnRequests ? await sp.KeyAsync(c.ProviderId, ct) : null;
+        if (post && signingKey is not null) xml = SamlProtocol.SignedAuthnRequest(xml, signingKey);
         db.Add(new SamlAuthRequest
         {
             Id = Ids.Sha256Hex(requestId), RelayStateHash = Ids.Sha256Hex(relay), ProviderId = c.ProviderId, ConfigRevision = c.ConfigRevision,
@@ -55,7 +57,8 @@ public sealed class SamlFlow(
         await db.Set<SamlAuthRequest>().Where(r => r.ExpiresAt < now.AddHours(-1)).ExecuteDeleteAsync(ct);
         // Lax: the cookie travels with the same-site navigation at the end of the sign-in (it is not needed on the cross-site POST).
         ctx.Response.Cookies.Append(BindingCookie, binding, new CookieOptions { HttpOnly = true, SameSite = SameSiteMode.Lax, Secure = ctx.Request.IsHttps, Path = "/", MaxAge = RequestLifetime });
-        return post ? $"{urls.Web}/api/auth/sso/saml2/sp/login/{Uri.EscapeDataString(c.ProviderId)}?relay={Uri.EscapeDataString(relay)}" : SamlProtocol.RedirectUrl(settings.EntryPoint, xml, relay);
+        if (post) return $"{urls.Web}/api/auth/sso/saml2/sp/login/{Uri.EscapeDataString(c.ProviderId)}?relay={Uri.EscapeDataString(relay)}";
+        return signingKey is null ? SamlProtocol.RedirectUrl(settings.EntryPoint, xml, relay) : SamlProtocol.SignedRedirectUrl(settings.EntryPoint, xml, relay, signingKey);
     }
 
     /// <summary>The page for the POST binding: it submits the stored AuthnRequest to the identity provider. Only the browser that started the sign-in gets it.</summary>
@@ -110,7 +113,8 @@ public sealed class SamlFlow(
         SamlAssertion assertion;
         try
         {
-            var expectations = new SamlExpectations(settings.IdpEntityId, sso.SpEntityId(settings), [sso.AcsUrl(c.ProviderId)], SamlCertificates.Load(settings.Certificates), DateTimeOffset.UtcNow, Skew);
+            using var decryptionKey = await sp.ExistingDecryptionKeyAsync(c.ProviderId, ct);
+            var expectations = new SamlExpectations(settings.IdpEntityId, sso.SpEntityId(settings), [sso.AcsUrl(c.ProviderId)], SamlCertificates.Load(settings.Certificates), DateTimeOffset.UtcNow, Skew, decryptionKey);
             assertion = SamlValidator.Validate(samlResponse, expectations);
         }
         catch (SamlException e) { return await Fail("invalid_saml_response", e.Message); }
@@ -135,15 +139,16 @@ public sealed class SamlFlow(
 
         var identity = ExtractIdentity(assertion);
         if (identity is null) return await Fail("invalid_saml_response", "Unable to extract user ID or email from SAML response");
+        var parked = new SamlParkedIdentity(identity.Subject, identity.Email, identity.Name, assertion.NameId, assertion.NameIdFormat, assertion.SessionIndex);
 
         if (request is null)
         {
             // IdP-initiated: nothing was started here, so there is no browser to bind; the signed assertion is all there is.
-            return await FinishAsync(ctx, c, identity, null, trusted.Absolute("/dashboard"), null, null, ct);
+            return await FinishAsync(ctx, c, parked, null, trusted.Absolute("/dashboard"), null, null, ct);
         }
 
         var claimed = await db.Set<SamlAuthRequest>().Where(r => r.Id == request.Id && r.AnsweredAt == null && r.ExpiresAt > now)
-            .ExecuteUpdateAsync(s => s.SetProperty(r => r.AnsweredAt, now).SetProperty(r => r.IdentityJson, JsonSerializer.Serialize(identity)), ct);
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.AnsweredAt, now).SetProperty(r => r.IdentityJson, JsonSerializer.Serialize(parked)), ct);
         if (claimed != 1) return await Fail("invalid_state", "request_already_answered", request);
         var handle = assertion.InResponseTo!;
         ctx.Response.StatusCode = StatusCodes.Status303SeeOther;
@@ -174,8 +179,8 @@ public sealed class SamlFlow(
             if (row.TestIntentId is { } stale) await sso.FailTestAsync(stale, "authentication");
             return Fail("invalid_state", "sso_provider_changed_during_authentication");
         }
-        var identity = JsonSerializer.Deserialize<SsoIdentity>(row.IdentityJson)!;
-        return await FinishAsync(ctx, c, identity, row.TestIntentId, row.CallbackUrl, row.ErrorCallbackUrl, row.NewUserCallbackUrl, ct);
+        var parked = JsonSerializer.Deserialize<SamlParkedIdentity>(row.IdentityJson)!;
+        return await FinishAsync(ctx, c, parked, row.TestIntentId, row.CallbackUrl, row.ErrorCallbackUrl, row.NewUserCallbackUrl, ct);
     }
 
     // ---------------------------------------------------------------- shared
@@ -198,8 +203,9 @@ public sealed class SamlFlow(
         return new SsoIdentity(subject, email, name);
     }
 
-    private async Task<IResult> FinishAsync(HttpContext ctx, SsoConnection c, SsoIdentity identity, string? testIntentId, string callbackUrl, string? errorCallbackUrl, string? newUserCallbackUrl, CancellationToken ct)
+    private async Task<IResult> FinishAsync(HttpContext ctx, SsoConnection c, SamlParkedIdentity parked, string? testIntentId, string callbackUrl, string? errorCallbackUrl, string? newUserCallbackUrl, CancellationToken ct)
     {
+        var identity = parked.Identity;
         IResult Fail(string code, string? description)
         {
             var url = OidcFlow.AppendQuery(errorCallbackUrl ?? callbackUrl, ("error", code), ("error_description", description));
@@ -226,6 +232,8 @@ public sealed class SamlFlow(
         var isNew = user.CreatedAt > DateTime.UtcNow.AddMinutes(-1) && !await db.Sessions.AnyAsync(s => s.UserId == user.Id, ct);
         var (token, session) = await sessions.CreateAsync(user, c.OrganizationId, "sso", ctx);
         sessions.WriteCookie(ctx, token, session);
+        // So that Single Logout can end exactly this sign-in later (rows from before this field existed carry no NameID).
+        if (!string.IsNullOrEmpty(parked.NameId)) await logout.LinkAsync(session.Id, c.ProviderId, parked, ct);
         return Results.Redirect(trusted.Absolute(isNew && newUserCallbackUrl is { } nu ? nu : callbackUrl));
     }
 

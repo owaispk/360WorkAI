@@ -9,6 +9,7 @@ using WorkAI360.Api.Domain;
 using WorkAI360.Api.Domain.Oidc;
 using WorkAI360.Api.Domain.OAuthExtras;
 using WorkAI360.Api.Endpoints;
+using WorkAI360.Api.Features.OAuthClients;
 
 namespace WorkAI360.Api.OAuth;
 
@@ -77,7 +78,7 @@ public static class OAuthEndpoints
         introspection_endpoint_auth_signing_alg_values_supported = Jose.AssertionAlgorithms,
         response_types_supported = new[] { "code" },
         response_modes_supported = new[] { "query" },
-        grant_types_supported = new[] { "authorization_code", "client_credentials", "refresh_token" },
+        grant_types_supported = new[] { "authorization_code", "client_credentials", "refresh_token", PreclaimGrant.GrantType },
         token_endpoint_auth_methods_supported = new[] { "none", "client_secret_basic", "client_secret_post", "private_key_jwt" },
         token_endpoint_auth_signing_alg_values_supported = Jose.AssertionAlgorithms,
         revocation_endpoint_auth_methods_supported = new[] { "none", "client_secret_basic", "client_secret_post", "private_key_jwt" },
@@ -86,6 +87,14 @@ public static class OAuthEndpoints
         code_challenge_methods_supported = new[] { "S256" },
         authorization_response_iss_parameter_supported = false,
         client_id_metadata_document_supported = true,
+        // What an agent needs to start without an account (the reference's withAgentAuthMetadata): provision a workspace, exchange its assertion, get it claimed.
+        agent_auth = new
+        {
+            skill = "https://openworklabs.com/auth.md",
+            identity_endpoint = $"{urls.Api}/v1/bootstrap/workspace",
+            claim_endpoint = $"{urls.Api}/v1/bootstrap/workspace/{{bootstrap_id}}/claim",
+            identity_types_supported = new[] { "anonymous" },
+        },
     };
 
     public static object ProtectedResourceMetadata(OAuthUrls urls) => new
@@ -104,12 +113,22 @@ public static class OAuthEndpoints
         try { body = (await JsonDocument.ParseAsync(ctx.Request.Body)).RootElement.Clone(); }
         catch (JsonException) { return Error(400, "invalid_client_metadata", "Registration request body must be valid JSON."); }
         if (body.ValueKind != JsonValueKind.Object) return Error(400, "invalid_client_metadata", "Registration request body must be a JSON object.");
+        // A registration made while signed in belongs to that person (the reference's userId), who can then manage it.
+        var owner = (await sessions.ResolveAsync(ctx))?.User;
+        return await RegisterFromBodyAsync(body, ctx, db, owner, jwksStore, trusted);
+    }
 
+    /// <summary>
+    /// Validates a client's metadata and stores it. Used by dynamic registration (<c>/register</c>, anyone; owned when signed in) and by
+    /// <c>/api/auth/oauth2/create-client</c> (always signed in). Answers 201 with the client, including its secret, which is shown only here.
+    /// </summary>
+    public static async Task<IResult> RegisterFromBodyAsync(JsonElement body, HttpContext ctx, DenDbContext db, User? owner, ClientJwksStore jwksStore, TrustedUrls trusted)
+    {
         static List<string> Strings(JsonElement e, string name) =>
             e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Array ? v.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToList() : [];
         static string? Str(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 
-        var signedIn = await sessions.ResolveAsync(ctx) is not null;
+        var signedIn = owner is not null;
         var grantTypes = Strings(body, "grant_types");
         // The reference lets only a signed-in person register a client that can act as itself.
         if (grantTypes.Contains("client_credentials") && !signedIn) return Error(400, "invalid_client_metadata", "client_credentials grant requires authenticated registration");
@@ -156,16 +175,19 @@ public static class OAuthEndpoints
         var postLogout = Strings(body, "post_logout_redirect_uris");
         if (postLogout.Count > 10 || postLogout.Any(u => !RedirectPolicy.IsAllowed(u))) return Error(400, "invalid_redirect_uri", "post_logout_redirect_uris must use HTTPS callbacks or HTTP loopback callbacks and must not include fragments.");
         var enableEndSession = body.TryGetProperty("enable_end_session", out var ees) && ees.ValueKind == JsonValueKind.True && signedIn;
+        if (ClientDescriptiveMetadata.Read(body) is { Problem: { } metadataProblem }) return Error(400, "invalid_client_metadata", metadataProblem);
+        var descriptive = ClientDescriptiveMetadata.Read(body).Json;
 
         var clientId = Ids.RandomAlnum(32);
         string? secret = method is "none" or "private_key_jwt" ? null : OAuthConstants.ClientSecretPrefix + Ids.RandomAlnum(40);
         var now = DateTime.UtcNow;
         if (postLogout.Count > 0 || enableEndSession)
             db.Set<OidcClientSettings>().Add(new OidcClientSettings { ClientId = clientId, EnableEndSession = enableEndSession, PostLogoutRedirectUrisJson = postLogout.Count > 0 ? JsonSerializer.Serialize(postLogout) : null });
-        if (grantsGiven || jwks is not null || jwksUri is not null || dpopBound)
+        if (grantsGiven || jwks is not null || jwksUri is not null || dpopBound || owner is not null || descriptive is not null)
             db.Set<OAuthClientExtras>().Add(new OAuthClientExtras
             {
                 ClientId = clientId, GrantTypesJson = grantsGiven ? JsonSerializer.Serialize(grantTypes) : null, JwksJson = jwks?.GetRawText(), JwksUri = jwksUri, DpopBoundAccessTokens = dpopBound,
+                OwnerUserId = owner?.Id, MetadataJson = descriptive, UpdatedAt = now,
             });
         db.OAuthClients.Add(new OAuthClient
         {
@@ -197,6 +219,8 @@ public static class OAuthEndpoints
         if (jwks is not null) response["jwks"] = jwks;
         if (jwksUri is not null) response["jwks_uri"] = jwksUri;
         if (dpopBound) response["dpop_bound_access_tokens"] = true;
+        if (owner is not null) response["user_id"] = owner.Id;
+        ClientDescriptiveMetadata.AddTo(response, descriptive);
         ctx.Response.Headers.CacheControl = "no-store";
         return Results.Json(response, statusCode: 201);
     }
@@ -385,12 +409,15 @@ public static class OAuthEndpoints
 
     private static async Task<IResult> HandleTokenRequestAsync(HttpContext ctx, Dictionary<string, string> form, DenDbContext db, ClientResolver clients, TokenService tokens, OAuthUrls urls, ClientAssertionVerifier assertions, OAuthExtrasService extras)
     {
+        // RFC 7523: a provisional workspace's agent trades its pre-claim assertion for a short MCP token. The assertion is the credential; there is no client.
+        if (form.GetValueOrDefault("grant_type") == PreclaimGrant.GrantType)
+            return await ctx.RequestServices.GetRequiredService<PreclaimGrant>().ExchangeAsync(form.GetValueOrDefault("assertion"));
         var (client, clientFailure) = await AuthenticateClientAsync(ctx, clients, form, assertions, "oauth2/token");
         if (clientFailure is not null) return clientFailure;
 
         var grant = form.GetValueOrDefault("grant_type");
         if (grant is not ("authorization_code" or "refresh_token" or "client_credentials"))
-            return Error(400, "unsupported_grant_type", "Only authorization_code, client_credentials and refresh_token are supported.");
+            return Error(400, "unsupported_grant_type", "Only authorization_code, client_credentials, refresh_token and urn:ietf:params:oauth:grant-type:jwt-bearer are supported.");
         // A client may use only the grants it registered for (the reference's `clientAllowsGrant`).
         var clientExtras = await extras.ExtrasAsync(client!.Id);
         if (!OAuthExtrasService.AllowsGrant(clientExtras, grant)) return Error(400, "unauthorized_client", $"client is not authorized to use grant type {grant}");

@@ -46,8 +46,9 @@ workspaces sees Settings on `/organization` (Profile: rename; Organizations: swi
   default (the reference's default). Tests: `tests/WorkAI360.Api.Tests/ActivationTests.cs` (10); mutation checks 5 of 5 killed (reports not per member, a later report
   replacing the first, the gateway lock inverted, the caller counted as a teammate, a teammate's skill use counting).
 * **"My agent" is off**, not built: it needs Workbot.
-* **The pre-claim assertion cannot be exchanged for tokens.** The assertion (HS256, key derived from `Auth:Secret`, audience = the token endpoint) is issued and verified on the claim routes, but the JWT-bearer grant at
-  `/api/auth/oauth2/token` is not built, so the setup agent cannot yet act on the workspace before it is claimed. The claim flows (code and link) work end to end.
+* **The pre-claim assertion is exchanged with the JWT-bearer grant** at `/api/auth/oauth2/token` for a 15-minute MCP token for the setup member (no refresh token);
+  claiming revokes it at once. See [oauth-extras.md](oauth-extras.md#the-jwt-bearer-grant-pre-claim-assertions). The claim flows (code and link) work end to end.
+  The MCP token reaches the MCP endpoint only (this build's `/v1` routes take sessions and API keys), so the reference's pre-claim allow-list for `/v1` writes has nothing to guard here.
 * **A claim link is claimed by a click**, not automatically after sign-in (the reference auto-accepts). Members are deleted rather than soft-removed here, so the reference's `membership_removed` (403) case does not exist.
 * **`POST /v1/orgs/{id}/install-links` for another workspace is `404`**; the reference answers 200 for any well-formed id (it returns a constant).
 * **The download-link email points at this deployment's `/install` page** (or `Onboarding:DownloadUrl`), not a public download site; the message is plain, without the reference's capability list. Profile changes are not audited (the reference records `account.profile_updated`).
@@ -75,5 +76,5 @@ Claim tokens and codes are stored as SHA-256 only; the assertion is not stored (
 
 ## Not built
 
-* The JWT-bearer token exchange for the pre-claim assertion; My agent (above); the egress probes; provider/connector/installation diagnostics.
+* My agent (above); the egress probes; provider/connector/installation diagnostics.
 * Cloud sandbox joins (`join-sandbox`, sandbox join, Workbot hand-off), billing, den-web's `workspace-claim` desktop-app handoff button after claiming.

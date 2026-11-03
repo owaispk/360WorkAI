@@ -51,7 +51,7 @@ public sealed class FakeJwksServer : IAsyncDisposable
 }
 
 /// <summary>An API with a platform administrator, private JWKS addresses allowed and the fake JWKS server's origin trusted.</summary>
-public sealed class OAuthExtrasFactory : ApiFactory
+public class OAuthExtrasFactory : ApiFactory
 {
     public const string AdminEmail = "oauth.admin@example.com";
     public FakeJwksServer Jwks { get; } = FakeJwksServer.Start();
@@ -211,12 +211,12 @@ public sealed class OAuthExtrasRegistrationTests(OAuthExtrasFactory factory) : O
     {
         var doc = await ReadJsonAsync(await Factory.Plain().GetAsync("/.well-known/oauth-authorization-server"));
         string[] List(string name) => doc.GetProperty(name).EnumerateArray().Select(e => e.GetString()!).ToArray();
-        Assert.Equal(["authorization_code", "client_credentials", "refresh_token"], List("grant_types_supported"));
+        Assert.Equal(["authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:jwt-bearer"], List("grant_types_supported"));
         Assert.Contains("private_key_jwt", List("token_endpoint_auth_methods_supported"));
         Assert.Contains("private_key_jwt", List("introspection_endpoint_auth_methods_supported"));
         Assert.Contains("private_key_jwt", List("revocation_endpoint_auth_methods_supported"));
-        Assert.Equal(["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512"], List("token_endpoint_auth_signing_alg_values_supported"));
-        Assert.Equal(["ES256", "ES512", "PS256", "RS256"], List("dpop_signing_alg_values_supported"));
+        Assert.Equal(["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512", "EdDSA"], List("token_endpoint_auth_signing_alg_values_supported"));
+        Assert.Equal(["ES256", "ES512", "PS256", "RS256", "EdDSA"], List("dpop_signing_alg_values_supported"));
         var oidc = await ReadJsonAsync(await Factory.Plain().GetAsync("/.well-known/openid-configuration"));
         Assert.Contains("client_credentials", oidc.GetProperty("grant_types_supported").EnumerateArray().Select(e => e.GetString()));
     }
@@ -337,7 +337,8 @@ public sealed class OAuthExtrasRegistrationTests(OAuthExtrasFactory factory) : O
     {
         var (browser, _, _, _) = await SignedInAsync();
         var id = await PublicClientAsync(browser);
-        Assert.Equal(0, Factory.WithDb(db => db.Set<OAuthClientExtras>().Count(e => e.ClientId == id)));
+        // A signed-in registration records its owner, but no grant list: the defaults (code and refresh) apply.
+        Assert.Null(Factory.WithDb(db => db.Set<OAuthClientExtras>().Single(e => e.ClientId == id).GrantTypesJson));
         var machine = await TokenAsync(Factory.Plain(), new() { ["grant_type"] = "client_credentials", ["client_id"] = id });
         Assert.Equal("unauthorized_client", Err(machine.Body));
         Assert.Equal("client is not authorized to use grant type client_credentials", Desc(machine.Body));
@@ -657,8 +658,8 @@ public sealed class PrivateKeyJwtTests(OAuthExtrasFactory factory) : OAuthExtras
         Assert.Equal("unsupported assertion signing algorithm: none", Desc((await TokenAsync(Factory.Plain(), Form(none))).Body));
         var hmac = $"{TestKey.B64("{\"alg\":\"HS256\"}")}.{TestKey.B64(JsonSerializer.Serialize(new { iss = id, sub = id }))}.AAAA";
         Assert.Equal("unsupported assertion signing algorithm: HS256", Desc((await TokenAsync(Factory.Plain(), Form(hmac))).Body));
-        var eddsa = $"{TestKey.B64("{\"alg\":\"EdDSA\"}")}.{TestKey.B64(JsonSerializer.Serialize(new { iss = id, sub = id }))}.AAAA";
-        Assert.Equal("unsupported assertion signing algorithm: EdDSA", Desc((await TokenAsync(Factory.Plain(), Form(eddsa))).Body));
+        var es256k = $"{TestKey.B64("{\"alg\":\"ES256K\"}")}.{TestKey.B64(JsonSerializer.Serialize(new { iss = id, sub = id }))}.AAAA";
+        Assert.Equal("unsupported assertion signing algorithm: ES256K", Desc((await TokenAsync(Factory.Plain(), Form(es256k))).Body));
         Assert.Equal("malformed client assertion: invalid JWT header", Desc((await TokenAsync(Factory.Plain(), Form("not.a.jwt"))).Body));
     }
 

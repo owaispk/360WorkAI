@@ -133,15 +133,28 @@ public static class SsoAdminEndpoints
             if (failure is not null) return failure;
             if (access.Require(context!, "sso.manage") is { } denied) return denied;
             var body = await BodyReader.ReadAsync(ctx.Request);
-            var issuer = body.String("issuer", true, url: true);
+            // Pasted identity provider metadata fills issuer, single sign-on URL (and binding), certificate and logout URL; explicit fields still win.
+            var metadataText = body.String("idpMetadata", false, minOne: true);
+            SamlIdpMetadata? metadata = null;
+            if (metadataText is not null)
+            {
+                var (read, problem) = SamlMetadataImport.Read(metadataText);
+                if (read is null) return Invalid(problem!);
+                metadata = read;
+            }
+            var fromMetadata = metadata is not null;
+            var issuer = body.String("issuer", !fromMetadata, url: true) ?? metadata?.EntityId;
             var domain = body.String("domain", true, minOne: true)?.Trim();
-            var entryPoint = body.String("entryPoint", true, url: true);
-            var cert = body.String("cert", true, minOne: true);
+            var entryPoint = body.String("entryPoint", !fromMetadata, url: true) ?? metadata?.SsoUrl;
+            var cert = body.String("cert", !fromMetadata, minOne: true) ?? metadata?.Certificates;
             var audience = body.String("audience", false, url: true);
-            var binding = body.Enum("binding", "redirect", "post");
+            var binding = body.Enum("binding", "redirect", "post") ?? metadata?.Binding;
+            var signRequests = body.Bool("signAuthnRequests") ?? false;
+            var sloUrl = body.String("singleLogoutUrl", false, url: true) ?? metadata?.SloUrl;
             if (body.Failure is { } invalid) return invalid;
 
-            var (connection, error) = await sso.RegisterSamlAsync(context!.Organization, new SamlRegistration(issuer!, domain!, entryPoint!, cert!, audience, binding), ctx.RequestAborted);
+            var registration = new SamlRegistration(issuer!, domain!, entryPoint!, cert!, audience, binding, signRequests, sloUrl);
+            var (connection, error) = await sso.RegisterSamlAsync(context!.Organization, registration, ctx.RequestAborted);
             if (connection is null) return Invalid(error!);
             var domainToken = connection.DomainVerified ? null : await sso.RequestDomainTokenAsync(connection, ctx.RequestAborted);
             return Results.Json(new { connection = sso.Payload(connection), domainVerificationToken = domainToken }, statusCode: 201);
@@ -219,7 +232,7 @@ public static class SsoAdminEndpoints
         });
 
         // Only SAML connections have service provider metadata. As in the reference, `format` is validated and the answer is always the XML document.
-        app.MapGet("/v1/sso/metadata", async (HttpContext ctx, OrgAccess access, SsoService sso) =>
+        app.MapGet("/v1/sso/metadata", async (HttpContext ctx, OrgAccess access, SsoService sso, SamlServiceProvider sp) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -228,7 +241,7 @@ public static class SsoAdminEndpoints
             if (ctx.Request.Query.ContainsKey("format") && format is not ("xml" or "json"))
                 return Results.Json(new { error = "invalid_request", details = new[] { new { message = "Invalid option: expected one of \"xml\"|\"json\"", path = new[] { "format" } } } }, statusCode: 400);
             var connection = await sso.ForOrganizationAsync(context!.Organization.Id);
-            return (connection is null ? null : SamlEndpoints.SamlMetadataResult(sso, connection)) ?? OrgNotFound();
+            return (connection is null ? null : await SamlEndpoints.SamlMetadataResultAsync(sso, sp, connection, ctx.RequestAborted)) ?? OrgNotFound();
         });
 
         app.MapPost("/v1/sso/request-domain-verification", async (HttpContext ctx, OrgAccess access, SsoService sso) =>

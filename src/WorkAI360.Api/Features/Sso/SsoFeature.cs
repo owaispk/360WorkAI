@@ -23,6 +23,8 @@ public sealed class SsoFeature : IFeature
         services.AddScoped<SsoRouting>();
         services.AddScoped<OidcFlow>();
         services.AddScoped<SamlFlow>();
+        services.AddScoped<SamlServiceProvider>();
+        services.AddScoped<SamlLogoutFlow>();
     }
 
     public void MapEndpoints(WebApplication app)

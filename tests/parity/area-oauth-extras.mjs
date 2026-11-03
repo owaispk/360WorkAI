@@ -5,7 +5,7 @@
 // Start the rewrite with a platform admin (it can give a client its client_credentials scopes, which the reference has no way to do):
 //   PlatformAdmin__BootstrapEmails=padmin.parity@example.com scripts/dev.sh start        (override the address with ADMIN_EMAIL)
 // The reference could not be started where this was written, so this script has been run against the rewrite only. Checks marked "(rewrite)" use behavior
-// that is this build's (the operator route for scopes); set REFERENCE=1 to skip them. EdDSA is not available in .NET, so no check uses it.
+// that is this build's (the operator route for scopes); set REFERENCE=1 to skip them.
 import { createHash, createPublicKey, generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import { call, workspace, suite, PW, W, A } from "./lib.mjs";
 
@@ -291,6 +291,48 @@ await s.t("introspection reports the binding", async () => {
   const t = await token(body, { basic: basicOf(cid, secret), dpop: dk.dpop("POST", TOKEN_URL) });
   const i = await call(W, "/api/auth/oauth2/introspect", { method: "POST", raw: form({ token: t.json.access_token }), headers: { "content-type": "application/x-www-form-urlencoded", authorization: `Basic ${Buffer.from(basicOf(cid, secret)).toString("base64")}` } });
   return (i.json.active === true && i.json.token_type === "DPoP" && i.json.cnf?.jkt === dk.thumbprint) || `${err(t)} ${i.text.slice(0, 200)}`;
+});
+
+// ---- client management by the person who registered a client (Better Auth's /oauth2/*-client routes under /api/auth) ----
+const other = await workspace("OAuth Extras Other");
+const manage = (path, { method = "POST", body, user = ws.owner } = {}) => call(W, `/api/auth/oauth2/${path}`, { method, body, bearer: user.token });
+await s.t("create-client needs a session and answers 201 with a secret and the owner", async () => {
+  const anon = await call(W, "/api/auth/oauth2/create-client", { method: "POST", body: { client_name: "X", redirect_uris: [REDIRECT] } });
+  const r = await manage("create-client", { body: { client_name: "Managed", redirect_uris: [REDIRECT], token_endpoint_auth_method: "client_secret_basic" } });
+  return (anon.status === 401 && r.status === 201 && typeof r.json.client_secret === "string" && typeof r.json.user_id === "string") || `${anon.status} ${r.status} ${r.text.slice(0, 200)}`;
+});
+await s.t("get-client, get-clients, update-client, rotate-secret and delete-client work for the owner only", async () => {
+  const made = await manage("create-client", { body: { client_name: "Owned", redirect_uris: [REDIRECT], token_endpoint_auth_method: "client_secret_post" } });
+  const id = made.json.client_id;
+  const got = await manage(`get-client?client_id=${id}`, { method: "GET" });
+  const list = await manage("get-clients", { method: "GET" });
+  const stranger = await manage(`get-client?client_id=${id}`, { method: "GET", user: other.owner });
+  const upd = await manage("update-client", { body: { client_id: id, update: { client_name: "Owned 2" } } });
+  const rot = await manage("client/rotate-secret", { body: { client_id: id } });
+  const strangerDel = await manage("delete-client", { body: { client_id: id }, user: other.owner });
+  const del = await manage("delete-client", { body: { client_id: id } });
+  const gone = await manage(`get-client?client_id=${id}`, { method: "GET" });
+  const ok = got.status === 200 && got.json.client_secret === undefined && Array.isArray(list.json) && list.json.some((c) => c.client_id === id)
+    && stranger.status === 401 && upd.json?.client_name === "Owned 2" && rot.status === 200 && rot.json.client_secret && rot.json.client_secret !== made.json.client_secret
+    && strangerDel.status === 401 && del.status === 200 && gone.status === 404;
+  return ok || [got, list, stranger, upd, rot, strangerDel, del, gone].map((r) => r.status).join();
+});
+await s.t("public clients have no secret to rotate", async () => {
+  const pub = await manage("create-client", { body: { client_name: "Pub", redirect_uris: [REDIRECT] } });
+  const r = await manage("client/rotate-secret", { body: { client_id: pub.json.client_id } });
+  return (r.status === 400 && r.json.error_description === "secret rotation is only available for clients using client_secret authentication") || err(r);
+});
+
+// ---- the JWT-bearer grant for pre-claim assertions (Den's own, answered before the OAuth provider) ----
+await s.t("a provisional workspace's assertion is exchanged for a short MCP token; nonsense is refused", async () => {
+  const boot = await call(A, "/v1/bootstrap/workspace", { method: "POST", body: { workspaceName: "Preclaim Contract" } });
+  const assertion = boot.json?.identity?.assertion;
+  const ok = await token({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion });
+  const missing = await token({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer" });
+  const bad = await token({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: "x.y.z" });
+  const mcp = ok.json?.access_token ? await call(A, "/mcp/agent", { method: "POST", bearer: ok.json.access_token, body: { jsonrpc: "2.0", id: 1, method: "ping" } }) : { status: 0 };
+  return (ok.status === 200 && ok.json.token_type === "Bearer" && ok.json.expires_in <= 900 && !ok.json.refresh_token && mcp.status === 200
+    && missing.status === 400 && missing.json.error === "invalid_request" && bad.status === 400 && bad.json.error === "invalid_grant") || [boot.status, ok.status, mcp.status, missing.status, bad.status].join();
 });
 
 s.done();

@@ -11,16 +11,19 @@ public sealed class TestKey : IDisposable
 {
     private readonly ECDsa? _ec;
     private readonly RSA? _rsa;
+    private readonly Org.BouncyCastle.Crypto.Parameters.Ed25519PrivateKeyParameters? _ed;
     public string Alg { get; }
     public string Kid { get; }
 
-    private TestKey(ECDsa? ec, RSA? rsa, string alg)
+    private TestKey(ECDsa? ec, RSA? rsa, string alg, Org.BouncyCastle.Crypto.Parameters.Ed25519PrivateKeyParameters? ed = null)
     {
-        _ec = ec; _rsa = rsa; Alg = alg; Kid = "k-" + Guid.NewGuid().ToString("N")[..8];
+        _ec = ec; _rsa = rsa; _ed = ed; Alg = alg; Kid = "k-" + Guid.NewGuid().ToString("N")[..8];
     }
 
     public static TestKey Ec(string alg = "ES256") => new(ECDsa.Create(alg switch { "ES384" => ECCurve.NamedCurves.nistP384, "ES512" => ECCurve.NamedCurves.nistP521, _ => ECCurve.NamedCurves.nistP256 }), null, alg);
     public static TestKey Rsa(string alg = "RS256", int bits = 2048) => new(null, RSA.Create(bits), alg);
+    /// <summary>An Ed25519 key (EdDSA, <c>kty: OKP</c>).</summary>
+    public static TestKey Ed() => new(null, null, "EdDSA", new Org.BouncyCastle.Crypto.Parameters.Ed25519PrivateKeyParameters(new Org.BouncyCastle.Security.SecureRandom()));
     public void Dispose() { _ec?.Dispose(); _rsa?.Dispose(); }
 
     public static string B64(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
@@ -30,7 +33,13 @@ public sealed class TestKey : IDisposable
     public JsonObject Jwk(bool withKid = false, bool withAlg = false)
     {
         var jwk = new JsonObject();
-        if (_ec is not null)
+        if (_ed is not null)
+        {
+            jwk["kty"] = "OKP";
+            jwk["crv"] = "Ed25519";
+            jwk["x"] = B64(_ed.GeneratePublicKey().GetEncoded());
+        }
+        else if (_ec is not null)
         {
             var p = _ec.ExportParameters(false);
             jwk["kty"] = "EC";
@@ -58,6 +67,13 @@ public sealed class TestKey : IDisposable
     {
         alg ??= Alg;
         var data = Encoding.ASCII.GetBytes(signingInput);
+        if (_ed is not null)
+        {
+            var signer = new Org.BouncyCastle.Crypto.Signers.Ed25519Signer();
+            signer.Init(true, _ed);
+            signer.BlockUpdate(data, 0, data.Length);
+            return signer.GenerateSignature();
+        }
         var hash = alg[^3..] switch { "256" => HashAlgorithmName.SHA256, "384" => HashAlgorithmName.SHA384, _ => HashAlgorithmName.SHA512 };
         if (_ec is not null) return _ec.SignData(data, hash, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
         return _rsa!.SignData(data, hash, alg.StartsWith("PS", StringComparison.Ordinal) ? RSASignaturePadding.Pss : RSASignaturePadding.Pkcs1);

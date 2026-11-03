@@ -47,20 +47,30 @@ public static class SamlEndpoints
 
         app.MapGet("/api/auth/sso/saml2/sp/login/{providerId}", (string providerId, string? relay, HttpContext ctx, SamlFlow flow) => flow.LoginFormAsync(ctx, providerId, relay, ctx.RequestAborted));
 
-        app.MapGet("/api/auth/sso/saml2/sp/metadata", async (string? providerId, DenDbContext db, SsoService sso) =>
+        app.MapGet("/api/auth/sso/saml2/sp/metadata", async (string? providerId, HttpContext ctx, DenDbContext db, SsoService sso, SamlServiceProvider sp) =>
         {
             if (string.IsNullOrEmpty(providerId)) return Results.Json(new { message = "[query.providerId] Invalid input: expected string, received undefined" }, statusCode: 400);
             var connection = await db.Set<SsoConnection>().FirstOrDefaultAsync(c => c.ProviderId == providerId);
             if (connection is null) return Results.Json(new { message = "No provider found for the given providerId" }, statusCode: 404);
-            return SamlMetadataResult(sso, connection) ?? Results.Json(new { message = "Invalid SAML configuration" }, statusCode: 400);
+            return await SamlMetadataResultAsync(sso, sp, connection, ctx.RequestAborted) ?? Results.Json(new { message = "Invalid SAML configuration" }, statusCode: 400);
         });
+
+        // Single Logout: logout messages from the identity provider (redirect or POST binding), and a person's own SAML logout.
+        app.MapGet("/api/auth/sso/saml2/sp/slo/{providerId}", (string providerId, HttpContext ctx, SamlLogoutFlow flow) => flow.ReceiveAsync(ctx, providerId, ctx.RequestAborted));
+        app.MapPost("/api/auth/sso/saml2/sp/slo/{providerId}", (string providerId, HttpContext ctx, SamlLogoutFlow flow) => flow.ReceiveAsync(ctx, providerId, ctx.RequestAborted));
+        app.MapGet("/api/auth/sso/saml2/sp/logout/{providerId}", (string providerId, HttpContext ctx, SamlLogoutFlow flow) => flow.StartAsync(ctx, providerId, ctx.RequestAborted));
     }
 
-    /// <summary>The service provider metadata as XML, or null when the connection is not a SAML one.</summary>
-    public static IResult? SamlMetadataResult(SsoService sso, SsoConnection connection)
+    /// <summary>
+    /// The service provider metadata as XML, or null when the connection is not a SAML one. It carries this connection's service provider certificate
+    /// (made on first request) for checking signed requests and for encrypting assertions, and its Single Logout endpoints.
+    /// </summary>
+    public static async Task<IResult?> SamlMetadataResultAsync(SsoService sso, SamlServiceProvider sp, SsoConnection connection, CancellationToken ct)
     {
         var settings = SsoService.SamlSettingsOf(connection);
         if (settings is null) return null;
-        return Results.Content(SamlProtocol.Metadata(sso.SpEntityId(settings), sso.AcsUrl(connection.ProviderId)), "application/xml", Encoding.UTF8);
+        var certificate = await sp.CertificateAsync(connection.ProviderId, ct);
+        var xml = SamlProtocol.Metadata(sso.SpEntityId(settings), sso.AcsUrl(connection.ProviderId), sso.SloUrl(connection.ProviderId), certificate, settings.SignAuthnRequests);
+        return Results.Content(xml, "application/xml", Encoding.UTF8);
     }
 }

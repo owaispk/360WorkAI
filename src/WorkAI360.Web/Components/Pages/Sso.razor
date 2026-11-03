@@ -94,6 +94,9 @@
                     </select>
                     @if (_type == "saml")
                     {
+                        <label for="sso-idp-metadata">Identity provider metadata (optional)</label>
+                        <textarea id="sso-idp-metadata" rows="5" autocomplete="off" @bind="_idpMetadata" @bind:event="oninput" data-testid="sso-idp-metadata"
+                                  placeholder="Paste the provider's metadata XML to fill the entity ID, sign-on URL, certificate and logout URL"></textarea>
                         <label for="sso-issuer">Identity provider entity ID (issuer)</label>
                         <input id="sso-issuer" autocomplete="off" @bind="_issuer" @bind:event="oninput" placeholder="https://idp.example.com/metadata" />
                         <label for="sso-domain-input">Email domain</label>
@@ -109,6 +112,9 @@
                             <option value="redirect">HTTP redirect</option>
                             <option value="post">HTTP POST</option>
                         </select>
+                        <label for="sso-slo">Single logout URL (optional)</label>
+                        <input id="sso-slo" autocomplete="off" @bind="_sloUrl" @bind:event="oninput" placeholder="https://idp.example.com/slo" data-testid="sso-slo" />
+                        <label class="den-check"><input id="sso-sign-requests" type="checkbox" checked="@_signRequests" @onchange="e => _signRequests = e.Value is true" data-testid="sso-sign-requests" /> <span>Sign sign-in requests with this site’s key (the key is in the service provider metadata)</span></label>
                     }
                     else
                     {
@@ -149,7 +155,8 @@
     private Connection? _connection;
     private string? _domainToken;
     private string _type = "oidc", _binding = "redirect";
-    private string _issuer = "", _domain = "", _clientId = "", _clientSecret = "", _authz = "", _token = "", _jwks = "", _entryPoint = "", _cert = "", _audience = "";
+    private string _issuer = "", _domain = "", _clientId = "", _clientSecret = "", _authz = "", _token = "", _jwks = "", _entryPoint = "", _cert = "", _audience = "", _idpMetadata = "", _sloUrl = "";
+    private bool _signRequests;
 
     private bool Can(string permission) => _permissions.Contains(permission);
     private void OnTypeChanged(ChangeEventArgs e) => _type = e.Value?.ToString() == "saml" ? "saml" : "oidc";
@@ -195,14 +202,18 @@
         Dictionary<string, object?> body;
         if (_type == "saml")
         {
-            if (string.IsNullOrWhiteSpace(_issuer) || string.IsNullOrWhiteSpace(_domain) || string.IsNullOrWhiteSpace(_entryPoint) || string.IsNullOrWhiteSpace(_cert))
+            var fromMetadata = !string.IsNullOrWhiteSpace(_idpMetadata);
+            if (string.IsNullOrWhiteSpace(_domain) || (!fromMetadata && (string.IsNullOrWhiteSpace(_issuer) || string.IsNullOrWhiteSpace(_entryPoint) || string.IsNullOrWhiteSpace(_cert))))
             {
-                Error = "Fill in the entity ID, domain, single sign-on URL and signing certificate.";
+                Error = "Fill in the domain, and either paste the identity provider metadata or fill in the entity ID, single sign-on URL and signing certificate.";
                 return;
             }
             path = "/api/browser/v1/sso/saml";
-            body = new() { ["issuer"] = _issuer.Trim(), ["domain"] = _domain.Trim(), ["entryPoint"] = _entryPoint.Trim(), ["cert"] = _cert.Trim(), ["binding"] = _binding };
-            if (!string.IsNullOrWhiteSpace(_audience)) body["audience"] = _audience.Trim();
+            body = new() { ["domain"] = _domain.Trim(), ["signAuthnRequests"] = _signRequests };
+            // With metadata, only fields the person filled in are sent (they override what the metadata says).
+            void Put(string name, string value) { if (!string.IsNullOrWhiteSpace(value)) body[name] = value.Trim(); }
+            if (fromMetadata) body["idpMetadata"] = _idpMetadata.Trim(); else body["binding"] = _binding;
+            Put("issuer", _issuer); Put("entryPoint", _entryPoint); Put("cert", _cert); Put("audience", _audience); Put("singleLogoutUrl", _sloUrl);
         }
         else
         {

@@ -66,7 +66,7 @@ plugins as configured in `auth.ts`. Code: `Features/Sso/`, `Features/Scim/`, `Do
 
 ## Not built
 
-* **SAML** is built: see [saml.md](saml.md) (older text on this page saying it answers 501 no longer holds). Not built there: single logout, encrypted assertions, signed requests, IdP metadata import.
+* **SAML** is built, including single logout, encrypted assertions, signed requests and IdP metadata import: see [saml.md](saml.md).
 * Audit events, plan entitlements and seat limits, the SCIM retry worker (failures are recorded in `ScimSyncEvent` and shown as health; nothing retries them),
   `SCIM` `/Users` pagination (the reference returns everything too), SCIM `Bulk`/`sort`/`etag`.
 * Social sign-in (`provisionVerifiedDomainMembership` for Google/GitHub sign-ins has nothing to attach to yet).

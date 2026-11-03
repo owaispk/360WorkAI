@@ -5,7 +5,10 @@ using System.Text.RegularExpressions;
 namespace WorkAI360.Api.Features.Sso;
 
 /// <summary>A SAML connection's public settings, stored as JSON in <c>SsoConnection.SamlConfigJson</c>. Holds no secret: the identity provider's certificates are public.</summary>
-public sealed record SamlSettings(string EntryPoint, string Audience, string IdpEntityId, string[] Certificates, bool WantAssertionsSigned, string Binding);
+/// <param name="SignAuthnRequests">Sign AuthnRequests with the service provider's key (redirect binding: query signature; POST binding: enveloped XML signature).</param>
+/// <param name="SloUrl">The identity provider's Single Logout endpoint (redirect binding). Without it, logout is local only.</param>
+public sealed record SamlSettings(string EntryPoint, string Audience, string IdpEntityId, string[] Certificates, bool WantAssertionsSigned, string Binding,
+    bool SignAuthnRequests = false, string? SloUrl = null);
 
 /// <summary>What is wrong with a SAML response. <see cref="Code"/> is stable (tests and logs); the message is what a person reads.</summary>
 public sealed class SamlException(string code, string message) : Exception(message)
@@ -19,9 +22,10 @@ public sealed record SamlAssertion(
     IReadOnlyDictionary<string, string[]> Attributes, DateTime ReplayExpiresAt);
 
 /// <summary>What the service provider expects of a response.</summary>
+/// <param name="DecryptionKey">The service provider's private key, for an <c>EncryptedAssertion</c>; without it encrypted assertions are refused.</param>
 public sealed record SamlExpectations(
     string IdpEntityId, string SpEntityId, IReadOnlyCollection<string> AcsUrls, IReadOnlyList<X509Certificate2> Certificates,
-    DateTimeOffset Now, TimeSpan ClockSkew);
+    DateTimeOffset Now, TimeSpan ClockSkew, RSA? DecryptionKey = null);
 
 /// <summary>Reading certificates the way administrators paste them: PEM (one or several), or the bare base64 of the DER.</summary>
 public static class SamlCertificates

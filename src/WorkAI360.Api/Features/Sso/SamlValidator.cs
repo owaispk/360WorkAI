@@ -64,10 +64,37 @@ public static class SamlValidator
         if (statusCode != StatusSuccess)
             throw new SamlException("saml_status_not_success", $"The identity provider did not authenticate the person ({ShortStatus(statusCode)}).");
 
+        // An encrypted assertion: a signature on the Response covers the encrypted form, so it is checked first; then the assertion is decrypted
+        // with this service provider's key and put in its place, and everything below applies to it exactly as to a plaintext one.
+        var responseVerifiedEncrypted = false;
+        var encrypted = doc.SelectNodes("//*")!.Cast<XmlElement>().Where(el => el.LocalName == "EncryptedAssertion").ToList();
+        if (encrypted.Count > 0)
+        {
+            if (expected.DecryptionKey is null)
+                throw new SamlException("saml_encrypted_assertion", "The assertion is encrypted, but this connection has no service provider key to decrypt it.");
+            if (encrypted.Count > 1) throw new SamlException("saml_multiple_assertions", $"The SAML response contains {encrypted.Count} encrypted assertions, expected exactly 1.");
+            var holder = encrypted[0];
+            if (holder.NamespaceURI != AssertionNs || holder.ParentNode != response) throw new SamlException("saml_invalid_xml", "The encrypted assertion is not a direct child of the response.");
+            var signaturesBefore = doc.GetElementsByTagName("Signature", DsigNs).Cast<XmlElement>().ToList();
+            var onResponse = signaturesBefore.Where(s => s.ParentNode == response).ToList();
+            if (onResponse.Count > 1 || signaturesBefore.Count != onResponse.Count)
+                throw new SamlException("saml_signature_invalid", "The SAML message carries a signature in an unexpected place.");
+            if (onResponse.Count == 1)
+            {
+                VerifySignature(doc, response, onResponse[0], expected.Certificates);
+                responseVerifiedEncrypted = true;
+            }
+            var plain = SamlDecryptor.Decrypt(holder, expected.DecryptionKey);
+            var fragment = Parse(plain).DocumentElement;
+            if (fragment is null || fragment.LocalName != "Assertion" || fragment.NamespaceURI != AssertionNs)
+                throw new SamlException("saml_decryption_failed", "The encrypted content is not a SAML assertion.");
+            response.ReplaceChild(doc.ImportNode(fragment, deep: true), holder);
+        }
+
         // Exactly one plaintext Assertion in the whole document, directly under the Response.
         var elements = doc.SelectNodes("//*")!.Cast<XmlElement>().ToList();
         if (elements.Any(el => el.LocalName is "EncryptedAssertion" or "EncryptedID" or "EncryptedAttribute"))
-            throw new SamlException("saml_encrypted_assertion", "Encrypted assertions are not supported. Configure the identity provider to send a signed, plaintext assertion.");
+            throw new SamlException("saml_encrypted_assertion", "Encrypted identifiers and attributes are not supported. Configure the identity provider to encrypt the whole assertion.");
         var assertions = elements.Where(el => el.LocalName == "Assertion").ToList();
         if (assertions.Count == 0) throw new SamlException("saml_no_assertion", "The SAML response contains no assertion.");
         if (assertions.Count > 1) throw new SamlException("saml_multiple_assertions", $"The SAML response contains {assertions.Count} assertions, expected exactly 1.");
@@ -84,7 +111,8 @@ public static class SamlValidator
             throw new SamlException("saml_signature_invalid", "The SAML message carries a signature in an unexpected place.");
         if (assertionSignatures.Count == 0) throw new SamlException("saml_assertion_signature_required", "The SAML assertion must be signed by the identity provider.");
         VerifySignature(doc, assertion, assertionSignatures[0], expected.Certificates);
-        if (responseSignatures.Count == 1) VerifySignature(doc, response, responseSignatures[0], expected.Certificates);
+        // (After decryption the response's signature no longer matches the document; it was checked on the encrypted form above.)
+        if (responseSignatures.Count == 1 && !responseVerifiedEncrypted) VerifySignature(doc, response, responseSignatures[0], expected.Certificates);
         var responseSigned = responseSignatures.Count == 1;
 
         // ---- From here on only the verified assertion (and, as a courtesy check, the response's own attributes) are read. ----
@@ -225,6 +253,15 @@ public static class SamlValidator
     private sealed class NoResolver : XmlResolver
     {
         public override object? GetEntity(Uri absoluteUri, string? role, Type? ofObjectToReturn) => throw new XmlException("External references are not allowed.");
+    }
+
+    /// <summary>Checks the enveloped signature of a signed logout message (its root element) with every rule a response signature is held to.</summary>
+    public static void VerifyRootSignature(XmlDocument doc, IReadOnlyList<X509Certificate2> certificates)
+    {
+        var root = doc.DocumentElement ?? throw new SamlException("saml_invalid_xml", "The SAML message is empty.");
+        var signatures = doc.GetElementsByTagName("Signature", DsigNs).Cast<XmlElement>().ToList();
+        if (signatures.Count != 1 || signatures[0].ParentNode != root) throw new SamlException("saml_signature_invalid", "The SAML message must carry exactly one signature, on itself.");
+        VerifySignature(doc, root, signatures[0], certificates);
     }
 
     private static void VerifySignature(XmlDocument doc, XmlElement signed, XmlElement signature, IReadOnlyList<X509Certificate2> certificates)
