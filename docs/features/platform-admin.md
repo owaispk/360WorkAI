@@ -113,14 +113,62 @@ and paid and unpaid are null.
 * **`lastSeenAt` is the newest session update**; sessions end at sign-out here, so it is the latest of the live ones.
 * **Concurrency:** first-time rollout changes retry once on a unique-key race.
 
+## Control Center (`/admin/control-center`)
+
+Reference: `ee/apps/den-api/src/admin-metrics/*`, `routes/admin/control-center.ts`, den-web `components/admin/control-center/*`. Code:
+`Features/PlatformAdmin/ControlCenter.cs` (metrics, snapshot store, background refresher, routes), `ControlCenterMath.cs` (the pure rules), entities
+`AdminMetricSnapshot` and `AdminMetricRefreshLease`. Page `Components/Pages/AdminControlCenter.razor`.
+
+| Route | Notes |
+|---|---|
+| `GET /v1/admin/control-center?range=7d\|30d\|90d` | Never computes: reads snapshot rows. Six sections (`pulse`, `lifecycle`, `invitations`, `sharing`, `revenue`, `accounts`), each `{computedAt, stale, error, durationMs, data}` in the reference's shapes; `stale` when older than twice its tier's interval or missing; a failed refresh keeps the last good `data` and reports `error`. `refresh` carries the intervals and `lastRequestedAt`. Revenue and accounts ignore `range`. Bad range `400` |
+| `POST /v1/admin/control-center/refresh` | Schedules a forced recompute of every section and answers `202 {scheduled, requestedAt}`; at most one a minute across all admins (one conditional update): `429 {error: "refresh_rate_limited", message, retryAfterSeconds}` + `Retry-After` |
+
+A background job (`ControlCenterRefresher`) recomputes pulse every 5 minutes and the rest every 30 (`PlatformAdmin__Metrics__FastIntervalSeconds`,
+`__HeavyIntervalSeconds`, at least 60/300; `__RefreshEnabled=false` turns it off; first run after `__FirstRefreshDelaySeconds`, 15). One queue per process;
+a lease row per section (15 minutes, taken by one conditional update) keeps two instances from computing the same section, as the reference's leases do.
+
+What the sections hold here (differences from the reference):
+* **"Active" is a sign-in or a reported feature use** (`POST /v1/org/feature-usage`), the same rule as the dashboard's active people, because this build has
+  no desktop task telemetry. The reference counts task runs, and currently has that query switched off (its values read 0). The page says which rule applies.
+  Task counts (`tasks`, `failures`, `tasks7d`) are 0; "ran a task" in invitations means a feature use after joining.
+* **Skills**: uses are the agent skill reads the library records (`LibraryUsageEvent`); sharing and teammate reuse follow the reference's rules. **MCP**
+  calls, connector reliability and plugin counts are 0: tool calls are not logged per call here (the reference's plugin count is switched off too).
+* **Revenue** is empty (no billing); **accounts** use the stored plan, never paying, no seats. **Outreach** is `null` (no follow-up log).
+* People in workspaces exclude the sign-in-less setup member of an agent-provisioned workspace, as the reference excludes setup agents.
+
+## Refused and failed requests (`GET /v1/admin/security/requests`)
+
+Reference: `readSecurityRequests` in `routes/admin/security.ts` over its platform audit events. Here a new log (`PlatformRequestEvent`, `RequestLog.cs`)
+records, from middleware, every `401` and `429` response and any `4xx`/`5xx` from the sign-in, token and app-registration routes (`/api/auth/*`,
+`/v1/auth/*`, `/oauth2/*`, `/register`, `/token`): the time, the route as a dotted name **from its template** (`auth.sign_in.email`, `v1.admin.users`;
+never a path value), the outcome (`denied` for 401/403/429, else `failed`) and the status. **No address, person, credential, query string or id** is
+kept; a workspace's own permission refusals (403 with a trusted tenant) are not logged. Events are queued in memory (bounded,
+`PlatformAdmin__RequestLog__QueueCapacity`, 10,000; beyond that they are dropped, never blocking a request), written in batches every 2 seconds, and
+deleted after `PlatformAdmin__RequestLog__RetentionDays` (7). `__Enabled=false` turns it off.
+
+The route answers the reference's shape: 24 `hourly` buckets (`refused`, `rateLimited`, `failed`, `failedSignIns`), the 25 busiest `endpoints` with their
+peak and typical hour, and three findings with the reference's thresholds (failed sign-ins, rate-limited requests, refusal spikes). `/admin/security` shows it
+under "Refused and failed requests".
+
+Tests: `tests/WorkAI360.Api.Tests/ControlCenterTests.cs` (7: the rules; exact section numbers from seeded people, sign-ins, feature use, invitations and
+skill sharing; a failure keeping the last good data; leases; the refresh limit; access; the request log's privacy), `tests/parity/ui-admin-control-center.js`
+(12, browser). Mutation checks (10 of 10 killed): each route open to non-admins (3), the action name taken from the raw path, workspace 403s logged, no
+refresh limit, a forced claim taking a running lease, leases ignored, a failure wiping the last good data, setup agents counted as people.
+
+The dashboard shows platform admins a **Platform admin** link to `/admin` (decided by whether the admin-only Control Center read answers); the reference has
+no such link.
+
 ## Not built
 
 * `GET /v1/admin/users/{id}/inference-usage` and the inference usage reset, free-auto (`free-auto/*`), the Stripe-backed plan, billing and `includeBilling` paid states, seat-subscription syncing.
-* `control-center` (+ refresh), `security/requests` (it reads a log of refused, rate-limited and failed requests that this build does not keep, so there is nothing honest to show), `opportunities*`,
-  `scale-performance`, the sandbox organization actions (create, rotate link, join role, extend, credit, close: always "turned off" on self-hosted), `mcp-registration`, organization `usage` and `insights`
-  (they need gateway usage, telemetry or outside services). Feature outcomes for `slackSendAsBot` and `workbotProactive` (no Slack or Workbot here); background Automation work is not recorded as feature usage.
-* The `members` admin list of a workspace beyond the detail page (the detail page shows up to 100 people with a link to each one's features).
-* Pages for what is built: `/admin/feature-usage`, `/admin/security`, `/admin/services` (Blazor, in the admin navigation). The den-web pages for the rest, and a dashboard link to `/admin` (the page is reached by URL and answers anyone else with a plain message).
+* `opportunities*` (overview, list, companies, accounts and their outreach actions): they rank workspaces by desktop app activity, which this build has no
+  telemetry for, and the reference deliberately never infers it from sign-ins. The sandbox organization actions (always "turned off" on self-hosted),
+  `mcp-registration`, organization `usage` and `insights` (they need telemetry or outside services). Feature outcomes for `slackSendAsBot` and
+  `workbotProactive` (no Slack or Workbot here); background Automation work is not recorded as feature usage.
+* `scale-performance` is not a route in the reference (it is its paging helper), and there is no separate members admin route: the detail page pages
+  through people (up to 100 per page) with a link to each one's features.
+* den-web pages for what is not built.
 
 ## Running it
 
