@@ -54,8 +54,8 @@ W=http://localhost:5081 A=http://localhost:5080 node tests/parity/real-mcp-clien
 W=http://localhost:5081 A=http://localhost:5080 node tests/parity/ui-members.js  # invite, join, change role, remove
 W=http://localhost:5081 A=http://localhost:5080 node tests/parity/ui-teams.js    # teams, Admin teams, roles and permissions
 # One contract script and one browser script per area (each header says how to start the server for it; the reference is the default target):
-#   area-library.mjs  area-org-admin.mjs  area-connections.mjs  area-policy.mjs  area-sso.mjs
-#   ui-library.js     ui-org-admin.js     ui-connections.js     ui-policy.js     ui-sso.js
+#   area-library.mjs  area-org-admin.mjs  area-connections.mjs  area-policy.mjs  area-sso.mjs  area-workspace.mjs
+#   ui-library.js     ui-org-admin.js     ui-connections.js     ui-policy.js     ui-sso.js     ui-workspace.js
 
 # Email verification and reset (start the rewrite with the setting below; it reads the dev outbox):
 Auth__RequireEmailVerification=true scripts/dev.sh restart
@@ -97,6 +97,7 @@ It is the yardstick for "does the rewrite behave like Den": a route is done when
 | Platform admin ([docs](docs/features/platform-admin.md)) | `/v1/admin/*` for the operator of a deployment: overview and metrics, users (search, delete), organizations (detail, plan, free seats, DPA, web access, capabilities), feature flags with per-workspace overrides, platform admins (a table plus `PlatformAdmin__BootstrapEmails`). The flags drive `GET /v1/features` and the `features` fields of `GET /v1/org`. Pages under `/admin` |
 | Approved web origins in use ([docs](docs/features/web-origins.md)) | CORS for operator-configured and workspace-approved origins (cached, fail-closed), and approved web return URLs for desktop handoff |
 | Automations and telemetry ([docs](docs/features/automations.md)) | `/v1/automations*` (CRUD, activate/deactivate, run now, archive), schedules with the reference's DST rules, runs with leases and the desktop-runner protocol (token, work, claim, heartbeat, events, complete, cancel), runner presence, cloud Automations stored and answered like the reference when no cloud runner exists, `/v1/telemetry/*` ingest and analytics (12 weeks, computed locally). A background scheduler starts due Automations and recovers expired leases. Pages `/dashboard/automations`, `/analytics` |
+| Workspace ([docs](docs/features/workspace.md)) | **Workflows**: Code Mode scripts kept as config objects in a plugin, run by a built-in JavaScript runner (Jint) with no host access and only the tools the Workflow declared, as the person running it. `/v1/workflows*` (list, detail, versions, draft test, run an exact version or live, receipts and erasing their content), `POST /v1/workflows` (save a run made with the `execute_capability_script` tool), `/v1/workflow-runs` and the legacy aliases; results encrypted at rest; Workflow cards in `/v1/me/library`; agents run saved Workflows through `execute_capability`. **Generated views and apps** (`/v1/apps*`, `/v1/artifact-views/*`, off by default as in the reference). **Apps catalog** `GET /v1/mcp-apps`. **Webhooks** `/v1/webhooks/connectors/github` and `/v1/webhooks/stripe` (signatures verified; nothing behind them), the removed **Memory Bank**'s answers (`/v1/memory*`), and the **direct-upload** routes (401/501: they need Google or Microsoft). Pages `/dashboard/library/workflows/{id}`, `/dashboard/workflow-runs`, and Workflow cards on `/dashboard/library` |
 | Web host | `/api/auth/*`, `/api/browser/v1/*` (same-origin guard, cookie filter) proxied to the API; the aliases `login-options`, `sso-resolve`, `desktop-handoff`; `/api/health`, `/api/ready`, `/api/runtime-config`, `/api/auth/clear-session-cookie` |
 | Blazor pages | `/` (email-first sign-in or sign-up; resumes an agent's authorization afterwards), `/organization`, `/dashboard`, `/dashboard/members` (list, invite, change role, remove, make owner, copy or cancel an invitation), `/dashboard/teams` (create, rename, delete, choose people, Admin teams), `/dashboard/permissions` (roles by area, shared roles, give to teams, history), `/join-org` (open an invitation link), `/device`, `/mcp/consent` and `/mcp/select-organization` (allow or deny an agent, choose or create a workspace), `/connect/error`, `/reset-password` (and the verify-code and forgot-password steps on `/`) |
 
@@ -122,6 +123,8 @@ Set with environment variables (`Auth__Secret`) or `appsettings`.
 | `Cors__Origins__0`, `__1`… | Extra exact origins allowed to call the API from a browser, besides this deployment's own and the ones workspaces approved ([docs](docs/features/web-origins.md)). |
 | `SocialProviders__Google__ClientId`, `__ClientSecret`, `SocialProviders__GitHub__ClientId`, `__ClientSecret` | Turn on Google / GitHub sign-in (the button appears when the pair is set). |
 | `Auth__RateLimitsEnabled` | Rate limits on the email endpoints. Default: off in Development, on everywhere else. |
+| `Workspace__GeneratedArtifactViewsEnabled`, `Workspace__AppMcpServersEnabled` | Generated views and `/v1/apps*` (off by default); Apps as MCP servers, the Apps catalog and read-only Workflow views (on by default). |
+| `Workspace__GithubWebhookSecret`, `Workspace__StripeWebhookSecret` | The secrets the GitHub connector and Stripe webhooks verify; unset, they refuse. |
 | `Email__Provider` | `smtp`, `resend` (needs `Email__Resend__ApiKey`) or `dev`. `dev` keeps messages in memory and exposes them at `GET /dev/outbox` (**Development only; refused anywhere else**). `smtp` and `resend` send real mail. |
 | `Email__From`, `Email__Smtp__Host`, `__Port`, `__User`, `__Password`, `__Security` | SMTP settings. `Security` is `auto` (default), `starttls`, `ssl` or `none` (local test servers only). |
 
@@ -168,10 +171,10 @@ The reference has about 400 distinct `/v1` paths and 129 web pages; this covers 
 - **Google Workspace, Microsoft 365 and Gmail** integrations (and every connection of kind `native_provider`), the Slack assistant, and the GitHub App install routes.
 
 **Not reached yet (no outside dependency):**
-- **Workflows** and workflow/script runs (`/v1/workflows*`, `/v1/codemode*`, the den-web workflow-runs and script-runs pages), the runner events SSE stream and runner inventory, calendar triggers, and cloud execution of Automations (it needs a cloud runner).
+- The runner events SSE stream and runner inventory, calendar triggers, the analytics pages for Workflow runs, and cloud execution of Automations (it needs a cloud runner).
 - The rest of platform admin (inference usage, security, feature usage, sandbox organizations, services), first-administrator setup, activation and "my agent", and real egress probes (see [docs/features/platform-admin.md](docs/features/platform-admin.md) and [onboarding.md](docs/features/onboarding.md)).
 - **SAML** sign-in (the SSO route answers 501), plugin–connection bindings, `/v1/oauth-providers*`, invite-into-a-team, declarative team keys.
-- **OAuth**: `client_credentials`, DPoP and `private_key_jwt`. **OAuth-provider browser sign-in** connect (start and callback) and GitHub import bindings; memory, artifact views, direct uploads, mcp-apps and webhooks.
+- **OAuth**: `client_credentials`, DPoP and `private_key_jwt`. **OAuth-provider browser sign-in** connect (start and callback) and GitHub import bindings; and from the workspace area ([docs](docs/features/workspace.md)): direct uploads (they need Google or Microsoft), the app builder and each App's own MCP server, and GitHub App installations and billing behind the two webhooks.
 - **Operations**: Helm packaging; a shared store for rate limits and caches (they are per instance); the container images were written and the publishes verified, but not built (no Docker daemon here); the CI template is not enabled in the repository's own CI.
 
 Each area's page in [docs/features](docs/features) lists its own gaps and its differences from the reference.

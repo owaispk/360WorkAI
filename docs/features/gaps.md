@@ -76,9 +76,8 @@ One difference from before the change: an accepted member's id is now the pendin
 
 ## Not built (and why)
 
-* Part 4 small routes (memory, artifact views, direct uploads, MCP apps, webhooks, `routes/dev`) and part 5 workflows were not started: the time
-  went into parts 1 to 3 and their tests. Nothing in them needs cloud sandboxes, billing or the AI gateway except webhooks that are provider-specific
-  and workflow execution.
+* Part 4 small routes (memory, artifact views, direct uploads, MCP apps, webhooks) and part 5 workflows were built afterwards as their own area:
+  see [workspace.md](workspace.md). Still not built: `routes/dev` (the development email outbox answers at `GET /dev/outbox` here instead).
 * `connect/start`, `connect/callback` for OAuth providers (above).
 * Bindings from GitHub imports and declarative marketplace definitions; `If-Match` on connection edits stays unbuilt as before.
 

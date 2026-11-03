@@ -3668,6 +3668,270 @@ namespace WorkAI360.Api.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("WorkAI360.Api.Domain.Workspace.ArtifactView", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("ActiveRevisionId")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ConfigObjectId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("DataMode")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("OwnerMemberId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<bool>("UseInWorkflow")
+                        .HasColumnType("tinyint(1)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OrganizationId", "ConfigObjectId");
+
+                    b.HasIndex("OrganizationId", "UpdatedAt", "Id");
+
+                    b.ToTable("ArtifactView");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Workspace.ArtifactViewRevision", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("ArtifactViewId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("BuildDiagnosticsJson")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("BuildStatus")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("CompiledHtml")
+                        .HasColumnType("longtext");
+
+                    b.Property<int?>("CompiledHtmlBytes")
+                        .HasColumnType("int");
+
+                    b.Property<string>("CompilerName")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("CompilerVersion")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("CreatedByMemberId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("CspJson")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("CssSource")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("OutputSchemaDigest")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("OutputSchemaJson")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ReactSource")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ReactVersion")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ResourceDigest")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime?>("RetiredAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("SourceDigest")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ArtifactViewId", "CreatedAt", "Id");
+
+                    b.ToTable("ArtifactViewRevision");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Workspace.DashboardApp", b =>
+                {
+                    b.Property<string>("OrganizationId")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("MemberId")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("ArtifactViewId")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("OrganizationId", "MemberId", "ArtifactViewId");
+
+                    b.HasIndex("ArtifactViewId");
+
+                    b.ToTable("DashboardApp");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Workspace.WorkflowRun", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<DateTime?>("ArtifactContentDeletedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("AutomationRunId")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("CodeDigest")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ConfigObjectId")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("ConfigObjectVersionId")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<int>("DurationMs")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ErrorKind")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("FinishedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("InputSchemaDigest")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("MemberId")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("OutputSchemaDigest")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("PluginId")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("RendererVersion")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ResultDigest")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ResultMarkdownCipher")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ScriptInputDigest")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<int>("ToolCallCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ToolCallsJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ValidatedResultCipher")
+                        .HasColumnType("longtext");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AutomationRunId");
+
+                    b.HasIndex("ConfigObjectId", "FinishedAt");
+
+                    b.HasIndex("OrganizationId", "CreatedAt", "Id");
+
+                    b.ToTable("WorkflowRun");
+                });
+
             modelBuilder.Entity("WorkAI360.Api.Domain.Automations.Automation", b =>
                 {
                     b.HasOne("WorkAI360.Api.Domain.Organization", null)

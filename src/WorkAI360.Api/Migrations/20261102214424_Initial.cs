@@ -58,6 +58,60 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "ArtifactView",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ConfigObjectId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OwnerMemberId = table.Column<string>(type: "longtext", nullable: false),
+                    Title = table.Column<string>(type: "longtext", nullable: false),
+                    Description = table.Column<string>(type: "longtext", nullable: true),
+                    Status = table.Column<string>(type: "longtext", nullable: false),
+                    ActiveRevisionId = table.Column<string>(type: "longtext", nullable: true),
+                    DataMode = table.Column<string>(type: "longtext", nullable: false),
+                    UseInWorkflow = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_ArtifactView", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "ArtifactViewRevision",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "longtext", nullable: false),
+                    ArtifactViewId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    CreatedByMemberId = table.Column<string>(type: "longtext", nullable: false),
+                    ReactSource = table.Column<string>(type: "longtext", nullable: false),
+                    CssSource = table.Column<string>(type: "longtext", nullable: false),
+                    CompiledHtml = table.Column<string>(type: "longtext", nullable: true),
+                    BuildDiagnosticsJson = table.Column<string>(type: "longtext", nullable: false),
+                    BuildStatus = table.Column<string>(type: "longtext", nullable: false),
+                    SourceDigest = table.Column<string>(type: "longtext", nullable: false),
+                    ResourceDigest = table.Column<string>(type: "longtext", nullable: true),
+                    OutputSchemaDigest = table.Column<string>(type: "longtext", nullable: false),
+                    OutputSchemaJson = table.Column<string>(type: "longtext", nullable: false),
+                    CspJson = table.Column<string>(type: "longtext", nullable: false),
+                    CompilerName = table.Column<string>(type: "longtext", nullable: false),
+                    CompilerVersion = table.Column<string>(type: "longtext", nullable: false),
+                    ReactVersion = table.Column<string>(type: "longtext", nullable: false),
+                    CompiledHtmlBytes = table.Column<int>(type: "int", nullable: true),
+                    RetiredAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_ArtifactViewRevision", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "AuditEvent",
                 columns: table => new
                 {
@@ -309,6 +363,21 @@ namespace WorkAI360.Api.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_ConnectionOAuthTransaction", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "DashboardApp",
+                columns: table => new
+                {
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    MemberId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ArtifactViewId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_DashboardApp", x => new { x.OrganizationId, x.MemberId, x.ArtifactViewId });
                 })
                 .Annotation("MySQL:Charset", "utf8mb4");
 
@@ -1316,6 +1385,43 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "WorkflowRun",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    MemberId = table.Column<string>(type: "longtext", nullable: true),
+                    AutomationRunId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: true),
+                    PluginId = table.Column<string>(type: "longtext", nullable: true),
+                    ConfigObjectId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: true),
+                    ConfigObjectVersionId = table.Column<string>(type: "longtext", nullable: true),
+                    Source = table.Column<string>(type: "longtext", nullable: false),
+                    CodeDigest = table.Column<string>(type: "longtext", nullable: false),
+                    Status = table.Column<string>(type: "longtext", nullable: false),
+                    ErrorKind = table.Column<string>(type: "longtext", nullable: true),
+                    ErrorMessage = table.Column<string>(type: "longtext", nullable: true),
+                    ToolCallsJson = table.Column<string>(type: "longtext", nullable: true),
+                    ToolCallCount = table.Column<int>(type: "int", nullable: false),
+                    DurationMs = table.Column<int>(type: "int", nullable: false),
+                    StartedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    FinishedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    ScriptInputDigest = table.Column<string>(type: "longtext", nullable: true),
+                    InputSchemaDigest = table.Column<string>(type: "longtext", nullable: true),
+                    ValidatedResultCipher = table.Column<string>(type: "longtext", nullable: true),
+                    ResultMarkdownCipher = table.Column<string>(type: "longtext", nullable: true),
+                    ResultDigest = table.Column<string>(type: "longtext", nullable: true),
+                    OutputSchemaDigest = table.Column<string>(type: "longtext", nullable: true),
+                    RendererVersion = table.Column<string>(type: "longtext", nullable: true),
+                    ArtifactContentDeletedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_WorkflowRun", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "WorkspaceBootstrap",
                 columns: table => new
                 {
@@ -1736,6 +1842,21 @@ namespace WorkAI360.Api.Migrations
                 columns: new[] { "OrganizationId", "MemberId" });
 
             migrationBuilder.CreateIndex(
+                name: "IX_ArtifactView_OrganizationId_ConfigObjectId",
+                table: "ArtifactView",
+                columns: new[] { "OrganizationId", "ConfigObjectId" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ArtifactView_OrganizationId_UpdatedAt_Id",
+                table: "ArtifactView",
+                columns: new[] { "OrganizationId", "UpdatedAt", "Id" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ArtifactViewRevision_ArtifactViewId_CreatedAt_Id",
+                table: "ArtifactViewRevision",
+                columns: new[] { "ArtifactViewId", "CreatedAt", "Id" });
+
+            migrationBuilder.CreateIndex(
                 name: "IX_AuditEvent_OrganizationId_Action",
                 table: "AuditEvent",
                 columns: new[] { "OrganizationId", "Action" });
@@ -1877,6 +1998,11 @@ namespace WorkAI360.Api.Migrations
                 name: "IX_ConnectionOAuthTransaction_ExpiresAt",
                 table: "ConnectionOAuthTransaction",
                 column: "ExpiresAt");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_DashboardApp_ArtifactViewId",
+                table: "DashboardApp",
+                column: "ArtifactViewId");
 
             migrationBuilder.CreateIndex(
                 name: "IX_DesktopPolicy_DefaultKey",
@@ -2322,6 +2448,21 @@ namespace WorkAI360.Api.Migrations
                 unique: true);
 
             migrationBuilder.CreateIndex(
+                name: "IX_WorkflowRun_AutomationRunId",
+                table: "WorkflowRun",
+                column: "AutomationRunId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_WorkflowRun_ConfigObjectId_FinishedAt",
+                table: "WorkflowRun",
+                columns: new[] { "ConfigObjectId", "FinishedAt" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_WorkflowRun_OrganizationId_CreatedAt_Id",
+                table: "WorkflowRun",
+                columns: new[] { "OrganizationId", "CreatedAt", "Id" });
+
+            migrationBuilder.CreateIndex(
                 name: "IX_WorkspaceBootstrap_AgentUserId",
                 table: "WorkspaceBootstrap",
                 column: "AgentUserId",
@@ -2373,6 +2514,12 @@ namespace WorkAI360.Api.Migrations
                 name: "ApiKey");
 
             migrationBuilder.DropTable(
+                name: "ArtifactView");
+
+            migrationBuilder.DropTable(
+                name: "ArtifactViewRevision");
+
+            migrationBuilder.DropTable(
                 name: "AuditEvent");
 
             migrationBuilder.DropTable(
@@ -2416,6 +2563,9 @@ namespace WorkAI360.Api.Migrations
 
             migrationBuilder.DropTable(
                 name: "ConnectionOAuthTransaction");
+
+            migrationBuilder.DropTable(
+                name: "DashboardApp");
 
             migrationBuilder.DropTable(
                 name: "DesktopPolicy");
@@ -2575,6 +2725,9 @@ namespace WorkAI360.Api.Migrations
 
             migrationBuilder.DropTable(
                 name: "Users");
+
+            migrationBuilder.DropTable(
+                name: "WorkflowRun");
 
             migrationBuilder.DropTable(
                 name: "WorkspaceBootstrap");
