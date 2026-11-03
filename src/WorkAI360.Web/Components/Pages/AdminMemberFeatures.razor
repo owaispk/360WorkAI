@@ -1,0 +1,123 @@
+@page "/admin/organizations/{OrganizationId}/members/{MemberId}"
+@inherits AdminPage
+@using System.Text.Json
+
+<PageTitle>Member features · Platform admin · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="admin-member-features-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (Denied)
+    {
+        <h1>Member features</h1>
+        <p class="den-muted" data-testid="no-access">This area is for the people who run this deployment. Your account is not one of them.</p>
+    }
+    else if (_missing)
+    {
+        <h1>Member not found</h1>
+        <p class="den-muted">They may have left the workspace.</p>
+        <a class="den-link" href="/admin/organizations/@OrganizationId">Back to the workspace</a>
+    }
+    else
+    {
+        <h1 data-testid="member-name">@(_name.Length > 0 ? _name : "Member")</h1>
+        <p class="den-muted">@_email · @_orgName</p>
+        <AdminNav Current="organizations" />
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+
+        <h2>Features for this person</h2>
+        <p class="den-muted">“Follow the workspace” uses the workspace's setting. A setting here applies only to this person in this workspace; a kill switch or an operator lock still wins.</p>
+        <ul class="den-members" data-testid="member-override-list">
+            @foreach (var f in _features)
+            {
+                <li data-testid="member-override-row" data-key="@f.Key">
+                    <div class="den-member-main">
+                        <strong>@f.Label</strong>
+                        <span class="den-muted">@f.Key · @(f.Enabled ? "On" : "Off") for them (@f.Source) · workspace: @(f.Workspace ? "on" : "off")</span>
+                    </div>
+                    <div class="den-member-actions">
+                        @if (f.Source != "unavailable")
+                        {
+                            <select aria-label="Setting for @f.Label" value="@f.Choice" @onchange="e => Choose(f, e.Value?.ToString())" data-testid="member-override-select">
+                                <option value="follow">Follow the workspace</option>
+                                <option value="on">On</option>
+                                <option value="off">Off</option>
+                            </select>
+                        }
+                    </div>
+                </li>
+            }
+        </ul>
+        <button type="button" class="den-button" disabled="@Busy" @onclick="SaveAsync" data-testid="save-member-features">Save feature settings</button>
+        <a class="den-link" href="/admin/organizations/@OrganizationId">Back to the workspace</a>
+    }
+</section>
+
+@code {
+    [Parameter] public string OrganizationId { get; set; } = "";
+    [Parameter] public string MemberId { get; set; } = "";
+
+    private sealed class FeatureChoice
+    {
+        public string Key = "", Label = "", Source = "";
+        public bool Enabled, Workspace;
+        public string Original = "follow";
+        public string Choice = "follow";
+    }
+
+    private bool _missing;
+    private string _name = "", _email = "", _orgName = "";
+    private List<FeatureChoice> _features = [];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await EnterAsync()) return;
+        await LoadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        var states = await Den.RequestAsync($"/api/browser/v1/admin/organizations/{Uri.EscapeDataString(OrganizationId)}/members/{Uri.EscapeDataString(MemberId)}/capabilities");
+        if (!states.Ok || states.Json is not { ValueKind: JsonValueKind.Object } root) { _missing = true; return; }
+
+        var detail = await Den.RequestAsync($"/api/browser/v1/admin/organizations/{Uri.EscapeDataString(OrganizationId)}?limit=100");
+        if (detail.Json is { ValueKind: JsonValueKind.Object } d && detail.Ok)
+        {
+            _orgName = Text(d.GetProperty("organization"), "name");
+            var me = d.GetProperty("members").EnumerateArray().FirstOrDefault(m => Text(m, "id") == MemberId);
+            if (me.ValueKind == JsonValueKind.Object) { _name = Text(me, "name"); _email = Text(me, "email"); }
+        }
+
+        var labels = new Dictionary<string, string>();
+        var registry = await Den.RequestAsync("/api/browser/v1/admin/features");
+        if (registry.Json is { ValueKind: JsonValueKind.Object } r) foreach (var f in r.GetProperty("features").EnumerateArray()) labels[Text(f, "key")] = Text(f, "label");
+        _features = root.GetProperty("featureStates").EnumerateObject().Select(p =>
+        {
+            var choice = p.Value.GetProperty("override").ValueKind switch { JsonValueKind.True => "on", JsonValueKind.False => "off", _ => "follow" };
+            return new FeatureChoice
+            {
+                Key = p.Name, Label = labels.GetValueOrDefault(p.Name, p.Name), Source = Text(p.Value, "source"), Enabled = Flag(p.Value, "enabled"),
+                Workspace = Flag(p.Value, "everyone"), Original = choice, Choice = choice,
+            };
+        }).ToList();
+    }
+
+    private static void Choose(FeatureChoice f, string? value) => f.Choice = value is "on" or "off" ? value : "follow";
+
+    private async Task SaveAsync()
+    {
+        var changed = _features.Where(f => f.Choice != f.Original).ToList();
+        if (changed.Count == 0) { Notice = "Nothing to save."; Error = null; return; }
+        var capabilities = changed.ToDictionary(f => f.Key, f => f.Choice switch { "on" => (bool?)true, "off" => false, _ => null });
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/admin/organizations/{Uri.EscapeDataString(OrganizationId)}/members/{Uri.EscapeDataString(MemberId)}/capabilities", "PUT", new { capabilities }),
+            $"Saved {changed.Count} feature {(changed.Count == 1 ? "setting" : "settings")}.");
+    }
+}

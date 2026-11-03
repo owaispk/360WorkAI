@@ -171,7 +171,7 @@ public static class OrgSettingsEndpoints
             // Stores member, feature and day only, for features that are on for the caller; unknown keys are ignored. Best effort: always answers ok.
             try
             {
-                var on = await resolver.EffectiveAsync(context!.Organization.Id);
+                var on = await resolver.EffectiveAsync(context!.Organization.Id, context.Member.UserId);
                 var keys = features.EnumerateArray().Select(f => f.GetString()!).Where(k => on.GetValueOrDefault(k)).ToList();
                 if (keys.Count > 0) await usage.RecordAsync(context.Organization.Id, context.Member.Id, keys);
             }

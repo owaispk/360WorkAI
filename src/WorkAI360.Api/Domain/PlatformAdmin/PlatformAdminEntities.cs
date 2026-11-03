@@ -70,11 +70,13 @@ public sealed class PlatformFeatureChange
 {
     public required string Id { get; set; }
     public required string FeatureKey { get; set; }
-    /// <summary>everyone | organization</summary>
+    /// <summary>everyone | organization | member</summary>
     public required string Scope { get; set; }
     /// <summary>on | off | reset | killed | restored</summary>
     public required string Action { get; set; }
     public string? OrganizationId { get; set; }
+    /// <summary>Set for member-scope changes.</summary>
+    public string? MemberId { get; set; }
     public string? ChangedByUserId { get; set; }
     public DateTime CreatedAt { get; set; }
 }

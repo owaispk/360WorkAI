@@ -8,10 +8,10 @@ namespace WorkAI360.Api.Features.OrgAdmin;
 /// </summary>
 public sealed class OrgEnvelope(WorkAI360.Api.Features.PlatformAdmin.FeatureResolver features, WorkAI360.Api.Features.PlatformAdmin.OrganizationPlans plans, AuditPolicies audit)
 {
-    public async Task AddToAsync(JsonObject payload, string organizationId)
+    public async Task AddToAsync(JsonObject payload, string organizationId, string? userId = null)
     {
-        // Feature flags: this build's defaults, then what platform admins set (everyone, then this workspace), then configuration locks.
-        var effective = await features.EffectiveAsync(organizationId);
+        // Feature flags: this build's defaults, then what platform admins set (everyone, this workspace, then the caller's own membership), then configuration locks.
+        var effective = await features.EffectiveAsync(organizationId, userId);
         var map = new Dictionary<string, bool>();
         foreach (var key in FeatureDefaults.Organization.Keys.Order(StringComparer.Ordinal)) map[key] = effective.GetValueOrDefault(key);
         map["engineV2ForceUpgrade"] = true;

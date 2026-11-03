@@ -41,6 +41,7 @@ public static class AuditActions
     public const string OrganizationPlanUpdated = "organization.plan.updated";
     public const string OrganizationFreeSeatsUpdated = "organization.free_seats.updated";
     public const string OrganizationCapabilitiesUpdated = "organization.capabilities.updated";
+    public const string MemberCapabilitiesUpdated = "member.capabilities.updated";
 
     /// <summary>Reading audit history is itself recorded (as a requested/served pair), like the reference's audit-read events.</summary>
     public static string Requested(string read) => $"audit.{read}.requested";

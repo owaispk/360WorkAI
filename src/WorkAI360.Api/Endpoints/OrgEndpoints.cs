@@ -115,7 +115,7 @@ public static class OrgEndpoints
             if (failure is not null) return failure;
             // The area that owns features, capabilities and entitlements adds them to the payload.
             var payload = System.Text.Json.JsonSerializer.SerializeToNode(await OrgPayload.BuildAsync(db, context!))!.AsObject();
-            await envelope.AddToAsync(payload, context!.Organization.Id);
+            await envelope.AddToAsync(payload, context!.Organization.Id, context.Member.UserId);
             return Results.Json(payload);
         });
     }
