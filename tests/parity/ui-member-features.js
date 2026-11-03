@@ -1,4 +1,4 @@
-// Per-member feature overrides on /admin in a real browser. The API must list padmin.parity@example.com as a platform admin:
+// Per-member feature overrides and the active-people count on /admin, in a real browser. The API must list padmin.parity@example.com as a platform admin:
 //   PlatformAdmin__BootstrapEmails=padmin.parity@example.com (see docs/features/platform-admin.md)
 //   W=http://localhost:5081 A=http://localhost:5080 node tests/parity/ui-member-features.js [screenshot-dir]
 const { chromium } = require('playwright');
@@ -49,6 +49,17 @@ const FEATURE = 'computerUseBackground';
   await select.selectOption('follow');
   await page.getByTestId('save-member-features').click();
   check(`following the workspace again turns ${FEATURE} back off`, await until(async () => (await feature(casey)) === false));
+
+  // The /admin overview counts active people on request and says there is no AI usage.
+  await page.goto(`${W}/admin`, { waitUntil: 'networkidle', timeout: 60000 });
+  await page.getByTestId('ai-usage').waitFor({ timeout: 20000 });
+  check('/admin says no AI usage is recorded', /no requests recorded/.test(await page.getByTestId('ai-usage').innerText()));
+  await page.getByTestId('count-active').click();
+  await page.getByTestId('active-today').waitFor({ timeout: 20000 });
+  const today = Number((await page.getByTestId('active-today').innerText()).split('\n')[0]);
+  const month = Number((await page.getByTestId('active-30d').innerText()).split('\n')[0]);
+  check('/admin counts the people who signed in today (at least the 4 of this test)', today >= 4 && month >= today, `${today} / ${month}`);
+  if (shots) await page.screenshot({ path: `${shots}/admin-active.png`, fullPage: true });
 
   // Somebody who is not a platform admin cannot open it.
   const other = await browser.newContext();

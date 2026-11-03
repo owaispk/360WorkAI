@@ -44,6 +44,8 @@ owner can read them. Feature rollouts have no workspace and, as in the reference
 | `GET /v1/admin/services`, `POST /v1/admin/services/check` | deployment readiness in the reference's v2 shape: database (a real query), email (settings only, nothing is sent), and the gateway, headless runner and Workbot as not set up; a check less than 30 seconds old is answered again (`202`) |
 | `GET /v1/admin/sandbox-orgs` | `{enabled: false, sandboxes: []}`: sandbox organizations are a cloud feature (`sandboxOrgs`), off on a self-hosted deployment as in the reference |
 | `GET/PUT /v1/admin/organizations/{id}/members/{memberId}/capabilities` | per-member overrides (the reference's `member-features.ts`): `{capabilities: {key: true\|false\|null}}` strict (unknown keys and extra fields 400; cloud-only keys 400 unless clearing). Each feature with `enabled`, `source` (`member` when the person's own setting decides), `everyone` (what the workspace gives them without it), `killed`, `lock`, `override` (the member's), `overrideApplies`, `lastChange` (including member-scope changes). A member of another workspace, a removed member or the setup member of an agent-provisioned workspace is `404 "Active organization member not found."`; the membership is re-read under the workspace lock before writing. Audited in the workspace as `member.capabilities.updated` (origin `platform_admin`). Page `/admin/organizations/{id}/members/{memberId}` (the Features link on each person) |
+| `GET /v1/admin/dashboard` | the reference's 30-day AI usage shape (`from`, `to`, `activeOrganizations`, `totals`, 30 `daily` rows, up to 8 `organizations`). There is no AI gateway here, so it answers what the reference does on a deployment whose gateway served nothing: zeros and no leaders. `Cache-Control: no-store`. `/admin` says so |
+| `GET /v1/admin/dashboard/active-users` | distinct people active `today`, in `days7` and `days30` (UTC calendar days), across every workspace. Active = a session created or a feature use a client reported (`POST /v1/org/feature-usage`), this build's equivalent of the reference's sign-in-or-telemetry rule. Read on request (the "Count active people" button on `/admin`). Sessions end at sign-out here, so someone who signed in and out again is still counted by their feature use only |
 | `PUT /v1/admin/oauth-clients/{id}/client-credentials-scopes` | this build's only addition: lets an operator give a machine client its scopes ([oauth-extras.md](oauth-extras.md)) |
 
 ## First-administrator setup (`/setup`)
@@ -78,6 +80,9 @@ Member overrides are tested in `tests/WorkAI360.Api.Tests/MemberFeatureTests.cs`
 (5 of 5 killed): the override following the person into another workspace, beating the operator lock, accepting another workspace's member, not reaching
 `GET /v1/org`, and rows not tied to the membership.
 
+The dashboard is tested in `tests/WorkAI360.Api.Tests/AdminDashboardTests.cs` (4: exact counts with backdated sign-ins and feature use, the shape, and access),
+and in the browser by `tests/parity/ui-member-features.js`.
+
 ## How feature flags resolve
 
 In the reference's order (`FeatureResolver`): not part of this deployment (cloud-only: `autoRouter`, `sandboxOrgs`, `managedDeployments`) off, then the kill switch (off),
@@ -111,7 +116,7 @@ and paid and unpaid are null.
 ## Not built
 
 * `GET /v1/admin/users/{id}/inference-usage` and the inference usage reset, free-auto (`free-auto/*`), the Stripe-backed plan, billing and `includeBilling` paid states, seat-subscription syncing.
-* `/v1/admin/dashboard`, `control-center` (+ refresh), `security/requests` (it reads a log of refused, rate-limited and failed requests that this build does not keep, so there is nothing honest to show), `opportunities*`,
+* The dashboard's AI usage numbers (no gateway), `control-center` (+ refresh), `security/requests` (it reads a log of refused, rate-limited and failed requests that this build does not keep, so there is nothing honest to show), `opportunities*`,
   `scale-performance`, the sandbox organization actions (create, rotate link, join role, extend, credit, close: always "turned off" on self-hosted), `mcp-registration`, organization `usage` and `insights`
   (they need gateway usage, telemetry or outside services). Feature outcomes for `slackSendAsBot` and `workbotProactive` (no Slack or Workbot here); background Automation work is not recorded as feature usage.
 * The `members` admin list of a workspace beyond the detail page (the detail page shows up to 100 people with a link to each one's features).

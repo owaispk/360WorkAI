@@ -36,5 +36,6 @@ public sealed class PlatformAdminFeature : IFeature
         app.MapAdminServicesEndpoints();
         app.MapInitialAdminSetupEndpoints();
         app.MapAdminMemberFeatureEndpoints();
+        app.MapAdminDashboardEndpoints();
     }
 }

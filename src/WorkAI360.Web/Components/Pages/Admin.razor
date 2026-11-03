@@ -41,6 +41,19 @@
             </div>
         }
 
+        <h2>Active people</h2>
+        <p class="den-muted">Distinct people who signed in or used a feature, across every workspace. Counted when you ask, since it reads 30 days of activity.</p>
+        @if (_active is { } active)
+        {
+            <div class="admin-tiles" data-testid="active-users">
+                <div class="admin-tile" data-testid="active-today"><span class="admin-tile-value">@active.Today</span><span class="den-muted">Today</span></div>
+                <div class="admin-tile" data-testid="active-7d"><span class="admin-tile-value">@active.Days7</span><span class="den-muted">Last 7 days</span></div>
+                <div class="admin-tile" data-testid="active-30d"><span class="admin-tile-value">@active.Days30</span><span class="den-muted">Last 30 days</span></div>
+            </div>
+        }
+        <button type="button" class="den-button" disabled="@Busy" @onclick="CountActiveAsync" data-testid="count-active">@(_active is null ? "Count active people" : "Count again")</button>
+        @if (_usage is not null) { <p class="den-muted" data-testid="ai-usage">@_usage</p> }
+
         <h2>Platform admins</h2>
         <ul class="den-members" data-testid="admin-list">
             @foreach (var admin in _admins)
@@ -77,6 +90,30 @@
 </section>
 
 @code {
+    private sealed record ActiveUsers(int Today, int Days7, int Days30);
+    private ActiveUsers? _active;
+    private string? _usage;
+
+    private async Task CountActiveAsync()
+    {
+        Busy = true;
+        var r = await Den.RequestAsync("/api/browser/v1/admin/dashboard/active-users");
+        Busy = false;
+        if (!r.Ok || r.Json is not { ValueKind: JsonValueKind.Object } j) { Error = r.Message("Active people could not be counted."); return; }
+        Error = null;
+        _active = new ActiveUsers(Number(j, "today"), Number(j, "days7"), Number(j, "days30"));
+    }
+
+    private async Task LoadUsageAsync()
+    {
+        var r = await Den.RequestAsync("/api/browser/v1/admin/dashboard");
+        if (!r.Ok || r.Json is not { ValueKind: JsonValueKind.Object } j) return;
+        var requests = Number(j.GetProperty("totals"), "requests");
+        _usage = requests == 0
+            ? $"AI usage, {Text(j, "from")} to {Text(j, "to")}: no requests recorded (this deployment has no AI gateway)."
+            : $"AI usage, {Text(j, "from")} to {Text(j, "to")}: {requests} requests across {Number(j, "activeOrganizations")} workspaces.";
+    }
+
     private sealed record AdminRow(string Id, string Email, string? Note, string CreatedAt);
 
     private string _viewer = "";
@@ -91,6 +128,7 @@
         if (!firstRender) return;
         if (!await EnterAsync()) return;
         await LoadAsync();
+        await LoadUsageAsync();
         Loading = false;
         StateHasChanged();
     }
