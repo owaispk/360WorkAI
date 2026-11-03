@@ -7,3 +7,4 @@ obj/
 *.user
 TestResults/
 .run/
+.claude/worktrees/
