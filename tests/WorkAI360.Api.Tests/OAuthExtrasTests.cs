@@ -211,7 +211,7 @@ public sealed class OAuthExtrasRegistrationTests(OAuthExtrasFactory factory) : O
     {
         var doc = await ReadJsonAsync(await Factory.Plain().GetAsync("/.well-known/oauth-authorization-server"));
         string[] List(string name) => doc.GetProperty(name).EnumerateArray().Select(e => e.GetString()!).ToArray();
-        Assert.Equal(["authorization_code", "client_credentials", "refresh_token"], List("grant_types_supported"));
+        Assert.Equal(["authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:jwt-bearer"], List("grant_types_supported"));
         Assert.Contains("private_key_jwt", List("token_endpoint_auth_methods_supported"));
         Assert.Contains("private_key_jwt", List("introspection_endpoint_auth_methods_supported"));
         Assert.Contains("private_key_jwt", List("revocation_endpoint_auth_methods_supported"));

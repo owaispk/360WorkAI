@@ -78,7 +78,7 @@ public static class OAuthEndpoints
         introspection_endpoint_auth_signing_alg_values_supported = Jose.AssertionAlgorithms,
         response_types_supported = new[] { "code" },
         response_modes_supported = new[] { "query" },
-        grant_types_supported = new[] { "authorization_code", "client_credentials", "refresh_token" },
+        grant_types_supported = new[] { "authorization_code", "client_credentials", "refresh_token", PreclaimGrant.GrantType },
         token_endpoint_auth_methods_supported = new[] { "none", "client_secret_basic", "client_secret_post", "private_key_jwt" },
         token_endpoint_auth_signing_alg_values_supported = Jose.AssertionAlgorithms,
         revocation_endpoint_auth_methods_supported = new[] { "none", "client_secret_basic", "client_secret_post", "private_key_jwt" },
@@ -87,6 +87,14 @@ public static class OAuthEndpoints
         code_challenge_methods_supported = new[] { "S256" },
         authorization_response_iss_parameter_supported = false,
         client_id_metadata_document_supported = true,
+        // What an agent needs to start without an account (the reference's withAgentAuthMetadata): provision a workspace, exchange its assertion, get it claimed.
+        agent_auth = new
+        {
+            skill = "https://openworklabs.com/auth.md",
+            identity_endpoint = $"{urls.Api}/v1/bootstrap/workspace",
+            claim_endpoint = $"{urls.Api}/v1/bootstrap/workspace/{{bootstrap_id}}/claim",
+            identity_types_supported = new[] { "anonymous" },
+        },
     };
 
     public static object ProtectedResourceMetadata(OAuthUrls urls) => new
@@ -401,12 +409,15 @@ public static class OAuthEndpoints
 
     private static async Task<IResult> HandleTokenRequestAsync(HttpContext ctx, Dictionary<string, string> form, DenDbContext db, ClientResolver clients, TokenService tokens, OAuthUrls urls, ClientAssertionVerifier assertions, OAuthExtrasService extras)
     {
+        // RFC 7523: a provisional workspace's agent trades its pre-claim assertion for a short MCP token. The assertion is the credential; there is no client.
+        if (form.GetValueOrDefault("grant_type") == PreclaimGrant.GrantType)
+            return await ctx.RequestServices.GetRequiredService<PreclaimGrant>().ExchangeAsync(form.GetValueOrDefault("assertion"));
         var (client, clientFailure) = await AuthenticateClientAsync(ctx, clients, form, assertions, "oauth2/token");
         if (clientFailure is not null) return clientFailure;
 
         var grant = form.GetValueOrDefault("grant_type");
         if (grant is not ("authorization_code" or "refresh_token" or "client_credentials"))
-            return Error(400, "unsupported_grant_type", "Only authorization_code, client_credentials and refresh_token are supported.");
+            return Error(400, "unsupported_grant_type", "Only authorization_code, client_credentials, refresh_token and urn:ietf:params:oauth:grant-type:jwt-bearer are supported.");
         // A client may use only the grants it registered for (the reference's `clientAllowsGrant`).
         var clientExtras = await extras.ExtrasAsync(client!.Id);
         if (!OAuthExtrasService.AllowsGrant(clientExtras, grant)) return Error(400, "unauthorized_client", $"client is not authorized to use grant type {grant}");
