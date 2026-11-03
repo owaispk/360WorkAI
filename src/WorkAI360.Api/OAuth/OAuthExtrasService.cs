@@ -54,7 +54,7 @@ public sealed class OAuthExtrasService(DenDbContext db, DpopVerifier dpop, OAuth
             var proof = await dpop.VerifyAsync(headers[0], "POST", TokenUrls(ctx), accessToken: null, expectedJkt, ctx.RequestAborted);
             return (proof.Jkt, null);
         }
-        catch (DpopException e) { return (null, DpopError(e.Message)); }
+        catch (DpopException e) { return (null, e.Code == DpopNonces.UseNonce ? Error(400, e.Code, e.Message) : DpopError(e.Message)); }
     }
 
     public async Task<string?> CodeBindingAsync(string codeHash) =>

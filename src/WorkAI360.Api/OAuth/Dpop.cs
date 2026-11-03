@@ -22,7 +22,7 @@ public sealed record DpopProof(string Jkt, string Jti, string Method, string Url
 /// and the key must be the one the token is bound to. A proof works once: its (key, method, URL, jti) goes into the replay cache.
 /// Differences: no EdDSA (.NET has no Ed25519), so the allowed algorithms are ES256, ES512, PS256 and RS256; <c>exp</c> and <c>nbf</c> in a proof are honoured.
 /// </summary>
-public sealed class DpopVerifier(ReplayGuard replay)
+public sealed class DpopVerifier(ReplayGuard replay, DpopNonces nonces)
 {
     public static readonly string[] SigningAlgorithms = ["ES256", "ES512", "PS256", "RS256"];
     public const int MaxAgeSeconds = 300;
@@ -69,6 +69,8 @@ public sealed class DpopVerifier(ReplayGuard replay)
         }
         if (expectedJkt is not null && !CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(jkt), Encoding.ASCII.GetBytes(expectedJkt)))
             throw new DpopException("DPoP proof key does not match the bound token");
+        // Server nonces, when this deployment asks for them (checked before the jti is spent, so the retry with a fresh proof goes through).
+        nonces.Check(jwt.PayloadString("nonce"), atResource: accessToken is not null);
 
         // A proof works once per (key, method, URL, jti) for as long as it could be accepted.
         var expires = DateTimeOffset.FromUnixTimeSeconds(iat.Value + MaxAgeSeconds).UtcDateTime;

@@ -51,7 +51,7 @@ public sealed class FakeJwksServer : IAsyncDisposable
 }
 
 /// <summary>An API with a platform administrator, private JWKS addresses allowed and the fake JWKS server's origin trusted.</summary>
-public sealed class OAuthExtrasFactory : ApiFactory
+public class OAuthExtrasFactory : ApiFactory
 {
     public const string AdminEmail = "oauth.admin@example.com";
     public FakeJwksServer Jwks { get; } = FakeJwksServer.Start();

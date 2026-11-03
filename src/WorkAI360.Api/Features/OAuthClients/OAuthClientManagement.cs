@@ -330,6 +330,15 @@ public static class OAuthClientManagementEndpoints
 
 public sealed class OAuthClientsFeature : IFeature
 {
-    public void AddServices(IServiceCollection services, IConfiguration configuration) => services.AddScoped<PreclaimGrant>();
-    public void MapEndpoints(WebApplication app) => app.MapOAuthClientManagementEndpoints();
+    public void AddServices(IServiceCollection services, IConfiguration configuration)
+    {
+        services.AddScoped<PreclaimGrant>();
+        services.AddSingleton<DpopNonces>();
+    }
+
+    public void MapEndpoints(WebApplication app)
+    {
+        app.UseDpopNonces();
+        app.MapOAuthClientManagementEndpoints();
+    }
 }
