@@ -46,6 +46,42 @@
                 </details>
             </div>
         }
+
+        <h2>Refused and failed requests</h2>
+        <p class="den-muted">The last 24 hours of sign-in, token and app-registration refusals, stale credentials and rate limits. The log keeps no addresses, people or credentials: only which route, what happened and when.</p>
+        @if (_requests is { } r)
+        {
+            <div class="admin-tiles" data-testid="request-totals">
+                <div class="admin-tile" data-testid="requests-refused"><span class="admin-tile-value">@r.Refused</span><span class="den-muted">Refused</span></div>
+                <div class="admin-tile" data-testid="requests-limited"><span class="admin-tile-value">@r.RateLimited</span><span class="den-muted">Rate-limited</span></div>
+                <div class="admin-tile" data-testid="requests-failed"><span class="admin-tile-value">@r.Failed</span><span class="den-muted">Failed</span></div>
+                <div class="admin-tile" data-testid="requests-sign-ins"><span class="admin-tile-value">@r.FailedSignIns</span><span class="den-muted">Failed sign-ins</span></div>
+            </div>
+            @if (r.Endpoints.Count == 0)
+            {
+                <p class="den-muted" data-testid="no-requests">No refused or failed requests in the last 24 hours.</p>
+            }
+            else
+            {
+                <table class="den-table" data-testid="request-endpoints">
+                    <thead><tr><th>Route</th><th>Refused</th><th>Rate-limited</th><th>Failed</th><th>Busiest hour</th></tr></thead>
+                    <tbody>
+                        @foreach (var e in r.Endpoints)
+                        {
+                            <tr data-testid="request-endpoint" data-action="@e.Action"><td><code>@e.Action</code></td><td>@e.Refused</td><td>@e.RateLimited</td><td>@e.Failed</td><td>@e.Peak</td></tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            @foreach (var f in r.Findings.Where(f => f.Severity != "clear"))
+            {
+                <div class="den-panel" data-testid="request-finding" data-id="@f.Id" data-severity="@f.Severity">
+                    <strong>@f.Title <span class="den-badge den-badge-pending">@f.Severity</span></strong>
+                    <p>@f.Summary</p>
+                    <p class="den-muted">@f.Rule</p>
+                </div>
+            }
+        }
     }
 </section>
 
@@ -55,6 +91,9 @@
 
     private int _days = 7;
     private List<Finding> _findings = [];
+    private sealed record RequestEndpoint(string Action, int Refused, int RateLimited, int Failed, int Peak);
+    private sealed record Requests(int Refused, int RateLimited, int Failed, int FailedSignIns, List<RequestEndpoint> Endpoints, List<Finding> Findings);
+    private Requests? _requests;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -80,5 +119,14 @@
         Error = null;
         _findings = root.GetProperty("findings").EnumerateArray().Select(f => new Finding(Text(f, "id"), Text(f, "title"), Text(f, "severity"), Text(f, "summary"), Text(f, "rule"), Text(f, "why"), Text(f, "review"), Number(f, "entityCount"),
             f.GetProperty("entities").EnumerateArray().Select(e => new Entity(Text(e, "label"), Text(e, "detail"), Text(e, "severity"))).ToList())).ToList();
+
+        var requests = await Den.RequestAsync("/api/browser/v1/admin/security/requests");
+        if (requests.Json is { ValueKind: JsonValueKind.Object } q && requests.Ok)
+        {
+            var hourly = q.GetProperty("hourly").EnumerateArray().ToList();
+            _requests = new Requests(hourly.Sum(h => Number(h, "refused")), hourly.Sum(h => Number(h, "rateLimited")), hourly.Sum(h => Number(h, "failed")), hourly.Sum(h => Number(h, "failedSignIns")),
+                q.GetProperty("endpoints").EnumerateArray().Select(e => new RequestEndpoint(Text(e, "action"), Number(e, "refused"), Number(e, "rateLimited"), Number(e, "failed"), Number(e, "peakHour"))).ToList(),
+                q.GetProperty("findings").EnumerateArray().Select(f => new Finding(Text(f, "id"), Text(f, "title"), Text(f, "severity"), Text(f, "summary"), Text(f, "rule"), Text(f, "why"), Text(f, "review"), Number(f, "entityCount"), [])).ToList());
+        }
     }
 }

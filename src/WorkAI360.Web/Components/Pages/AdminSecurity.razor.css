@@ -1,0 +1,5 @@
+.admin-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin: 12px 0; }
+.admin-tile { border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 2px; }
+.admin-tile-value { font-size: 24px; font-weight: 700; }
+.den-table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 14px; }
+.den-table th, .den-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }

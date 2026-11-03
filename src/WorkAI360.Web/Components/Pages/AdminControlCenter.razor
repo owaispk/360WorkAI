@@ -1,0 +1,197 @@
+@page "/admin/control-center"
+@inherits AdminPage
+@using System.Globalization
+@using System.Text.Json
+
+<PageTitle>Control center · Platform admin · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="admin-control-center-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading snapshots…</p>
+    }
+    else if (Denied)
+    {
+        <h1>Control center</h1>
+        <p class="den-muted" data-testid="no-access">This area is for the people who run this deployment. Your account is not one of them.</p>
+    }
+    else
+    {
+        <h1>Control center</h1>
+        <AdminNav Current="control-center" />
+        <p class="den-muted">Product health across every workspace, from snapshots a background job recomputes (people every @Minutes(_fastMs), the rest every @Minutes(_heavyMs)). Here a person counts as active when they signed in or used a feature; this deployment records no task runs.</p>
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        <div class="den-inline" data-testid="ranges">
+            @foreach (var r in new[] { "7d", "30d", "90d" })
+            {
+                <button type="button" class="den-link @(_range == r ? "current" : "")" disabled="@Busy" @onclick="() => ChooseAsync(r)" data-testid="range-@r">Last @r.TrimEnd('d') days</button>
+            }
+            <button type="button" class="den-button" disabled="@Busy" @onclick="RefreshAsync" data-testid="refresh">Refresh</button>
+        </div>
+
+        @Section("pulse", "People and sign-ups", pulse => @<div>
+            <div class="cc-tiles">
+                <div class="cc-tile" data-testid="active-today"><span class="cc-value">@N(pulse, "taskUsers", "daily")</span><span class="den-muted">Active today</span></div>
+                <div class="cc-tile" data-testid="active-week"><span class="cc-value">@N(pulse, "taskUsers", "weekly")</span><span class="den-muted">Active in 7 days (@N(pulse, "taskUsers", "previousWeekly") the week before)</span></div>
+                <div class="cc-tile" data-testid="active-month"><span class="cc-value">@N(pulse, "taskUsers", "monthly")</span><span class="den-muted">Active in 30 days</span></div>
+                <div class="cc-tile" data-testid="signups-week"><span class="cc-value">@N(pulse, "signups", "weekly")</span><span class="den-muted">Sign-ups in 7 days, @Pct(pulse, "signups", "workEmailShare") with a work email</span></div>
+                <div class="cc-tile" data-testid="team-workspaces"><span class="cc-value">@N(pulse, "teamOrganizations", "active")</span><span class="den-muted">Team workspaces with 2+ active people</span></div>
+            </div>
+            @{ var daily = pulse.GetProperty("daily").EnumerateArray().ToList(); var max = Math.Max(1, daily.Select(d => Num(d, "taskUsers")).DefaultIfEmpty(0).Max()); }
+            <p class="den-muted">Active people per day</p>
+            <div class="cc-series" data-testid="daily-series">
+                @foreach (var d in daily) { <span class="cc-bar" title="@Text(d, "date"): @Num(d, "taskUsers") active, @Num(d, "signups") sign-ups" style="height:@(4 + 60 * Num(d, "taskUsers") / max)px"></span> }
+            </div>
+        </div>)
+
+        @Section("lifecycle", "Growth and lifecycle", life => @<div>
+            @{ var weeks = life.GetProperty("weeks").EnumerateArray().ToList(); var act = life.GetProperty("activation"); var re = life.GetProperty("reactivation"); }
+            @if (weeks.Count == 0) { <p class="den-muted">No complete weeks to compare in this range yet.</p> }
+            else
+            {
+                <table class="cc-table" data-testid="lifecycle-weeks">
+                    <thead><tr><th>Week of</th><th>New</th><th>Still active</th><th>Back</th><th>Lost</th></tr></thead>
+                    <tbody>@foreach (var w in weeks) { <tr><td>@Text(w, "week")</td><td>@Num(w, "new")</td><td>@Num(w, "stillActive")</td><td>@Num(w, "returned")</td><td>@Num(w, "lost")</td></tr> }</tbody>
+                </table>
+            }
+            <p class="den-muted">Activation of people who signed up @Text(act, "from") to @Text(act, "to")</p>
+            <div class="cc-tiles" data-testid="activation">
+                <div class="cc-tile"><span class="cc-value">@Num(act, "signedUp")</span><span class="den-muted">Signed up</span></div>
+                <div class="cc-tile"><span class="cc-value">@Num(act, "ranTaskWithin3Days")</span><span class="den-muted">Active in 3 days</span></div>
+                <div class="cc-tile"><span class="cc-value">@Num(act, "backAfterDay1")</span><span class="den-muted">Came back in week 1</span></div>
+                <div class="cc-tile"><span class="cc-value">@Num(act, "activeInWeek1")</span><span class="den-muted">Active in week 2</span></div>
+            </div>
+            <div class="cc-tiles" data-testid="reactivation">
+                <div class="cc-tile"><span class="cc-value">@Num(re, "reactivated")</span><span class="den-muted">Reactivated (week of @Text(re, "week"))</span></div>
+                <div class="cc-tile"><span class="cc-value">@Num(re, "lost")</span><span class="den-muted">Lost that week</span></div>
+                <div class="cc-tile"><span class="cc-value">@Num(re, "inactivePool")</span><span class="den-muted">Accounts older than 30 days, inactive for 30</span></div>
+            </div>
+        </div>)
+
+        @Section("invitations", "Invitations", inv => @<div>
+            @{ var sent = inv.GetProperty("invitations"); var hours = sent.GetProperty("medianHoursToAccept"); }
+            <div class="cc-tiles" data-testid="invitation-tiles">
+                <div class="cc-tile"><span class="cc-value">@Num(inv, "joinedThroughInvite")</span><span class="den-muted">Joined through an invite</span></div>
+                <div class="cc-tile"><span class="cc-value">@Num(inv, "joinedRanTask")</span><span class="den-muted">…and used a feature since</span></div>
+                <div class="cc-tile"><span class="cc-value">@Num(sent, "sent")</span><span class="den-muted">Invitations sent (@Num(sent, "accepted") accepted, @Num(sent, "expired") expired)</span></div>
+                <div class="cc-tile"><span class="cc-value">@(hours.ValueKind == JsonValueKind.Number ? hours.GetDouble().ToString("0.#", CultureInfo.InvariantCulture) + " h" : "—")</span><span class="den-muted">Median time to accept</span></div>
+                <div class="cc-tile"><span class="cc-value">@Num(inv, "pendingNow")</span><span class="den-muted">Pending now</span></div>
+            </div>
+        </div>)
+
+        @Section("sharing", "Skills and sharing", share => @<div>
+            @{ var skills = share.GetProperty("skills"); var weekly = share.GetProperty("weekly").EnumerateArray().ToList(); }
+            <div class="cc-tiles" data-testid="sharing-tiles">
+                <div class="cc-tile"><span class="cc-value">@Num(skills, "teamSkills")</span><span class="den-muted">Skills in team workspaces (@Pct(skills, "sharingRate") shared)</span></div>
+                <div class="cc-tile"><span class="cc-value">@Num(skills, "teamUses")</span><span class="den-muted">Skill uses by agents</span></div>
+                <div class="cc-tile"><span class="cc-value">@Pct(skills, "teammateReuseRate")</span><span class="den-muted">Of those, by someone other than the author</span></div>
+                <div class="cc-tile"><span class="cc-value">@Num(skills, "creators")</span><span class="den-muted">People who made a skill</span></div>
+            </div>
+            @if (weekly.Sum(w => Num(w, "skillUses")) == 0) { <p class="den-muted">No skill use recorded in this range.</p> }
+            else
+            {
+                <table class="cc-table" data-testid="sharing-weeks">
+                    <thead><tr><th>Week of</th><th>People</th><th>Skill uses</th></tr></thead>
+                    <tbody>@foreach (var w in weekly) { <tr><td>@Text(w, "week")</td><td>@Num(w, "skillUsers")</td><td>@Num(w, "skillUses")</td></tr> }</tbody>
+                </table>
+            }
+            <p class="den-muted">MCP tool calls are not logged per call in this deployment, so connector figures are not shown.</p>
+        </div>)
+
+        @Section("accounts", "Workspaces to watch", acc => @<div>
+            @{ var rows = acc.GetProperty("rows").EnumerateArray().ToList(); }
+            @if (rows.Count == 0) { <p class="den-muted">No workspace has two or more people yet.</p> }
+            else
+            {
+                <table class="cc-table" data-testid="accounts">
+                    <thead><tr><th>Workspace</th><th>People</th><th>Active in 7 days</th><th>Plan</th></tr></thead>
+                    <tbody>@foreach (var a in rows) { <tr data-testid="account-row"><td><a class="den-link" href="/admin/organizations/@Text(a, "organizationId")">@Text(a, "name")</a></td><td>@Num(a, "members")</td><td>@Num(a, "active7d")</td><td>@Text(a, "plan")</td></tr> }</tbody>
+                </table>
+            }
+        </div>)
+
+        @Section("revenue", "Revenue", rev => @<p class="den-muted" data-testid="revenue-note">@(Num(rev, "activePlans") == 0 ? "No billing runs in this deployment, so there are no paid plans to show." : $"{Num(rev, "activePlans")} active plans, {Num(rev, "activePaidSeats")} paid seats.")</p>)
+    }
+</section>
+
+@code {
+    private string _range = "7d";
+    private JsonElement? _sections;
+    private long _fastMs, _heavyMs;
+
+    private RenderFragment Section(string key, string title, Func<JsonElement, RenderFragment> body) => __builder =>
+    {
+        if (_sections is not { } all || !all.TryGetProperty(key, out var section)) return;
+        var data = section.GetProperty("data");
+        var computed = section.GetProperty("computedAt");
+        <div class="den-panel cc-section" data-testid="section-@key" data-stale="@(section.GetProperty("stale").GetBoolean() ? "true" : "false")">
+            <h2>@title</h2>
+            <p class="den-muted cc-meta">
+                @(computed.ValueKind == JsonValueKind.String ? $"Computed {At(computed.GetString())}" : "Not computed yet")@(section.GetProperty("stale").GetBoolean() ? " · stale" : "")
+            </p>
+            @if (section.GetProperty("error").ValueKind == JsonValueKind.String)
+            {
+                <p class="den-error" data-testid="section-error">The last refresh failed: @section.GetProperty("error").GetString(). Showing the last good snapshot.</p>
+            }
+            @if (data.ValueKind == JsonValueKind.Object) { @body(data) }
+            else { <p class="den-muted">Waiting for the first refresh.</p> }
+        </div>
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await EnterAsync()) return;
+        await LoadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync() => await LoadAsync();
+
+    private async Task ChooseAsync(string range)
+    {
+        _range = range;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        var response = await Den.RequestAsync($"/api/browser/v1/admin/control-center?range={_range}");
+        if (!response.Ok || response.Json is not { ValueKind: JsonValueKind.Object } root) { Error = response.Message("Could not load the Control Center."); return; }
+        Error = null;
+        _sections = root.GetProperty("sections").Clone();
+        var refresh = root.GetProperty("refresh");
+        _fastMs = refresh.GetProperty("fastIntervalMs").GetInt64();
+        _heavyMs = refresh.GetProperty("heavyIntervalMs").GetInt64();
+    }
+
+    private async Task RefreshAsync()
+    {
+        Busy = true;
+        var response = await Den.RequestAsync("/api/browser/v1/admin/control-center/refresh", "POST");
+        Busy = false;
+        if (response.Status == 429) { Error = null; Notice = response.Message("Refreshed less than a minute ago.") + " Try again shortly."; return; }
+        if (!response.Ok) { Error = response.Message("Could not start a refresh."); return; }
+        Error = null;
+        Notice = "Refreshing every section… The page shows the new numbers once they are computed.";
+        // Give the job a moment, then read the snapshots again.
+        await Task.Delay(1500);
+        await LoadAsync();
+    }
+
+    private static string Minutes(long ms) => ms <= 0 ? "" : $"{Math.Round(ms / 60000.0)} minutes";
+
+    private static string At(string? iso) =>
+        DateTime.TryParse(iso, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var at) ? at.ToString("d MMM HH:mm 'UTC'", CultureInfo.InvariantCulture) : "";
+
+    private static int Num(JsonElement e, string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? (int)v.GetDouble() : 0;
+
+    private static int N(JsonElement e, string group, string name) => e.TryGetProperty(group, out var g) ? Num(g, name) : 0;
+
+    private static string Pct(JsonElement e, string group, string name) => e.TryGetProperty(group, out var g) ? Pct(g, name) : "—";
+
+    private static string Pct(JsonElement e, string name) =>
+        e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? (v.GetDouble() * 100).ToString("0", CultureInfo.InvariantCulture) + "%" : "—";
+}

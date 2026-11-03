@@ -26,6 +26,10 @@
         {
             <a class="den-button" href="@link.Href" data-testid="@link.TestId">@link.Label</a>
         }
+        @if (_platformAdmin)
+        {
+            <a class="den-button" href="/admin" data-testid="platform-admin-link">Platform admin</a>
+        }
         <button type="button" class="den-button den-secondary" @onclick="SignOutAsync">Sign out</button>
     }
 </section>
@@ -39,6 +43,7 @@
     private string _role = "";
     private HashSet<string> _permissions = [];
     private List<MemberRow> _members = [];
+    private bool _platformAdmin;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -65,6 +70,8 @@
                 }).ToList();
             }
         }
+        // Only platform admins can read the Control Center (a cheap read of stored snapshots), so its answer says whether to offer the link.
+        _platformAdmin = (await Den.RequestAsync("/api/browser/v1/admin/control-center")).Ok;
         _loading = false;
         StateHasChanged();
     }

@@ -1,0 +1,9 @@
+.cc-section { margin: 14px 0; }
+.cc-meta { margin-top: -6px; font-size: 12px; }
+.cc-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin: 10px 0; }
+.cc-tile { border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 2px; }
+.cc-value { font-size: 22px; font-weight: 700; }
+.cc-series { display: flex; align-items: flex-end; gap: 3px; height: 70px; margin: 6px 0 12px; }
+.cc-bar { width: 100%; background: #6366f1; border-radius: 3px 3px 0 0; min-height: 4px; }
+.cc-table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 14px; }
+.cc-table th, .cc-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
