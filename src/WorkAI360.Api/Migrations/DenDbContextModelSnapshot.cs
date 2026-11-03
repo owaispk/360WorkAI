@@ -1543,6 +1543,54 @@ namespace WorkAI360.Api.Migrations
                     b.ToTable("OAuthConsents");
                 });
 
+            modelBuilder.Entity("WorkAI360.Api.Domain.OAuthExtras.OAuthClientExtras", b =>
+                {
+                    b.Property<string>("ClientId")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("ClientCredentialsScope")
+                        .HasColumnType("longtext");
+
+                    b.Property<bool>("DpopBoundAccessTokens")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<string>("GrantTypesJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("JwksJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("JwksUri")
+                        .HasMaxLength(2048)
+                        .HasColumnType("varchar(2048)");
+
+                    b.HasKey("ClientId");
+
+                    b.ToTable("OAuthClientExtras");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.OAuthExtras.OAuthDpopBinding", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Jkt")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.ToTable("OAuthDpopBinding");
+                });
+
             modelBuilder.Entity("WorkAI360.Api.Domain.OAuthProviders.OrgOAuthClient", b =>
                 {
                     b.Property<string>("Id")
@@ -2457,6 +2505,40 @@ namespace WorkAI360.Api.Migrations
                     b.ToTable("AdminAllowlistEntry");
                 });
 
+            modelBuilder.Entity("WorkAI360.Api.Domain.PlatformAdmin.FeatureUsageDay", b =>
+                {
+                    b.Property<string>("MemberId")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<string>("FeatureKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<string>("Day")
+                        .HasMaxLength(10)
+                        .HasColumnType("varchar(10)");
+
+                    b.Property<DateTime>("FirstUsedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("LastUsedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.HasKey("MemberId", "FeatureKey", "Day");
+
+                    b.HasIndex("FeatureKey", "Day");
+
+                    b.HasIndex("OrganizationId", "FeatureKey");
+
+                    b.ToTable("FeatureUsageDay");
+                });
+
             modelBuilder.Entity("WorkAI360.Api.Domain.PlatformAdmin.PlatformFeatureChange", b =>
                 {
                     b.Property<string>("Id")
@@ -2958,6 +3040,94 @@ namespace WorkAI360.Api.Migrations
                     b.HasIndex("FamilyId");
 
                     b.ToTable("RefreshTokens");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Replay.ReplayReservation", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.ToTable("ReplayReservation");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.Saml.SamlAuthRequest", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<DateTime?>("AnsweredAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("BrowserBindingHash")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("CallbackUrl")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ConfigRevision")
+                        .IsRequired()
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime?>("ConsumedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("ErrorCallbackUrl")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<string>("IdentityJson")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("NewUserCallbackUrl")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("ProviderId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("RelayStateHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<string>("RequestXml")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("TestIntentId")
+                        .HasColumnType("longtext");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("ProviderId");
+
+                    b.HasIndex("RelayStateHash")
+                        .IsUnique();
+
+                    b.ToTable("SamlAuthRequest");
                 });
 
             modelBuilder.Entity("WorkAI360.Api.Domain.Session", b =>
