@@ -1,0 +1,81 @@
+@page "/dashboard/analytics"
+@inherits ActionPage
+@using System.Text.Json
+
+<PageTitle>Usage analytics · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="analytics-page">
+    @if (_loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>Usage analytics</h1>
+        <p class="den-muted">@_orgName · who is using AI here and how often. Computed from usage events your people's apps send; no content is collected.</p>
+        @if (_denied)
+        {
+            <p class="den-muted" data-testid="analytics-denied">You don’t have permission to view usage analytics.</p>
+        }
+        else if (_data is { } d)
+        {
+            <ul class="den-members" data-testid="analytics-summary">
+                <li><span>People</span><strong data-testid="stat-members">@d.GetProperty("members").GetInt32()</strong></li>
+                <li><span>Invitations waiting</span><span data-testid="stat-invites">@d.GetProperty("pendingInvites").GetInt32()</span></li>
+                <li><span>Active people, 7 days / 30 days</span><span data-testid="stat-active">@d.GetProperty("activeMembers7d").GetInt32() / @d.GetProperty("activeMembers30d").GetInt32()</span></li>
+                <li><span>Sessions, 7 days / 30 days</span><span data-testid="stat-sessions">@d.GetProperty("sessions7d").GetInt32() / @d.GetProperty("sessions30d").GetInt32()</span></li>
+                <li><span>Tasks done, 7 days / 30 days</span><span data-testid="stat-done">@d.GetProperty("tasksCompleted7d").GetInt32() / @d.GetProperty("tasksCompleted30d").GetInt32()</span></li>
+                <li><span>Tasks failed, 7 days / 30 days</span><span data-testid="stat-failed">@d.GetProperty("tasksFailed7d").GetInt32() / @d.GetProperty("tasksFailed30d").GetInt32()</span></li>
+                <li><span>Average task time, 30 days</span><span data-testid="stat-average">@(d.GetProperty("avgTaskDurationMs30d").ValueKind == JsonValueKind.Number ? $"{d.GetProperty("avgTaskDurationMs30d").GetInt32() / 1000.0:0.0} s" : "—")</span></li>
+            </ul>
+
+            <h2>Week by week</h2>
+            <table class="den-table" data-testid="analytics-weeks">
+                <thead><tr><th>Week of</th><th>Active people</th><th>Sessions</th><th>Tasks done</th><th>Tasks failed</th></tr></thead>
+                <tbody>
+                    @foreach (var w in d.GetProperty("weekly").EnumerateArray())
+                    {
+                        <tr data-testid="week-row"><td>@w.GetProperty("weekStart").GetString()</td><td>@w.GetProperty("activeMembers").GetInt32()</td><td>@w.GetProperty("sessions").GetInt32()</td><td>@w.GetProperty("tasksCompleted").GetInt32()</td><td>@w.GetProperty("tasksFailed").GetInt32()</td></tr>
+                    }
+                </tbody>
+            </table>
+
+            <h2>Models, last 30 days</h2>
+            @if (d.GetProperty("models").GetProperty("usage30d").GetArrayLength() == 0)
+            {
+                <p class="den-muted" data-testid="models-empty">No model usage reported yet.</p>
+            }
+            else
+            {
+                <ul class="den-members" data-testid="models-list">
+                    @foreach (var m in d.GetProperty("models").GetProperty("usage30d").EnumerateArray())
+                    {
+                        <li data-testid="model-row"><span>@m.GetProperty("label").GetString()</span><span>@m.GetProperty("sessions").GetInt32() sessions</span></li>
+                    }
+                </ul>
+            }
+        }
+        <a class="den-link" href="/dashboard">Back to dashboard</a>
+    }
+</section>
+
+@code {
+    private bool _loading = true, _denied;
+    private string _orgName = "";
+    private JsonElement? _data;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var me = await Den.RequestAsync("/api/browser/v1/me");
+        if (!me.Ok) { Nav.NavigateTo("/"); return; }
+        var org = await Den.RequestAsync("/api/browser/v1/org");
+        if (org.Status is 404 or 403) { Nav.NavigateTo("/organization"); return; }
+        _orgName = org.String("organization", "name") ?? "";
+        var analytics = await Den.RequestAsync("/api/browser/v1/telemetry/analytics");
+        if (analytics.Status == 403) _denied = true;
+        else if (analytics.Ok) _data = analytics.Json;
+        _loading = false;
+        StateHasChanged();
+    }
+}

@@ -68,6 +68,8 @@ public sealed partial class ConnectionsFeature
             var c = await service.FindAsync(caller.OrgId, connectionId);
             if (c is null) return NotFound();
             var db = ctx.RequestServices.GetRequiredService<DenDbContext>();
+            if (c.AuthType == "apikey" && c.CredentialMode == "shared" && await service.IsManagedByPluginAsync(c.OrganizationId, c.Id))
+                return Ok(new { error = "marketplace_managed", message = "A marketplace plugin manages this connection's key. Change it in the marketplace definition." }, 409);
             var switching = expected is not null;
             if (switching)
             {

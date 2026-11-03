@@ -15,6 +15,22 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "AdminAllowlistEntry",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Email = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Note = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_AdminAllowlistEntry", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "ApiKey",
                 columns: table => new
                 {
@@ -321,6 +337,31 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "DesktopStartupReport",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    MemberId = table.Column<string>(type: "longtext", nullable: false),
+                    AttemptId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    AppVersion = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false),
+                    Platform = table.Column<string>(type: "varchar(16)", maxLength: 16, nullable: false),
+                    Success = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    FailedStep = table.Column<string>(type: "longtext", nullable: true),
+                    FailureReason = table.Column<string>(type: "longtext", nullable: true),
+                    WindowMs = table.Column<int>(type: "int", nullable: true),
+                    EngineMs = table.Column<int>(type: "int", nullable: true),
+                    SignedInMs = table.Column<int>(type: "int", nullable: true),
+                    OrgToolsMs = table.Column<int>(type: "int", nullable: true),
+                    ObservedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_DesktopStartupReport", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "DeviceCodes",
                 columns: table => new
                 {
@@ -337,6 +378,20 @@ namespace WorkAI360.Api.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_DeviceCodes", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "EgressDiagnosticCredential",
+                columns: table => new
+                {
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    TokenCipher = table.Column<string>(type: "longtext", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_EgressDiagnosticCredential", x => x.OrganizationId);
                 })
                 .Annotation("MySQL:Charset", "utf8mb4");
 
@@ -465,7 +520,8 @@ namespace WorkAI360.Api.Migrations
                     CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
                     ExpiresAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
                     AcceptedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
-                    AcceptedByUserId = table.Column<string>(type: "longtext", nullable: true)
+                    AcceptedByUserId = table.Column<string>(type: "longtext", nullable: true),
+                    TeamId = table.Column<string>(type: "longtext", nullable: true)
                 },
                 constraints: table =>
                 {
@@ -630,6 +686,53 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "OidcClientSettings",
+                columns: table => new
+                {
+                    ClientId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    EnableEndSession = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    PostLogoutRedirectUrisJson = table.Column<string>(type: "longtext", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_OidcClientSettings", x => x.ClientId);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "OidcGrant",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ClientId = table.Column<string>(type: "longtext", nullable: false),
+                    UserId = table.Column<string>(type: "longtext", nullable: false),
+                    Nonce = table.Column<string>(type: "varchar(512)", maxLength: 512, nullable: true),
+                    AuthTime = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    SessionId = table.Column<string>(type: "longtext", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_OidcGrant", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "OnboardingRateLimit",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Key = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Count = table.Column<int>(type: "int", nullable: false),
+                    WindowStart = table.Column<long>(type: "bigint", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_OnboardingRateLimit", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "Organizations",
                 columns: table => new
                 {
@@ -673,6 +776,27 @@ namespace WorkAI360.Api.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_OrganizationWebOrigin", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "OrgOAuthClient",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ProviderId = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false),
+                    ClientId = table.Column<string>(type: "varchar(512)", maxLength: 512, nullable: false),
+                    ClientSecretEnc = table.Column<string>(type: "longtext", nullable: true),
+                    FeaturesJson = table.Column<string>(type: "longtext", nullable: true),
+                    TenantId = table.Column<string>(type: "longtext", nullable: true),
+                    CreatedByMemberId = table.Column<string>(type: "longtext", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_OrgOAuthClient", x => x.Id);
                 })
                 .Annotation("MySQL:Charset", "utf8mb4");
 
@@ -763,6 +887,76 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "PlatformFeatureChange",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    FeatureKey = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false),
+                    Scope = table.Column<string>(type: "longtext", nullable: false),
+                    Action = table.Column<string>(type: "longtext", nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: true),
+                    ChangedByUserId = table.Column<string>(type: "longtext", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_PlatformFeatureChange", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "PlatformFeatureRollout",
+                columns: table => new
+                {
+                    FeatureKey = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false),
+                    Enabled = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    Killed = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    UpdatedByUserId = table.Column<string>(type: "longtext", nullable: true),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_PlatformFeatureRollout", x => x.FeatureKey);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "PlatformOrganization",
+                columns: table => new
+                {
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    PlanTier = table.Column<string>(type: "varchar(16)", maxLength: 16, nullable: true),
+                    PlanSeats = table.Column<int>(type: "int", nullable: true),
+                    PlanEndsAt = table.Column<string>(type: "varchar(10)", maxLength: 10, nullable: true),
+                    SeatLimit = table.Column<int>(type: "int", nullable: false),
+                    SeatsFreeAdditional = table.Column<int>(type: "int", nullable: false),
+                    DpaSigned = table.Column<bool>(type: "tinyint(1)", nullable: true),
+                    ComplimentaryWebAccess = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_PlatformOrganization", x => x.OrganizationId);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "PlatformOrganizationFeature",
+                columns: table => new
+                {
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    FeatureKey = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false),
+                    Enabled = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    SetByUserId = table.Column<string>(type: "longtext", nullable: true),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_PlatformOrganizationFeature", x => new { x.OrganizationId, x.FeatureKey });
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "Plugin",
                 columns: table => new
                 {
@@ -802,6 +996,28 @@ namespace WorkAI360.Api.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_PluginConfigObject", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "PluginMcpBinding",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "longtext", nullable: false),
+                    PluginId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ConfigObjectId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ServerName = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ConnectionId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    RequiredAuthType = table.Column<string>(type: "longtext", nullable: true),
+                    ConnectionOwnedByPlugin = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    CreatedByMemberId = table.Column<string>(type: "longtext", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_PluginMcpBinding", x => x.Id);
                 })
                 .Annotation("MySQL:Charset", "utf8mb4");
 
@@ -964,6 +1180,29 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "SocialAuthState",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Provider = table.Column<string>(type: "longtext", nullable: false),
+                    BrowserBindingHash = table.Column<string>(type: "longtext", nullable: false),
+                    NonceHash = table.Column<string>(type: "longtext", nullable: true),
+                    CodeVerifierProtected = table.Column<string>(type: "longtext", nullable: false),
+                    CallbackUrl = table.Column<string>(type: "longtext", nullable: false),
+                    ErrorCallbackUrl = table.Column<string>(type: "longtext", nullable: true),
+                    NewUserCallbackUrl = table.Column<string>(type: "longtext", nullable: true),
+                    RequestSignUp = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    ExpiresAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    ConsumedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_SocialAuthState", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "SsoAuthState",
                 columns: table => new
                 {
@@ -1077,6 +1316,187 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "WorkspaceBootstrap",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    SetupMemberId = table.Column<string>(type: "longtext", nullable: false),
+                    AgentUserId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Status = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    AssertionJti = table.Column<string>(type: "longtext", nullable: false),
+                    DeviceKeyFingerprint = table.Column<string>(type: "longtext", nullable: true),
+                    OwnerEmail = table.Column<string>(type: "longtext", nullable: true),
+                    TeammateEmailsJson = table.Column<string>(type: "longtext", nullable: true),
+                    ExpiresAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    ClaimedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    CredentialsRevokedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_WorkspaceBootstrap", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "WorkspaceClaim",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    BootstrapId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "longtext", nullable: false),
+                    TokenHash = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Role = table.Column<string>(type: "longtext", nullable: false),
+                    Status = table.Column<string>(type: "longtext", nullable: false),
+                    ExpiresAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    ClaimedByUserId = table.Column<string>(type: "longtext", nullable: true),
+                    ClaimedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_WorkspaceClaim", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "WorkspaceClaimCode",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    BootstrapId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "longtext", nullable: false),
+                    CodeHash = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    State = table.Column<string>(type: "longtext", nullable: false),
+                    ExpiresAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    ClaimedByUserId = table.Column<string>(type: "longtext", nullable: true),
+                    AcceptedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    ReconciledAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_WorkspaceClaimCode", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "Automation",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OwnerMemberId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Name = table.Column<string>(type: "varchar(120)", maxLength: 120, nullable: false),
+                    State = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    CurrentRevisionId = table.Column<string>(type: "longtext", nullable: false),
+                    NextDueAt = table.Column<long>(type: "bigint", nullable: true),
+                    LatestRunAt = table.Column<long>(type: "bigint", nullable: true),
+                    LatestSuccessfulRunId = table.Column<string>(type: "longtext", nullable: true),
+                    LatestSuccessfulResultJson = table.Column<string>(type: "longtext", nullable: true),
+                    NeedsAttentionJson = table.Column<string>(type: "longtext", nullable: true),
+                    CreatedAt = table.Column<long>(type: "bigint", nullable: false),
+                    UpdatedAt = table.Column<long>(type: "bigint", nullable: false),
+                    ArchivedAt = table.Column<long>(type: "bigint", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_Automation", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_Automation_Organizations_OrganizationId",
+                        column: x => x.OrganizationId,
+                        principalTable: "Organizations",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "AutomationRunner",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OwnerMemberId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    InstallId = table.Column<string>(type: "longtext", nullable: false),
+                    ProtocolVersion = table.Column<int>(type: "int", nullable: false),
+                    CapabilitiesJson = table.Column<string>(type: "longtext", nullable: false),
+                    AppVersion = table.Column<string>(type: "longtext", nullable: false),
+                    Platform = table.Column<string>(type: "longtext", nullable: false),
+                    Concurrency = table.Column<int>(type: "int", nullable: false),
+                    LastSeenAt = table.Column<long>(type: "bigint", nullable: false),
+                    CreatedAt = table.Column<long>(type: "bigint", nullable: false),
+                    UpdatedAt = table.Column<long>(type: "bigint", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_AutomationRunner", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_AutomationRunner_Organizations_OrganizationId",
+                        column: x => x.OrganizationId,
+                        principalTable: "Organizations",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "TelemetryEvent",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    MemberId = table.Column<string>(type: "longtext", nullable: false),
+                    EventType = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false),
+                    EventTimestamp = table.Column<long>(type: "bigint", nullable: false),
+                    Source = table.Column<string>(type: "varchar(32)", maxLength: 32, nullable: true),
+                    SessionId = table.Column<string>(type: "varchar(128)", maxLength: 128, nullable: true),
+                    DurationMs = table.Column<int>(type: "int", nullable: true),
+                    Success = table.Column<bool>(type: "tinyint(1)", nullable: true),
+                    CreatedAt = table.Column<long>(type: "bigint", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_TelemetryEvent", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_TelemetryEvent_Organizations_OrganizationId",
+                        column: x => x.OrganizationId,
+                        principalTable: "Organizations",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "TelemetrySessionDimension",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    SessionId = table.Column<string>(type: "varchar(128)", maxLength: 128, nullable: false),
+                    Source = table.Column<string>(type: "varchar(32)", maxLength: 32, nullable: false),
+                    DimensionType = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false),
+                    DimensionValue = table.Column<string>(type: "varchar(128)", maxLength: 128, nullable: false),
+                    DimensionLabel = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    MetadataJson = table.Column<string>(type: "longtext", nullable: true),
+                    CreatedAt = table.Column<long>(type: "bigint", nullable: false),
+                    UpdatedAt = table.Column<long>(type: "bigint", nullable: false),
+                    LastSeenAt = table.Column<long>(type: "bigint", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_TelemetrySessionDimension", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_TelemetrySessionDimension_Organizations_OrganizationId",
+                        column: x => x.OrganizationId,
+                        principalTable: "Organizations",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "AgentPermissionPolicy",
                 columns: table => new
                 {
@@ -1184,6 +1604,115 @@ namespace WorkAI360.Api.Migrations
                 })
                 .Annotation("MySQL:Charset", "utf8mb4");
 
+            migrationBuilder.CreateTable(
+                name: "AutomationRevision",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    AutomationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Version = table.Column<int>(type: "int", nullable: false),
+                    Instructions = table.Column<string>(type: "longtext", nullable: false),
+                    ScheduleKind = table.Column<string>(type: "longtext", nullable: false),
+                    ScheduleJson = table.Column<string>(type: "longtext", nullable: false),
+                    ProviderId = table.Column<string>(type: "varchar(160)", maxLength: 160, nullable: false),
+                    ModelId = table.Column<string>(type: "varchar(160)", maxLength: 160, nullable: false),
+                    ModelVariant = table.Column<string>(type: "longtext", nullable: true),
+                    ActionJson = table.Column<string>(type: "longtext", nullable: false),
+                    ExecutionTarget = table.Column<string>(type: "longtext", nullable: false),
+                    WorkspaceId = table.Column<string>(type: "longtext", nullable: true),
+                    MaximumRuntimeMs = table.Column<int>(type: "int", nullable: false),
+                    Digest = table.Column<string>(type: "longtext", nullable: false),
+                    CreatedAt = table.Column<long>(type: "bigint", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_AutomationRevision", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_AutomationRevision_Automation_AutomationId",
+                        column: x => x.AutomationId,
+                        principalTable: "Automation",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "AutomationRun",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    AutomationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    RevisionId = table.Column<string>(type: "longtext", nullable: false),
+                    Trigger = table.Column<string>(type: "longtext", nullable: false),
+                    ScheduledFor = table.Column<long>(type: "bigint", nullable: true),
+                    IdempotencyKey = table.Column<string>(type: "varchar(512)", maxLength: 512, nullable: false),
+                    Status = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ExecutionTarget = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ClaimDeadlineAt = table.Column<long>(type: "bigint", nullable: true),
+                    LeaseOwner = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: true),
+                    LeaseExpiresAt = table.Column<long>(type: "bigint", nullable: true),
+                    HeartbeatAt = table.Column<long>(type: "bigint", nullable: true),
+                    AttemptCount = table.Column<int>(type: "int", nullable: false),
+                    CancelRequestedAt = table.Column<long>(type: "bigint", nullable: true),
+                    EngineKind = table.Column<string>(type: "longtext", nullable: true),
+                    EngineReceiptJson = table.Column<string>(type: "longtext", nullable: true),
+                    EngineSequence = table.Column<int>(type: "int", nullable: false),
+                    ThreadId = table.Column<string>(type: "longtext", nullable: false),
+                    ProviderId = table.Column<string>(type: "longtext", nullable: false),
+                    ModelId = table.Column<string>(type: "longtext", nullable: false),
+                    ModelVariant = table.Column<string>(type: "longtext", nullable: true),
+                    StartedAt = table.Column<long>(type: "bigint", nullable: true),
+                    FinishedAt = table.Column<long>(type: "bigint", nullable: true),
+                    ErrorJson = table.Column<string>(type: "longtext", nullable: true),
+                    ResultSummary = table.Column<string>(type: "longtext", nullable: true),
+                    TriggerContextJson = table.Column<string>(type: "longtext", nullable: true),
+                    UsageJson = table.Column<string>(type: "longtext", nullable: false),
+                    CreatedAt = table.Column<long>(type: "bigint", nullable: false),
+                    UpdatedAt = table.Column<long>(type: "bigint", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_AutomationRun", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_AutomationRun_Automation_AutomationId",
+                        column: x => x.AutomationId,
+                        principalTable: "Automation",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "AutomationRunEvent",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    RunId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Attempt = table.Column<int>(type: "int", nullable: false),
+                    Sequence = table.Column<int>(type: "int", nullable: false),
+                    EventType = table.Column<string>(type: "longtext", nullable: false),
+                    PayloadJson = table.Column<string>(type: "longtext", nullable: false),
+                    IdempotencyKey = table.Column<string>(type: "varchar(400)", maxLength: 400, nullable: false),
+                    CreatedAt = table.Column<long>(type: "bigint", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_AutomationRunEvent", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_AutomationRunEvent_AutomationRun_RunId",
+                        column: x => x.RunId,
+                        principalTable: "AutomationRun",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_AdminAllowlistEntry_Email",
+                table: "AdminAllowlistEntry",
+                column: "Email",
+                unique: true);
+
             migrationBuilder.CreateIndex(
                 name: "IX_AgentPermissionPolicy_OrganizationId_ScopeKey",
                 table: "AgentPermissionPolicy",
@@ -1230,6 +1759,59 @@ namespace WorkAI360.Api.Migrations
                 name: "IX_AuditOperation_OrganizationId_FirstRecordedAt_Id",
                 table: "AuditOperation",
                 columns: new[] { "OrganizationId", "FirstRecordedAt", "Id" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_Automation_OrganizationId",
+                table: "Automation",
+                column: "OrganizationId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_Automation_OwnerMemberId_Id",
+                table: "Automation",
+                columns: new[] { "OwnerMemberId", "Id" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_Automation_State_NextDueAt",
+                table: "Automation",
+                columns: new[] { "State", "NextDueAt" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_AutomationRevision_AutomationId_Version",
+                table: "AutomationRevision",
+                columns: new[] { "AutomationId", "Version" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_AutomationRun_AutomationId_Id",
+                table: "AutomationRun",
+                columns: new[] { "AutomationId", "Id" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_AutomationRun_AutomationId_Status",
+                table: "AutomationRun",
+                columns: new[] { "AutomationId", "Status" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_AutomationRun_IdempotencyKey",
+                table: "AutomationRun",
+                column: "IdempotencyKey",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_AutomationRun_Status_ExecutionTarget",
+                table: "AutomationRun",
+                columns: new[] { "Status", "ExecutionTarget" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_AutomationRunEvent_RunId_Attempt_Sequence",
+                table: "AutomationRunEvent",
+                columns: new[] { "RunId", "Attempt", "Sequence" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_AutomationRunner_OrganizationId_OwnerMemberId_LastSeenAt",
+                table: "AutomationRunner",
+                columns: new[] { "OrganizationId", "OwnerMemberId", "LastSeenAt" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_BrandAsset_OrganizationId_Kind_Version_Extension",
@@ -1328,6 +1910,17 @@ namespace WorkAI360.Api.Migrations
                 name: "IX_DesktopPolicyAssignment_TeamId",
                 table: "DesktopPolicyAssignment",
                 column: "TeamId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_DesktopStartupReport_OrganizationId_AttemptId",
+                table: "DesktopStartupReport",
+                columns: new[] { "OrganizationId", "AttemptId" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_DesktopStartupReport_OrganizationId_ObservedAt",
+                table: "DesktopStartupReport",
+                columns: new[] { "OrganizationId", "ObservedAt" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_DeviceCodes_DeviceCodeHash",
@@ -1446,6 +2039,12 @@ namespace WorkAI360.Api.Migrations
                 unique: true);
 
             migrationBuilder.CreateIndex(
+                name: "IX_OnboardingRateLimit_Key",
+                table: "OnboardingRateLimit",
+                column: "Key",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
                 name: "IX_Organizations_Slug",
                 table: "Organizations",
                 column: "Slug",
@@ -1467,6 +2066,12 @@ namespace WorkAI360.Api.Migrations
                 name: "IX_OrgDefaultModel_TeamId",
                 table: "OrgDefaultModel",
                 column: "TeamId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_OrgOAuthClient_OrganizationId_ProviderId",
+                table: "OrgOAuthClient",
+                columns: new[] { "OrganizationId", "ProviderId" },
+                unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "IX_OrgPrompt_OrganizationId_ScopeKey",
@@ -1517,6 +2122,16 @@ namespace WorkAI360.Api.Migrations
                 column: "TeamId");
 
             migrationBuilder.CreateIndex(
+                name: "IX_PlatformFeatureChange_FeatureKey_CreatedAt",
+                table: "PlatformFeatureChange",
+                columns: new[] { "FeatureKey", "CreatedAt" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_PlatformFeatureChange_OrganizationId",
+                table: "PlatformFeatureChange",
+                column: "OrganizationId");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_Plugin_ActiveKey",
                 table: "Plugin",
                 column: "ActiveKey",
@@ -1536,6 +2151,22 @@ namespace WorkAI360.Api.Migrations
                 name: "IX_PluginConfigObject_PluginId_ConfigObjectId",
                 table: "PluginConfigObject",
                 columns: new[] { "PluginId", "ConfigObjectId" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_PluginMcpBinding_ConfigObjectId",
+                table: "PluginMcpBinding",
+                column: "ConfigObjectId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_PluginMcpBinding_ConnectionId",
+                table: "PluginMcpBinding",
+                column: "ConnectionId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_PluginMcpBinding_PluginId_ConfigObjectId_ServerName",
+                table: "PluginMcpBinding",
+                columns: new[] { "PluginId", "ConfigObjectId", "ServerName" },
                 unique: true);
 
             migrationBuilder.CreateIndex(
@@ -1615,6 +2246,11 @@ namespace WorkAI360.Api.Migrations
                 column: "UserId");
 
             migrationBuilder.CreateIndex(
+                name: "IX_SocialAuthState_ExpiresAt",
+                table: "SocialAuthState",
+                column: "ExpiresAt");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_SsoAuthState_ExpiresAt",
                 table: "SsoAuthState",
                 column: "ExpiresAt");
@@ -1659,15 +2295,77 @@ namespace WorkAI360.Api.Migrations
                 unique: true);
 
             migrationBuilder.CreateIndex(
+                name: "IX_TelemetryEvent_OrganizationId_EventTimestamp",
+                table: "TelemetryEvent",
+                columns: new[] { "OrganizationId", "EventTimestamp" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_TelemetryEvent_OrganizationId_SessionId_EventTimestamp",
+                table: "TelemetryEvent",
+                columns: new[] { "OrganizationId", "SessionId", "EventTimestamp" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_TelemetrySessionDimension_OrganizationId_DimensionType_Dimen~",
+                table: "TelemetrySessionDimension",
+                columns: new[] { "OrganizationId", "DimensionType", "DimensionValue" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_TelemetrySessionDimension_OrganizationId_Source_SessionId_Di~",
+                table: "TelemetrySessionDimension",
+                columns: new[] { "OrganizationId", "Source", "SessionId", "DimensionType" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
                 name: "IX_Users_Email",
                 table: "Users",
                 column: "Email",
                 unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_WorkspaceBootstrap_AgentUserId",
+                table: "WorkspaceBootstrap",
+                column: "AgentUserId",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_WorkspaceBootstrap_OrganizationId",
+                table: "WorkspaceBootstrap",
+                column: "OrganizationId",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_WorkspaceBootstrap_Status_ExpiresAt",
+                table: "WorkspaceBootstrap",
+                columns: new[] { "Status", "ExpiresAt" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_WorkspaceClaim_BootstrapId",
+                table: "WorkspaceClaim",
+                column: "BootstrapId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_WorkspaceClaim_TokenHash",
+                table: "WorkspaceClaim",
+                column: "TokenHash",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_WorkspaceClaimCode_BootstrapId",
+                table: "WorkspaceClaimCode",
+                column: "BootstrapId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_WorkspaceClaimCode_CodeHash",
+                table: "WorkspaceClaimCode",
+                column: "CodeHash");
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.DropTable(
+                name: "AdminAllowlistEntry");
+
             migrationBuilder.DropTable(
                 name: "AgentPermissionPolicy");
 
@@ -1688,6 +2386,15 @@ namespace WorkAI360.Api.Migrations
 
             migrationBuilder.DropTable(
                 name: "AuthorizationCodes");
+
+            migrationBuilder.DropTable(
+                name: "AutomationRevision");
+
+            migrationBuilder.DropTable(
+                name: "AutomationRunEvent");
+
+            migrationBuilder.DropTable(
+                name: "AutomationRunner");
 
             migrationBuilder.DropTable(
                 name: "BrandAsset");
@@ -1717,7 +2424,13 @@ namespace WorkAI360.Api.Migrations
                 name: "DesktopPolicyAssignment");
 
             migrationBuilder.DropTable(
+                name: "DesktopStartupReport");
+
+            migrationBuilder.DropTable(
                 name: "DeviceCodes");
+
+            migrationBuilder.DropTable(
+                name: "EgressDiagnosticCredential");
 
             migrationBuilder.DropTable(
                 name: "EmailOtps");
@@ -1759,7 +2472,13 @@ namespace WorkAI360.Api.Migrations
                 name: "OAuthConsents");
 
             migrationBuilder.DropTable(
-                name: "Organizations");
+                name: "OidcClientSettings");
+
+            migrationBuilder.DropTable(
+                name: "OidcGrant");
+
+            migrationBuilder.DropTable(
+                name: "OnboardingRateLimit");
 
             migrationBuilder.DropTable(
                 name: "OrganizationSettings");
@@ -1769,6 +2488,9 @@ namespace WorkAI360.Api.Migrations
 
             migrationBuilder.DropTable(
                 name: "OrgDefaultModel");
+
+            migrationBuilder.DropTable(
+                name: "OrgOAuthClient");
 
             migrationBuilder.DropTable(
                 name: "OrgPolicySettings");
@@ -1789,10 +2511,25 @@ namespace WorkAI360.Api.Migrations
                 name: "PermissionSetTeams");
 
             migrationBuilder.DropTable(
+                name: "PlatformFeatureChange");
+
+            migrationBuilder.DropTable(
+                name: "PlatformFeatureRollout");
+
+            migrationBuilder.DropTable(
+                name: "PlatformOrganization");
+
+            migrationBuilder.DropTable(
+                name: "PlatformOrganizationFeature");
+
+            migrationBuilder.DropTable(
                 name: "Plugin");
 
             migrationBuilder.DropTable(
                 name: "PluginConfigObject");
+
+            migrationBuilder.DropTable(
+                name: "PluginMcpBinding");
 
             migrationBuilder.DropTable(
                 name: "RefreshTokens");
@@ -1819,6 +2556,9 @@ namespace WorkAI360.Api.Migrations
                 name: "SigningKeys");
 
             migrationBuilder.DropTable(
+                name: "SocialAuthState");
+
+            migrationBuilder.DropTable(
                 name: "SsoAuthState");
 
             migrationBuilder.DropTable(
@@ -1828,13 +2568,37 @@ namespace WorkAI360.Api.Migrations
                 name: "TeamMembers");
 
             migrationBuilder.DropTable(
+                name: "TelemetryEvent");
+
+            migrationBuilder.DropTable(
+                name: "TelemetrySessionDimension");
+
+            migrationBuilder.DropTable(
                 name: "Users");
+
+            migrationBuilder.DropTable(
+                name: "WorkspaceBootstrap");
+
+            migrationBuilder.DropTable(
+                name: "WorkspaceClaim");
+
+            migrationBuilder.DropTable(
+                name: "WorkspaceClaimCode");
+
+            migrationBuilder.DropTable(
+                name: "AutomationRun");
 
             migrationBuilder.DropTable(
                 name: "Members");
 
             migrationBuilder.DropTable(
                 name: "Teams");
+
+            migrationBuilder.DropTable(
+                name: "Automation");
+
+            migrationBuilder.DropTable(
+                name: "Organizations");
         }
     }
 }

@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using WorkAI360.Api.Auth;
@@ -126,6 +127,47 @@ public sealed class SecurityHardeningTests : IClassFixture<ApiFactory>
         var response = await client.PostAsJsonAsync("/api/auth/sign-in/email", new { email, password = Password });
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.Equal("INVALID_EMAIL_OR_PASSWORD", (await ReadJsonAsync(response)).GetProperty("code").GetString());
+    }
+}
+
+public sealed class FrameLockTests
+{
+    [Theory]
+    [InlineData(null, "frame-ancestors 'none'")]
+    [InlineData("", "frame-ancestors 'none'")]
+    [InlineData("frame-ancestors 'self'", "frame-ancestors 'none'")]
+    [InlineData("frame-ancestors *", "frame-ancestors 'none'")]
+    [InlineData("FRAME-ANCESTORS https://a.example", "frame-ancestors 'none'")]
+    [InlineData("default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'", "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")]
+    [InlineData("default-src 'none'; frame-ancestors 'self'; form-action 'self'", "default-src 'none'; form-action 'self'; frame-ancestors 'none'")]
+    [InlineData("default-src 'none'; form-action 'self'", "default-src 'none'; form-action 'self'; frame-ancestors 'none'")]
+    public void Only_the_frame_directive_is_set_and_other_directives_survive(string? existing, string expected) =>
+        Assert.Equal(expected, SecurityHeaders.WithFrameLock(existing));
+
+    [Fact]
+    public void Apply_sets_every_header_and_hsts_only_over_https_outside_development()
+    {
+        var plain = new HeaderDictionary();
+        SecurityHeaders.Apply(plain, https: false, development: false);
+        Assert.Equal("DENY", plain["X-Frame-Options"]);
+        Assert.Equal("nosniff", plain["X-Content-Type-Options"]);
+        Assert.False(plain.ContainsKey("Strict-Transport-Security"));
+
+        var secure = new HeaderDictionary();
+        SecurityHeaders.Apply(secure, https: true, development: false);
+        Assert.Equal("max-age=31536000", secure["Strict-Transport-Security"]);
+
+        var dev = new HeaderDictionary();
+        SecurityHeaders.Apply(dev, https: true, development: true);
+        Assert.False(dev.ContainsKey("Strict-Transport-Security"));
+    }
+
+    [Fact]
+    public void A_nosniff_the_endpoint_already_set_is_not_duplicated()
+    {
+        var headers = new HeaderDictionary { ["X-Content-Type-Options"] = "nosniff" };
+        SecurityHeaders.Apply(headers, https: false, development: true);
+        Assert.Single(headers["X-Content-Type-Options"]);
     }
 }
 

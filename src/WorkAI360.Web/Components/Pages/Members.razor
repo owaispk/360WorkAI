@@ -30,6 +30,7 @@
                         <strong>@m.Name</strong>
                         <span class="den-muted">@m.Email</span>
                         <span class="den-badge den-badge-@(m.Pending ? "pending" : m.Role)">@(m.Pending ? "Pending" : Label(m.Role))</span>
+                        @if (m.Teams.Length > 0) { <span class="den-muted" data-testid="member-teams">@(m.Pending ? "joins" : "in") @m.Teams</span> }
                     </div>
                     <div class="den-member-actions">
                         @if (m.Pending)
@@ -89,6 +90,14 @@
                     <option value="member">Member</option>
                     @if (Can("members.update")) { <option value="admin">Admin</option> }
                 </select>
+                @if (Can("teams.manage") && _teams.Count > 0)
+                {
+                    <label for="invite-team">Team (optional)</label>
+                    <select id="invite-team" @bind="_inviteTeam" data-testid="invite-team">
+                        <option value="">No team</option>
+                        @foreach (var t in _teams) { <option value="@t.Id">@t.Name</option> }
+                    </select>
+                }
                 <button type="submit" class="den-button" disabled="@Busy">Send invitation</button>
             </form>
         }
@@ -97,7 +106,8 @@
 </section>
 
 @code {
-    private sealed record Row(string Id, string Name, string Email, string Role, bool Pending, bool IsMe, string? InviteId);
+    private sealed record Row(string Id, string Name, string Email, string Role, bool Pending, bool IsMe, string? InviteId, string Teams);
+    private sealed record TeamRow(string Id, string Name);
 
     private bool _loading = true;
     private string _orgName = "";
@@ -107,6 +117,8 @@
     private string? _confirm, _inviteLink;
     private string _inviteEmail = "";
     private string _inviteRole = "member";
+    private string _inviteTeam = "";
+    private List<TeamRow> _teams = [];
 
     private bool Can(string permission) => _permissions.Contains(permission);
     private static string Label(string role) => role switch { "owner" => "Owner", "admin" => "Admin", _ => "Member" };
@@ -132,12 +144,17 @@
         _myRole = current.GetProperty("role").GetString() ?? "member";
         var myId = current.GetProperty("id").GetString();
         _permissions = current.GetProperty("permissions").EnumerateArray().Select(p => p.GetString() ?? "").ToHashSet();
+        var teamRows = root.TryGetProperty("teams", out var teamList) && teamList.ValueKind == JsonValueKind.Array
+            ? teamList.EnumerateArray().Select(t => (Id: t.GetProperty("id").GetString() ?? "", Name: t.GetProperty("name").GetString() ?? "", Members: t.GetProperty("memberIds").EnumerateArray().Select(x => x.GetString() ?? "").ToHashSet())).ToList()
+            : [];
+        _teams = teamRows.Select(t => new TeamRow(t.Id, t.Name)).ToList();
         _members = root.GetProperty("members").EnumerateArray().Select(m =>
         {
             var user = m.GetProperty("user");
             var pending = m.GetProperty("userId").ValueKind == JsonValueKind.Null;
             return new Row(m.GetProperty("id").GetString() ?? "", user.GetProperty("name").GetString() ?? "", user.GetProperty("email").GetString() ?? "",
-                m.GetProperty("role").GetString() ?? "member", pending, m.GetProperty("id").GetString() == myId, m.GetProperty("inviteId").GetString());
+                m.GetProperty("role").GetString() ?? "member", pending, m.GetProperty("id").GetString() == myId, m.GetProperty("inviteId").GetString(),
+                string.Join(", ", teamRows.Where(t => t.Members.Contains(m.GetProperty("id").GetString() ?? "")).Select(t => t.Name)));
         }).OrderBy(r => r.Pending).ToList();
         return true;
     }
@@ -179,7 +196,9 @@
         Error = Notice = _inviteLink = null;
         if (!_inviteEmail.Contains('@')) { Error = "Enter the person's email address."; return; }
         Busy = true;
-        var result = await Den.RequestAsync("/api/browser/v1/invitations", "POST", new { email = _inviteEmail.Trim(), role = _inviteRole });
+        // No team chosen sends no teamId at all, so inviting again keeps the team the invitation already had.
+        object body = _inviteTeam.Length > 0 ? new { email = _inviteEmail.Trim(), role = _inviteRole, teamId = _inviteTeam } : new { email = _inviteEmail.Trim(), role = _inviteRole };
+        var result = await Den.RequestAsync("/api/browser/v1/invitations", "POST", body);
         Busy = false;
         if (result.String("error") == "reauth") { AskToConfirm(InviteAsync); return; }
         if (result.Ok)

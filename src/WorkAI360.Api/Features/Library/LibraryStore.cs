@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.Domain.Library;
+using WorkAI360.Api.Features.PluginConnections;
 
 namespace WorkAI360.Api.Features.Library;
 
@@ -11,7 +12,7 @@ namespace WorkAI360.Api.Features.Library;
 public sealed record ConfigInput(string? RawSourceText, string? NormalizedPayloadJson, string? SchemaVersion, JsonElement Metadata, JsonElement Payload);
 
 /// <summary>Reading and changing plugins, config objects (skills), marketplaces, their memberships and who may use them.</summary>
-public sealed class LibraryStore(DenDbContext db, LibraryAccess lib, PermissionService permissions)
+public sealed class LibraryStore(DenDbContext db, LibraryAccess lib, PermissionService permissions, PluginReadiness readiness)
 {
     public static readonly string[] ObjectTypes = ["skill", "agent", "command", "tool", "mcp", "hook", "context", "custom", "script", "workflow", "app"];
     public static readonly string[] ObjectStatuses = ["active", "inactive", "deleted", "archived", "ingestion_error"];
@@ -230,7 +231,7 @@ public sealed class LibraryStore(DenDbContext db, LibraryAccess lib, PermissionS
     }
 
     public async Task<Plugin> CreatePluginAsync(Actor a, string name, string? description, string? sourceRepositoryUrl, string? sourceFormat, string? sourceSchemaVersion,
-        IReadOnlyList<(string Type, ConfigInput Input)> components, bool orgWide, string? marketplaceId)
+        IReadOnlyList<(string Type, ConfigInput Input)> components, bool orgWide, string? marketplaceId, List<string>? objectIds = null)
     {
         if (orgWide && !a.Has("sharing.share_org_wide")) throw new LibraryForbidden("Only organization owners and admins can create org-wide plugins.");
         // Check what the components say before creating anything, so a bad one leaves nothing behind.
@@ -252,6 +253,7 @@ public sealed class LibraryStore(DenDbContext db, LibraryAccess lib, PermissionS
         foreach (var c in components)
         {
             var o = await CreateConfigObjectAsync(a, c.Type, "cloud", [], c.Input, saveNow: false);
+            objectIds?.Add(o.Id);
             db.Add(new PluginConfigObject { Id = Ids.New("pco"), OrganizationId = a.OrgId, PluginId = plugin.Id, ConfigObjectId = o.Id, MembershipSource = "manual", CreatedByMemberId = a.MemberId, CreatedAt = now });
             if (orgWide) db.Add(NewGrant(a, GrantKinds.ConfigObject, o.Id, "org", null, null, true, "viewer", "coa", now));
         }
@@ -575,11 +577,13 @@ public sealed class LibraryStore(DenDbContext db, LibraryAccess lib, PermissionS
                                  join o in db.Set<ConfigObject>().AsNoTracking() on m.ConfigObjectId equals o.Id
                                  where pluginIds.Contains(m.PluginId) && m.RemovedAt == null
                                  select new { m.PluginId, o.ObjectType }).ToListAsync()).GroupBy(x => x.PluginId).ToDictionary(g => g.Key, g => g.GroupBy(x => x.ObjectType).ToDictionary(t => t.Key, t => t.Count()));
+        var ready = await readiness.ForPluginsAsync(a.Context, a.Aud, plugins.Select(p => p.Id).ToList());
         var items = plugins.Select(p =>
         {
             var counts = typeCounts.GetValueOrDefault(p.Id) ?? new Dictionary<string, int>();
             var d = LibraryJson.Plugin(p, counts.Values.Sum(), [], counts);
             d["componentCounts"] = counts;
+            if (ready.TryGetValue(p.Id, out var r)) d["cloudReadiness"] = r.ToJson();
             return d;
         }).ToList();
         var market = LibraryJson.Marketplace(row, items.Count);

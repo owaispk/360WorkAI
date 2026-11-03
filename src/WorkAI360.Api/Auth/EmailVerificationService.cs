@@ -27,13 +27,23 @@ public sealed class EmailVerificationService(DenDbContext db, IEmailSender sende
         if (user.EmailVerified) return;
         if (!force && limiter.Hit(RateLimiter.SendOtp, user.Email, ip: null) is not null) return; // sign-in attempts must not become a way to flood an inbox
 
+        await IssueAsync(user.Email, TypeEmailVerification);
+    }
+
+    /// <summary>
+    /// Mails a fresh code of one type ("email-verification", "sign-in" or "forget-password") to an address, replacing any earlier code of that type.
+    /// Codes are stored only as keyed hashes, last 10 minutes and allow five guesses; the type is part of the stored key, so a code for one
+    /// purpose never works for another.
+    /// </summary>
+    public async Task IssueAsync(string email, string type)
+    {
         var code = RandomNumberGenerator.GetInt32(0, (int)Math.Pow(10, CodeLength)).ToString().PadLeft(CodeLength, '0');
         var now = DateTime.UtcNow;
-        await db.EmailOtps.Where(o => o.Email == user.Email && o.Type == TypeEmailVerification).ExecuteDeleteAsync();
-        db.EmailOtps.Add(new EmailOtp { Id = Ids.New("otp"), Email = user.Email, Type = TypeEmailVerification, CodeHash = Hash(user.Email, code), CreatedAt = now, ExpiresAt = now + CodeLifetime });
+        await db.EmailOtps.Where(o => o.Email == email && o.Type == type).ExecuteDeleteAsync();
+        db.EmailOtps.Add(new EmailOtp { Id = Ids.New("otp"), Email = email, Type = type, CodeHash = Hash(email, code, type), CreatedAt = now, ExpiresAt = now + CodeLifetime });
         await db.SaveChangesAsync();
 
-        try { await sender.SendAsync(EmailTemplates.Verification(user.Email, code)); }
+        try { await sender.SendAsync(EmailTemplates.Verification(email, code)); }
         catch (Exception e) when (e is not OperationCanceledException)
         {
             // The person can ask for another code; do not turn a mail outage into an error that reveals the account exists.
@@ -45,9 +55,11 @@ public sealed class EmailVerificationService(DenDbContext db, IEmailSender sende
     /// Checks a code. At most five guesses are ever possible per code, even under concurrency: the attempt is counted first,
     /// atomically, and the sixth is refused whatever it contains.
     /// </summary>
-    public async Task<OtpResult> VerifyAsync(string email, string code)
+    /// <param name="type">Which kind of code this must be (a code issued for another purpose never matches).</param>
+    /// <param name="consume">False only for "check" calls: the guess still counts, but a right answer leaves the code usable.</param>
+    public async Task<OtpResult> VerifyAsync(string email, string code, string type = TypeEmailVerification, bool consume = true)
     {
-        var otp = await db.EmailOtps.AsNoTracking().Where(o => o.Email == email && o.Type == TypeEmailVerification).OrderByDescending(o => o.CreatedAt).FirstOrDefaultAsync();
+        var otp = await db.EmailOtps.AsNoTracking().Where(o => o.Email == email && o.Type == type).OrderByDescending(o => o.CreatedAt).FirstOrDefaultAsync();
         if (otp is null) return OtpResult.Invalid;
         if (otp.ExpiresAt <= DateTime.UtcNow)
         {
@@ -62,16 +74,18 @@ public sealed class EmailVerificationService(DenDbContext db, IEmailSender sende
             return OtpResult.TooManyAttempts;
         }
 
-        var matches = CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(Hash(email, code)), Encoding.ASCII.GetBytes(otp.CodeHash));
+        var matches = CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(Hash(email, code, type)), Encoding.ASCII.GetBytes(otp.CodeHash));
         if (!matches) return OtpResult.Invalid;
+        if (!consume) return OtpResult.Verified;
 
         // One use: only the caller that deletes the row gets to verify.
         return await db.EmailOtps.Where(o => o.Id == otp.Id).ExecuteDeleteAsync() == 1 ? OtpResult.Verified : OtpResult.Invalid;
     }
 
-    private string Hash(string email, string code)
+    // The type is only mixed in for the new code types, so verification codes keep the hash they always had.
+    private string Hash(string email, string code, string type = TypeEmailVerification)
     {
         var key = HKDF.DeriveKey(HashAlgorithmName.SHA256, Encoding.UTF8.GetBytes(options.Value.Secret), 32, salt: null, info: Encoding.UTF8.GetBytes("workai360 email otp"));
-        return Convert.ToHexStringLower(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes($"{email}:{code}")));
+        return Convert.ToHexStringLower(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(type == TypeEmailVerification ? $"{email}:{code}" : $"{type}:{email}:{code}")));
     }
 }

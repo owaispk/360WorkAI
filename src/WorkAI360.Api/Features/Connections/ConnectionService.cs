@@ -5,6 +5,8 @@ using Microsoft.EntityFrameworkCore;
 using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.Domain.Connections;
+using WorkAI360.Api.Features.Library;
+using WorkAI360.Api.Features.PluginConnections;
 using WorkAI360.Api.OAuth;
 
 namespace WorkAI360.Api.Features.Connections;
@@ -39,7 +41,7 @@ public sealed record Diagnostic(string ReferenceId, string Phase, string Categor
 /// Connection rules shared by the routes, the capability provider and the pages: who may use what, which credential a call carries (with
 /// refresh), what a connection looks like on the wire, readiness checks, and the sign-in with an OAuth-protected server.
 /// </summary>
-public sealed class ConnectionService(DenDbContext db, SecretBox box, McpClient mcp, McpOAuth oauth, GuardedHttp http, OAuthUrls urls)
+public sealed class ConnectionService(DenDbContext db, SecretBox box, McpClient mcp, McpOAuth oauth, GuardedHttp http, OAuthUrls urls, PluginBindingStore bindings)
 {
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, SemaphoreSlim> RefreshLocks = new();
     public const string CallbackPath = "/v1/mcp-connections/oauth/callback";
@@ -63,19 +65,40 @@ public sealed class ConnectionService(DenDbContext db, SecretBox box, McpClient 
     public async Task<List<ExternalMcpConnection>> ListAllAsync(string orgId) =>
         await db.Set<ExternalMcpConnection>().AsNoTracking().Where(c => c.OrganizationId == orgId).OrderBy(c => c.CreatedAt).ThenBy(c => c.Id).ToListAsync();
 
-    /// <summary>Connections granted to this person: to everyone, to them, or to one of their teams. Being an admin grants nothing by itself.</summary>
+    /// <summary>
+    /// Connections granted to this person: to everyone, to them, or to one of their teams, or (through a plugin that needs them) because the plugin is
+    /// shared with them. Being an admin grants nothing by itself.
+    /// </summary>
     public async Task<List<ExternalMcpConnection>> UsableAsync(string orgId, string memberId, IReadOnlyCollection<string> teamIds)
     {
         var ids = await db.Set<ConnectionAccessGrant>().AsNoTracking()
             .Where(g => g.OrganizationId == orgId && (g.OrgWide || g.MemberId == memberId || (g.TeamId != null && teamIds.Contains(g.TeamId))))
             .Select(g => g.ConnectionId).Distinct().ToListAsync();
+        ids.AddRange(await bindings.UsableConnectionIdsAsync(orgId, memberId, teamIds));
+        ids = ids.Distinct().ToList();
         if (ids.Count == 0) return [];
-        return await db.Set<ExternalMcpConnection>().AsNoTracking().Where(c => c.OrganizationId == orgId && ids.Contains(c.Id)).OrderBy(c => c.CreatedAt).ThenBy(c => c.Id).ToListAsync();
+        var retired = (await bindings.RetiredAsync(orgId, ids)).ToList();
+        return await db.Set<ExternalMcpConnection>().AsNoTracking().Where(c => c.OrganizationId == orgId && ids.Contains(c.Id) && !retired.Contains(c.Id)).OrderBy(c => c.CreatedAt).ThenBy(c => c.Id).ToListAsync();
+    }
+
+    /// <summary>Every connection of the workspace except those retired with an archived plugin (the "all connections" list).</summary>
+    public async Task<List<ExternalMcpConnection>> ListVisibleAsync(string orgId)
+    {
+        var all = await ListAllAsync(orgId);
+        var retired = await bindings.RetiredAsync(orgId, all.Select(c => c.Id).ToList());
+        return all.Where(c => !retired.Contains(c.Id)).ToList();
     }
 
     public async Task<bool> CanUseAsync(ExternalMcpConnection connection, string memberId, IReadOnlyCollection<string> teamIds) =>
         await db.Set<ConnectionAccessGrant>().AnyAsync(g => g.ConnectionId == connection.Id && g.OrganizationId == connection.OrganizationId
-            && (g.OrgWide || g.MemberId == memberId || (g.TeamId != null && teamIds.Contains(g.TeamId))));
+            && (g.OrgWide || g.MemberId == memberId || (g.TeamId != null && teamIds.Contains(g.TeamId))))
+        || await bindings.CanUseAsync(connection.OrganizationId, connection.Id, memberId, teamIds);
+
+    /// <summary>What a person may know about the plugins that need a connection (see <see cref="PluginBindingStore"/>).</summary>
+    public Task<Provenance> ProvenanceAsync(Caller caller, string connectionId, bool everything = false) =>
+        bindings.ProvenanceAsync(new Audience(caller.OrgId, caller.MemberId, caller.TeamIds, caller.Has("sharing.manage_all")), connectionId, everything);
+
+    public Task<bool> IsManagedByPluginAsync(string orgId, string connectionId) => bindings.IsManagedAsync(orgId, connectionId);
 
     // ---------- access grants ----------
 
@@ -415,7 +438,7 @@ public sealed class ConnectionService(DenDbContext db, SecretBox box, McpClient 
 
     public string CallbackUrl => urls.Api + CallbackPath;
 
-    public async Task<Dictionary<string, object?>> ToJsonAsync(ExternalMcpConnection c, Caller caller, bool includeAccess, bool includeManualEndpoints, Dictionary<string, string>? names = null)
+    public async Task<Dictionary<string, object?>> ToJsonAsync(ExternalMcpConnection c, Caller caller, bool includeAccess, bool includeManualEndpoints, Dictionary<string, string>? names = null, bool allPluginNames = false)
     {
         var connected = Connected(c);
         var connectedAt = c.ConnectedAt;
@@ -465,14 +488,20 @@ public sealed class ConnectionService(DenDbContext db, SecretBox box, McpClient 
         if (includeAccess) d["organizationReadiness"] = VisibleReadiness(c.ReadinessJson) ?? VisibleReadiness(readiness);
         d["issuerReviewRequired"] = false;
         d["reconnectActionOwner"] = needsReconnect ? (c.CredentialMode == "shared" ? "organization_admin" : "member") : null;
-        d["requiredBy"] = Array.Empty<object>();
-        d["identityManagedBy"] = Array.Empty<object>();
-        d["requiredAuthType"] = null;
-        d["authPolicyConfirmed"] = true;
-        d["authTypeMismatch"] = false;
+        var provenance = await ProvenanceAsync(caller, c.Id, allPluginNames);
+        var requiredTypes = provenance.RequiredAuthTypes.ToList();
+        if (requiredTypes.Count == 0 && McpAuthPolicy.Required(null, c.Url) is { } fromPreset) requiredTypes.Add(fromPreset);
+        var authPolicyConfirmed = provenance.IdentityManagedBy.Count == 0 || requiredTypes.Count > 0 || McpAuthPolicy.PresetFor(c.Url) is not null;
+        var authTypeMismatch = requiredTypes.Any(t => !McpAuthPolicy.ExistingCompatible(c.AuthType, t));
+        var oauthClientRequired = c.AuthType == "oauth" && McpAuthPolicy.RequiresPreRegisteredClient(c.Url);
+        d["requiredBy"] = provenance.RequiredBy.Select(x => new { pluginId = x.PluginId, name = x.Name }).ToList();
+        d["identityManagedBy"] = provenance.IdentityManagedBy.Select(x => new { pluginId = x.PluginId, name = x.Name }).ToList();
+        d["requiredAuthType"] = requiredTypes.Count == 1 ? requiredTypes[0] : null;
+        d["authPolicyConfirmed"] = authPolicyConfirmed;
+        d["authTypeMismatch"] = authTypeMismatch;
         d["oauthClientConfigured"] = client is not null;
-        d["oauthClientRequired"] = false;
-        d["setupRequired"] = false;
+        d["oauthClientRequired"] = oauthClientRequired;
+        d["setupRequired"] = provenance.IdentityManagedBy.Count > 0 && (!authPolicyConfirmed || authTypeMismatch || (oauthClientRequired && client is null) || (!connected && c.AuthType is "apikey" or "none"));
         if (includeAccess)
         {
             var access = await AccessOfAsync(c.Id);
@@ -648,6 +677,7 @@ public sealed class ConnectionService(DenDbContext db, SecretBox box, McpClient 
         await db.Set<ConnectedAccount>().Where(a => a.ConnectionId == c.Id).ExecuteDeleteAsync();
         await db.Set<ConnectionOAuthClient>().Where(o => o.ConnectionId == c.Id).ExecuteDeleteAsync();
         await db.Set<ConnectionOAuthTransaction>().Where(t => t.ConnectionId == c.Id).ExecuteDeleteAsync();
+        await bindings.RemoveForConnectionAsync(c.OrganizationId, c.Id);
         await db.Set<ExternalMcpConnection>().Where(x => x.Id == c.Id).ExecuteDeleteAsync();
         await tx.CommitAsync();
     }

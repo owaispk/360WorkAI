@@ -1,0 +1,115 @@
+@page "/dashboard/onboarding/people"
+@inherits OnboardingPage
+
+<PageTitle>Invite people · OpenWork Cloud</PageTitle>
+<OnboardingStyles />
+
+<section class="den-card ob-page" data-testid="onboarding-teammates">
+    @if (!Ready)
+    {
+        <p class="den-muted" role="status">Getting your workspace ready…</p>
+    }
+    else
+    {
+        <OnboardingSteps Active="2" />
+        <h1>Invite people to @OrgName.TrimEnd('.').</h1>
+
+        @if (NeedsReauth)
+        {
+            <ReauthForm @bind-Password="ReauthPassword" Busy="Busy" OnConfirm="ConfirmItsYouAsync" OnCancel="CancelReauth" />
+        }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+
+        @if (!CanInvite)
+        {
+            <p class="den-muted" data-testid="cannot-invite">Only owners and admins can invite people.</p>
+            <div class="ob-actions"><button type="button" class="den-button" @onclick="OpenWorkspace" data-testid="open-workspace">Skip and open workspace</button></div>
+        }
+        else
+        {
+            <form @onsubmit="SendAsync" novalidate data-testid="invite-form">
+                @for (var i = 0; i < _rows.Count; i++)
+                {
+                    var row = _rows[i];
+                    var index = i + 1;
+                    <div class="ob-row" data-testid="onboarding-invite-row-@index">
+                        <input type="email" autocomplete="off" aria-label="Teammate email @index" placeholder="@(i == 0 ? "teammate@company.com" : "another@company.com")"
+                               value="@row.Email" disabled="@(row.Status is "sent" or "sending")" @oninput="e => Edit(row, e.Value?.ToString() ?? string.Empty)" />
+                        @if (row.Status == "sent") { <span class="ob-state ob-sent">Invitation sent</span> }
+                        else if (row.Status == "sending") { <span class="ob-state">Sending…</span> }
+                        else if (_rows.Count > 1) { <button type="button" class="den-link ob-state" aria-label="Remove teammate @index" @onclick="() => _rows.Remove(row)">Remove</button> }
+                        @if (row.Message is not null) { <p class="ob-bad" role="alert">@row.Message</p> }
+                    </div>
+                }
+                @if (_rows.Count < 5) { <button type="button" class="den-link" @onclick="AddRow" data-testid="add-person">+ Add another person</button> }
+
+                <div class="ob-actions">
+                    <button type="button" class="@(Pending > 0 ? "den-button den-secondary" : "den-button")" disabled="@Busy" @onclick="OpenWorkspace" data-testid="open-workspace">@(Sent > 0 ? "Open workspace" : "Skip and open workspace")</button>
+                    @if (Pending > 0) { <button type="submit" class="den-button" disabled="@Busy" data-testid="send-invitations">Send invitations</button> }
+                </div>
+            </form>
+        }
+    }
+</section>
+
+@code {
+    private sealed class Row { public string Email { get; set; } = ""; public string Status { get; set; } = "draft"; public string? Message { get; set; } }
+
+    private readonly List<Row> _rows = [new(), new()];
+    private bool CanInvite => Permissions.Contains("invitations.manage");
+    private int Pending => _rows.Count(r => r.Status != "sent" && r.Email.Trim().Length > 0);
+    private int Sent => _rows.Count(r => r.Status == "sent");
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await RequireSignInAsync("/dashboard/onboarding/people") || !await LoadWorkspaceAsync()) return;
+        Ready = true;
+        StateHasChanged();
+    }
+
+    private void Edit(Row row, string value) { row.Email = value; row.Status = "draft"; row.Message = null; }
+
+    private void AddRow() => _rows.Add(new());
+
+    private void OpenWorkspace() => Nav.NavigateTo("/dashboard");
+
+    private async Task SendAsync()
+    {
+        Error = null;
+        var emails = _rows.Select(r => r.Email.Trim().ToLowerInvariant()).ToList();
+        var bad = false;
+        for (var i = 0; i < _rows.Count; i++)
+        {
+            var row = _rows[i];
+            var email = emails[i];
+            if (email.Length == 0 || row.Status == "sent") { row.Message = null; continue; }
+            row.Message = !IsEmail(email) ? "Enter a valid email address."
+                : email == MyEmail.Trim().ToLowerInvariant() ? "You're already in this workspace."
+                : emails.Where((other, j) => j != i && other == email).Any() ? "Use a different email address for each person."
+                : null;
+            bad |= row.Message is not null;
+        }
+        if (bad) return;
+
+        Busy = true;
+        foreach (var (row, email) in _rows.Zip(emails))
+        {
+            if (email.Length == 0 || row.Status == "sent") continue;
+            row.Status = "sending";
+            StateHasChanged();
+            var result = await Den.RequestAsync("/api/browser/v1/invitations", "POST", new { email, role = "member" });
+            if (result.String("error") == "reauth")
+            {
+                // A sign-in older than the privileged window: ask for the password, then send what is left.
+                row.Status = "draft";
+                Busy = false;
+                AskToConfirm(SendAsync);
+                return;
+            }
+            if (result.Ok) { row.Status = "sent"; row.Message = null; }
+            else { row.Status = "draft"; row.Message = result.Message("Could not send this invitation. Try again."); }
+        }
+        Busy = false;
+    }
+}

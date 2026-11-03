@@ -1,0 +1,95 @@
+@page "/workspace-claim"
+@inherits OnboardingPage
+@using System.Text.Json
+
+<PageTitle>Claim a workspace · OpenWork Cloud</PageTitle>
+<OnboardingStyles />
+
+<section class="den-card ob-page" data-testid="workspace-claim-link">
+    @if (!Ready)
+    {
+        <p class="den-muted" role="status">Loading…</p>
+    }
+    else if (_token.Length == 0)
+    {
+        <h1>This claim link can't be opened.</h1>
+        <p class="den-muted" data-testid="claim-missing">The link is missing its claim token. Re-open the link from your setup, or ask for a new one.</p>
+        <a class="den-button den-secondary" href="/">Back to OpenWork Cloud</a>
+    }
+    else if (_org is not null)
+    {
+        <h1>@_org.Name is yours.</h1>
+        <p class="den-muted" data-testid="claimed">You joined as @_org.Role. Everything your agent added is in the workspace.</p>
+        @if (_inviteSummary is not null) { <p class="ob-ok" role="status" data-testid="invite-summary">@_inviteSummary</p> }
+        <a class="den-button" href="/dashboard" data-testid="open-workspace">Open workspace</a>
+        <a class="den-button den-secondary" href="/install" data-testid="get-app">Get the desktop app</a>
+    }
+    else
+    {
+        <h1>Claim this workspace</h1>
+        <p class="den-muted">Your agent set up a workspace for you. Claiming it makes you a member of it, and ends the agent's temporary access.</p>
+        <dl class="ob-facts"><div><dt>Signed in as</dt><dd>@MyEmail</dd></div></dl>
+        @if (_invite.Count > 0) { <p class="den-muted" data-testid="invite-list">After you claim it, we will invite: @string.Join(", ", _invite).</p> }
+        @if (_error is not null) { <p class="den-error" role="alert" data-testid="error">@_error</p> }
+        <button type="button" class="den-button" disabled="@_busy" @onclick="ClaimAsync" data-testid="claim-workspace">@(_busy ? "Claiming…" : "Claim workspace")</button>
+        <button type="button" class="den-link" @onclick="SignOutAsync">Use a different account</button>
+    }
+</section>
+
+@code {
+    private sealed record Claimed(string Name, string Role);
+
+    private string _token = "", _email = "";
+    private List<string> _invite = [];
+    private string? _error, _inviteSummary;
+    private bool _busy;
+    private Claimed? _org;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var query = System.Web.HttpUtility.ParseQueryString(new Uri(Nav.Uri).Query);
+        _token = (query["token"] ?? "").Trim();
+        _email = (query["email"] ?? "").Trim();
+        // The invite list only prefills: the token alone authorizes the claim.
+        _invite = (query["invite"] ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(IsEmail).Distinct().Take(10).ToList();
+        if (_token.Length == 0) { Ready = true; StateHasChanged(); return; }
+        if (!await RequireSignInAsync("/workspace-claim" + new Uri(Nav.Uri).Query)) return;
+        Ready = true;
+        StateHasChanged();
+    }
+
+    private async Task ClaimAsync()
+    {
+        _error = null;
+        _busy = true;
+        var result = await Den.RequestAsync("/api/browser/v1/bootstrap/claims/accept", "POST", new { token = _token });
+        if (!result.Ok)
+        {
+            _busy = false;
+            _error = result.Message(result.Status == 404 ? "This claim link is missing, expired, or already used." : "Could not claim the workspace.");
+            return;
+        }
+        _org = new Claimed(result.String("organization", "name") ?? "Your workspace", result.String("organization", "role") ?? "member");
+        // The agent may have saved teammates to invite; so may the link. Inviting is best effort, and never undoes the claim.
+        var emails = new List<string>(_invite);
+        if (result.Json is { ValueKind: JsonValueKind.Object } root && root.TryGetProperty("teammateEmails", out var saved))
+            emails.AddRange(saved.EnumerateArray().Select(e => e.GetString() ?? "").Where(IsEmail));
+        emails = emails.Select(e => e.Trim().ToLowerInvariant()).Distinct().Take(10).ToList();
+        if (_org.Role == "owner" && emails.Count > 0)
+        {
+            var sent = 0;
+            foreach (var email in emails)
+                if ((await Den.RequestAsync("/api/browser/v1/invitations", "POST", new { email, role = "member" })).Ok) sent++;
+            _inviteSummary = sent == emails.Count ? $"Invited {sent} teammate{(sent == 1 ? "" : "s")}."
+                : $"Invited {sent} of {emails.Count} teammates. You can invite the rest from Manage members.";
+        }
+        _busy = false;
+    }
+
+    private async Task SignOutAsync()
+    {
+        await Den.RequestAsync("/api/auth/sign-out", "POST", new { });
+        Nav.NavigateTo("/?returnTo=" + Uri.EscapeDataString("/workspace-claim?token=" + Uri.EscapeDataString(_token)), forceLoad: true);
+    }
+}

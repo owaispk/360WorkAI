@@ -54,6 +54,17 @@ public static class WebHostSecurity
     }
 
     /// <summary>
+    /// The CSP with <c>frame-ancestors 'none'</c> and nothing else changed. Pages the API serves through the proxy (the logout page) carry a strict CSP
+    /// of their own whose other directives must survive; Blazor's own <c>frame-ancestors 'self'</c> is replaced.
+    /// </summary>
+    public static string WithFrameLock(string? existing)
+    {
+        var kept = (existing ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(d => !d.StartsWith("frame-ancestors", StringComparison.OrdinalIgnoreCase));
+        return string.Join("; ", kept.Append("frame-ancestors 'none'"));
+    }
+
+    /// <summary>
     /// No page of ours may be framed: the consent and device pages approve access, and a hidden frame could trick someone into clicking Allow.
     /// <c>frame-ancestors</c> is the modern control and <c>X-Frame-Options</c> covers old browsers. HSTS is sent only over HTTPS outside
     /// Development (it is ignored over plain HTTP, and a development machine should not pin itself to HTTPS).
@@ -69,7 +80,7 @@ public static class WebHostSecurity
                 // Assigned, not added if missing: the framework's antiforgery middleware sets its own, weaker `frame-ancestors 'self'` on Blazor pages
                 // (found by running the host), and nothing of ours is ever meant to be framed, even by ourselves.
                 headers["X-Frame-Options"] = "DENY";
-                headers["Content-Security-Policy"] = "frame-ancestors 'none'";
+                headers["Content-Security-Policy"] = WithFrameLock(headers.ContentSecurityPolicy.ToString());
                 headers.TryAdd("X-Content-Type-Options", "nosniff");
                 headers.TryAdd("Referrer-Policy", "strict-origin-when-cross-origin");
                 if (!development && context.Request.IsHttps) headers.TryAdd("Strict-Transport-Security", "max-age=31536000");

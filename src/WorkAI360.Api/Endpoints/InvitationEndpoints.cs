@@ -6,6 +6,7 @@ using WorkAI360.Api.Data;
 using WorkAI360.Api.Domain;
 using WorkAI360.Api.Email;
 using WorkAI360.Api.Features.OrgAdmin;
+using WorkAI360.Api.Features.Scim;
 using WorkAI360.Api.OAuth;
 
 namespace WorkAI360.Api.Endpoints;
@@ -14,6 +15,8 @@ namespace WorkAI360.Api.Endpoints;
 public static class InvitationEndpoints
 {
     public static readonly TimeSpan Lifetime = TimeSpan.FromDays(7);
+
+    private static IResult InvalidTeam() => Results.Json(new { error = "invalid_request", message = "Choose a team in this organization that is not managed by your identity provider." }, statusCode: 400);
 
     public static string LinkFor(OAuthUrls urls, Invitation invitation) => $"{urls.Web}/join-org?invite={invitation.InviteToken}";
 
@@ -25,7 +28,8 @@ public static class InvitationEndpoints
             if (failure is not null) return failure;
             if (access.Require(context!, "invitations.manage") is { } denied) return denied;
 
-            string? email = null, roleValue = null;
+            string? email = null, roleValue = null, teamValue = null;
+            var teamPresent = false;
             try
             {
                 using var doc = await JsonDocument.ParseAsync(ctx.Request.Body);
@@ -33,12 +37,15 @@ public static class InvitationEndpoints
                 {
                     if (doc.RootElement.TryGetProperty("email", out var e) && e.ValueKind == JsonValueKind.String) email = e.GetString();
                     if (doc.RootElement.TryGetProperty("role", out var r) && r.ValueKind == JsonValueKind.String) roleValue = r.GetString();
+                    if (doc.RootElement.TryGetProperty("teamId", out var t) && t.ValueKind is JsonValueKind.String or JsonValueKind.Null) { teamPresent = true; teamValue = t.ValueKind == JsonValueKind.String ? t.GetString() : null; }
+                    else if (doc.RootElement.TryGetProperty("teamId", out var bad)) return MemberEndpoints.InvalidRequest("teamId", $"Invalid input: expected string, received {Features.Library.Zod.Kind(bad)}");
                 }
             }
             catch (JsonException) { }
             if (email is null) return MemberEndpoints.InvalidRequest("email", "Invalid input: expected string, received undefined");
             if (!AuthEndpoints.IsValidEmail(email)) return MemberEndpoints.InvalidRequest("email", "Invalid email address", "invalid_format");
             if (roleValue is null) return MemberEndpoints.InvalidRequest("role", "Invalid input: expected string, received undefined");
+            if (teamValue is not null && MemberEndpoints.ValidateTypeId(teamValue, "tem", "teamId") is { } malformed) return malformed;
 
             var (role, ownerRequested, invalid) = Roles.ForInvitation(roleValue);
             if (ownerRequested) return Results.Json(new { error = "forbidden", message = "Owner can only be assigned by the Den ownership transfer API." }, statusCode: 403);
@@ -58,6 +65,25 @@ public static class InvitationEndpoints
             var now = DateTime.UtcNow;
             var invitation = await db.Invitations.FirstOrDefaultAsync(i => i.OrganizationId == org.Id && i.Email == normalized && i.Status == InvitationStatus.Pending && i.ExpiresAt > now);
             var refreshed = invitation is not null;
+
+            // The team the person joins: omitted keeps a pending invitation's team, null clears it. Choosing one needs "Manage teams" and every
+            // permission the team grants; a team that is not this workspace's (or is run by the identity provider) reads as not allowed.
+            if (invitation?.TeamId is { } currentTeam && await db.Teams.AsNoTracking().AnyAsync(t => t.Id == currentTeam && t.GrantsOrganizationAdmin)
+                && access.Require(context!, "teams.manage_admin") is { } adminTeamDenied) return adminTeamDenied;
+            var teamId = teamPresent ? teamValue : invitation?.TeamId;
+            if (teamPresent && invitation?.TeamId is { } oldTeam && oldTeam != teamId && await ScimTeams.IsManagedAsync(db, org.Id, oldTeam)) return InvalidTeam();
+            if (teamId is not null || (invitation?.TeamId is not null && teamPresent))
+            {
+                if (access.Require(context!, "teams.manage") is { } teamsDenied) return teamsDenied;
+                if (teamId is not null)
+                {
+                    var team = await db.Teams.AsNoTracking().FirstOrDefaultAsync(t => t.Id == teamId && t.OrganizationId == org.Id);
+                    if (team is null || await ScimTeams.IsManagedAsync(db, org.Id, team.Id)) return InvalidTeam();
+                    if (team.GrantsOrganizationAdmin && access.Require(context!, "teams.manage_admin") is { } manageAdmin) return manageAdmin;
+                    if (await rules.GrantDenialAsync(context!, team.Id, team.GrantsOrganizationAdmin, false, TeamRules.TeamGrantsForbidden) is { } teamGrantDenied) return teamGrantDenied;
+                }
+            }
+            var previousTeam = invitation?.TeamId;
             if (invitation is null)
             {
                 invitation = new Invitation
@@ -70,6 +96,7 @@ public static class InvitationEndpoints
                     InviteToken = Ids.RandomAlnum(21),
                     InvitedByUserId = context.Auth.User.Id,
                     PlaceholderMemberId = Ids.New("om"),
+                    TeamId = teamId,
                     CreatedAt = now,
                     ExpiresAt = now + Lifetime,
                 };
@@ -80,7 +107,13 @@ public static class InvitationEndpoints
                 // Inviting again resends: same link, a fresh week, and the latest role.
                 invitation.Role = role!;
                 invitation.ExpiresAt = now + Lifetime;
+                invitation.TeamId = teamId;
             }
+            // The pending person shows in the team at once (as the reference does); accepting keeps the same member.
+            if (previousTeam is not null && previousTeam != teamId)
+                await db.TeamMembers.Where(tm => tm.TeamId == previousTeam && tm.MemberId == invitation.PlaceholderMemberId).ExecuteDeleteAsync();
+            if (teamId is not null && !await db.TeamMembers.AnyAsync(tm => tm.TeamId == teamId && tm.MemberId == invitation.PlaceholderMemberId))
+                db.TeamMembers.Add(new TeamMember { Id = Ids.New("tmm"), TeamId = teamId, MemberId = invitation.PlaceholderMemberId, CreatedAt = now });
             await db.SaveChangesAsync();
             await audit.RecordAsync(context, new AuditEntry(refreshed ? AuditActions.InvitationRefreshed : AuditActions.InvitationCreated,
                 [new("invitation", invitation.Id, "target", invitation.Email), new("organization", org.Id, "parent")],
@@ -131,6 +164,7 @@ public static class InvitationEndpoints
             if (invitation.Status != InvitationStatus.Pending)
                 return Results.Json(new { error = "invitation_not_pending", message = "Only pending invitations can be canceled.", status = invitation.Status }, statusCode: 409);
             invitation.Status = InvitationStatus.Canceled;
+            await db.TeamMembers.Where(tm => tm.MemberId == invitation.PlaceholderMemberId).ExecuteDeleteAsync();
             await db.SaveChangesAsync();
             await audit.RecordAsync(context!, new AuditEntry(AuditActions.InvitationCanceled, [new("invitation", invitation.Id, "target", invitation.Email), new("organization", context!.Organization.Id, "parent")],
                 Before: new() { ["status"] = InvitationStatus.Pending }, After: new() { ["status"] = InvitationStatus.Canceled }));
@@ -197,7 +231,7 @@ public static class InvitationEndpoints
                 else
                 {
                     if (!alreadyMember)
-                        db.Members.Add(new Member { Id = joinedMemberId = Ids.New("om"), OrganizationId = org.Id, UserId = current.User.Id, Role = invitation.Role, CreatedAt = now, JoinedAt = now, InviteId = invitation.Id });
+                        db.Members.Add(new Member { Id = joinedMemberId = invitation.PlaceholderMemberId, OrganizationId = org.Id, UserId = current.User.Id, Role = invitation.Role, CreatedAt = now, JoinedAt = now, InviteId = invitation.Id });
                     await db.SaveChangesAsync();
                     await tx.CommitAsync();
                 }

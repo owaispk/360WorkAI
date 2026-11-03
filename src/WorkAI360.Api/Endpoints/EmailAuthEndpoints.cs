@@ -18,7 +18,7 @@ public static class EmailAuthEndpoints
 {
     public const string ResetMessage = "If this email exists in our system, check your email for the reset link";
     private static readonly TimeSpan ResetLifetime = TimeSpan.FromHours(1);
-    private static readonly string[] OtpTypes = ["email-verification", "sign-in", "forget-password", "change-email"];
+    internal static readonly string[] OtpTypes = ["email-verification", "sign-in", "forget-password", "change-email"];
 
     public static void MapEmailAuthEndpoints(this WebApplication app)
     {
@@ -34,15 +34,17 @@ public static class EmailAuthEndpoints
             var type = body!.Value.GetProperty("type").GetString()!;
             if (!OtpTypes.Contains(type))
                 return Responses.AuthError(400, $"[body.type] Invalid option: expected one of \"{string.Join("\"|\"", OtpTypes)}\"", "VALIDATION_ERROR");
-            if (type != EmailVerificationService.TypeEmailVerification)
-                return Responses.AuthError(400, "Only email-verification codes are supported.", "UNSUPPORTED_OTP_TYPE");
+            // The reference turns change-email codes off (nothing in the web app asks for them).
+            if (type == "change-email") return Results.Json(new { message = "Invalid OTP type" }, statusCode: 400);
 
             var email = AuthEndpoints.NormalizeEmail(body.Value.GetProperty("email").GetString()!);
             if (limiter.Hit(RateLimiter.SendOtp, email, AuthEndpoints.ClientIp(ctx)) is { } wait) return AuthEndpoints.TooManyRequests(ctx, wait);
 
             // Same answer whether or not the account exists, so this cannot be used to find out who has one.
             var user = await db.Users.FirstOrDefaultAsync(u => u.Email == email);
-            if (user is not null) await verification.SendCodeAsync(user, force: true);
+            if (type == "sign-in") await verification.IssueAsync(email, type);   // signing in by code also opens an account for a new address, as in the reference
+            else if (user is not null && type == "forget-password") await verification.IssueAsync(email, type);
+            else if (user is not null) await verification.SendCodeAsync(user, force: true);
             return Results.Json(new { success = true });
         });
 
@@ -112,7 +114,7 @@ public static class EmailAuthEndpoints
                 : QueryHelpers.AddQueryString(target, "error", "INVALID_TOKEN"));
         });
 
-        auth.MapPost("/reset-password", async (HttpContext ctx, DenDbContext db, LoginThrottle throttle) =>
+        auth.MapPost("/reset-password", async (HttpContext ctx, DenDbContext db, LoginThrottle throttle, PasswordScreening screening) =>
         {
             var body = await ReadBodyAsync(ctx);
             if (body is not { ValueKind: JsonValueKind.Object } root) return Responses.AuthError(400, "Invalid token", "INVALID_TOKEN");
@@ -122,6 +124,7 @@ public static class EmailAuthEndpoints
 
             // The password rules come first, exactly as in the reference, so a weak password is reported whatever the token.
             if (Passwords.Validate(newPassword) is { } violation) return Results.Json(new { error = violation.Error, message = violation.Message }, statusCode: 400);
+            if (await screening.CheckAsync(newPassword, [], strength: false) is { } rejected) return rejected;
             if (string.IsNullOrEmpty(token)) return Responses.AuthError(400, "Invalid token", "INVALID_TOKEN");
 
             var hash = Ids.Sha256Hex(token);
@@ -146,14 +149,14 @@ public static class EmailAuthEndpoints
         });
     }
 
-    private static async Task<JsonElement?> ReadBodyAsync(HttpContext ctx)
+    internal static async Task<JsonElement?> ReadBodyAsync(HttpContext ctx)
     {
         try { return (await JsonDocument.ParseAsync(ctx.Request.Body)).RootElement.Clone(); }
         catch (JsonException) { return null; }
     }
 
     /// <summary>Checks required body fields and answers the way the reference's schema validation does.</summary>
-    private static IResult? Validate(JsonElement? body, params (string Name, string Kind)[] fields)
+    internal static IResult? Validate(JsonElement? body, params (string Name, string Kind)[] fields)
     {
         if (body is not { ValueKind: JsonValueKind.Object } root)
             return Responses.AuthError(400, "Invalid request body", "VALIDATION_ERROR");

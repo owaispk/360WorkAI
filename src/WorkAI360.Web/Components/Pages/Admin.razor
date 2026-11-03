@@ -1,0 +1,135 @@
+@page "/admin"
+@inherits AdminPage
+@using System.Text.Json
+
+<PageTitle>Platform admin · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="admin-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (Denied)
+    {
+        <h1>Platform administration</h1>
+        <p class="den-muted" data-testid="no-access">This area is for the people who run this deployment. Your account is not one of them.</p>
+        <a class="den-link" href="/dashboard">Back to dashboard</a>
+    }
+    else
+    {
+        <h1>Platform administration</h1>
+        <p class="den-muted">Signed in as @_viewer. You are an administrator of this whole deployment, not of one workspace.</p>
+        <AdminNav Current="overview" />
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+
+        <h2>At a glance</h2>
+        <div class="admin-tiles" data-testid="metrics">
+            @foreach (var (label, value, id) in _tiles)
+            {
+                <div class="admin-tile" data-testid="@id"><span class="admin-tile-value">@value</span><span class="den-muted">@label</span></div>
+            }
+        </div>
+        @if (_series.Count > 0)
+        {
+            <p class="den-muted">Sign-ins per day, last 30 days</p>
+            <div class="admin-series" data-testid="series" aria-label="Sign-ins per day">
+                @foreach (var (day, count) in _series)
+                {
+                    <span class="admin-bar" title="@day: @count" style="height:@(4 + count * 6)px"></span>
+                }
+            </div>
+        }
+
+        <h2>Platform admins</h2>
+        <ul class="den-members" data-testid="admin-list">
+            @foreach (var admin in _admins)
+            {
+                <li data-testid="admin-row" data-email="@admin.Email">
+                    <div class="den-member-main">
+                        <strong>@admin.Email @if (admin.Email == _viewer) { <span class="den-badge den-badge-owner">You</span> }</strong>
+                        <span class="den-muted">@(string.IsNullOrEmpty(admin.Note) ? "No note" : admin.Note) · added @Short(admin.CreatedAt)</span>
+                    </div>
+                    <div class="den-member-actions">
+                        @if (admin.Email != _viewer)
+                        {
+                            @if (_confirm == admin.Id)
+                            {
+                                <button type="button" class="den-link den-danger" @onclick="() => RemoveAsync(admin)" data-testid="confirm-remove-admin">Confirm remove</button>
+                                <button type="button" class="den-link" @onclick="() => _confirm = null">Cancel</button>
+                            }
+                            else { <button type="button" class="den-link" @onclick="() => _confirm = admin.Id" data-testid="remove-admin">Remove</button> }
+                        }
+                    </div>
+                </li>
+            }
+        </ul>
+        <form @onsubmit="AddAsync" novalidate data-testid="admin-form">
+            <label for="admin-email">Add an administrator</label>
+            <input id="admin-email" type="email" autocomplete="off" placeholder="name@company.com" @bind="_email" @bind:event="oninput" />
+            <label for="admin-note">Note (optional)</label>
+            <input id="admin-note" autocomplete="off" @bind="_note" @bind:event="oninput" />
+            <button type="submit" class="den-button" disabled="@Busy" data-testid="add-admin">Add administrator</button>
+        </form>
+        <p class="den-muted">Anyone who signs in with a listed address can use these pages. Being the owner of a workspace is not enough.</p>
+        <a class="den-link" href="/dashboard">Back to dashboard</a>
+    }
+</section>
+
+@code {
+    private sealed record AdminRow(string Id, string Email, string? Note, string CreatedAt);
+
+    private string _viewer = "";
+    private List<AdminRow> _admins = [];
+    private List<(string Label, string Value, string Id)> _tiles = [];
+    private List<(string Day, int Count)> _series = [];
+    private string _email = "", _note = "";
+    private string? _confirm;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await EnterAsync()) return;
+        await LoadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        var overview = await Den.RequestAsync("/api/browser/v1/admin/overview?limit=1");
+        if (overview.Json is { ValueKind: JsonValueKind.Object } root)
+        {
+            _viewer = overview.String("viewer", "email") ?? "";
+            _admins = root.GetProperty("admins").EnumerateArray().Select(a => new AdminRow(Text(a, "id"), Text(a, "email"), a.GetProperty("note").ValueKind == JsonValueKind.String ? a.GetProperty("note").GetString() : null, Text(a, "createdAt"))).ToList();
+        }
+        var metrics = await Den.RequestAsync("/api/browser/v1/admin/metrics");
+        if (metrics.Json is { ValueKind: JsonValueKind.Object } m && m.TryGetProperty("summary", out var s))
+        {
+            _tiles =
+            [
+                ("Users", Number(s, "totalUsers").ToString(), "tile-users"), ("Workspaces", Number(s, "totalOrganizations").ToString(), "tile-organizations"),
+                ("Verified emails", Number(s, "verifiedUsers").ToString(), "tile-verified"), ("New in 7 days", Number(s, "recentUsers7d").ToString(), "tile-new7"),
+                ("New in 30 days", Number(s, "recentUsers30d").ToString(), "tile-new30"), ("Active today", Number(s, "activeUsers1d").ToString(), "tile-active1"),
+                ("Active in 7 days", Number(s, "activeUsers7d").ToString(), "tile-active7"), ("Platform admins", Number(s, "adminCount").ToString(), "tile-admins"),
+            ];
+            _series = s.GetProperty("activitySeries").EnumerateArray().Select(p => (Text(p, "day"), Number(p, "activeUsers"))).ToList();
+        }
+    }
+
+    private async Task AddAsync()
+    {
+        var email = _email.Trim();
+        if (email.Length == 0) { Error = "Enter an email address."; Notice = null; return; }
+        await RunAsync(() => Den.RequestAsync("/api/browser/v1/admin/admins", "POST", new { email, note = string.IsNullOrWhiteSpace(_note) ? null : _note.Trim() }), $"{email.ToLowerInvariant()} is now a platform admin.");
+        if (Error is null) { _email = ""; _note = ""; }
+    }
+
+    private async Task RemoveAsync(AdminRow admin)
+    {
+        _confirm = null;
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/admin/admins/{admin.Id}", "DELETE"), $"{admin.Email} is no longer a platform admin.");
+    }
+}

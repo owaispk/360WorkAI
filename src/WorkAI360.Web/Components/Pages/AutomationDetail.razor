@@ -1,0 +1,163 @@
+@page "/dashboard/automations/{Id}"
+@inherits ActionPage
+@using System.Text.Json
+
+<PageTitle>Automation · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="automation-page">
+    @if (_loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (_missing)
+    {
+        <h1>Automation not found</h1>
+        <p class="den-muted">It may have been removed, or it belongs to someone else.</p>
+        <a class="den-link" href="/dashboard/automations">Back to Automations</a>
+    }
+    else
+    {
+        <h1 data-testid="automation-title">@_name</h1>
+        <p class="den-muted"><span data-testid="automation-state">@AutomationFormat.State(_state)</span> · <span data-testid="automation-schedule">@_schedule</span> · next run <span data-testid="automation-next">@AutomationFormat.When(_nextDueAt)</span> · version <span data-testid="automation-version">@_version</span></p>
+
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @if (_attention is not null) { <p class="den-error" data-testid="attention">Paused: @_attention</p> }
+
+        @if (_state != "archived")
+        {
+            <div class="den-panel">
+                <button type="button" class="den-button" disabled="@Busy" @onclick="RunNowAsync" data-testid="run-now">Run now</button>
+                @if (_state == "active")
+                {
+                    <button type="button" class="den-button den-secondary" disabled="@Busy" @onclick='() => StateAsync("deactivate", "Paused. It will not run until you turn it back on.")' data-testid="pause">Pause</button>
+                }
+                else
+                {
+                    <button type="button" class="den-button den-secondary" disabled="@Busy" @onclick='() => StateAsync("activate", "It is on again.")' data-testid="resume">Turn on</button>
+                }
+                <button type="button" class="den-link den-danger" @onclick="ArchiveAsync" data-testid="archive">@(_confirmArchive ? "Confirm: archive it" : "Archive")</button>
+            </div>
+
+            <h2>Change it</h2>
+            <div class="den-panel" data-testid="edit-form">
+                <label for="edit-name">Name</label>
+                <input id="edit-name" @bind="_editName" maxlength="120" data-testid="edit-name" />
+                <label for="edit-instructions">Instructions</label>
+                <textarea id="edit-instructions" @bind="_editInstructions" rows="4" data-testid="edit-instructions"></textarea>
+                <button type="button" class="den-button" disabled="@Busy" @onclick="SaveAsync" data-testid="edit-save">Save</button>
+                <p class="den-muted">Changing the instructions makes a new version that applies to the next run. Earlier runs keep the version they ran.</p>
+            </div>
+        }
+
+        <h2>Runs</h2>
+        @if (_runs.Count == 0)
+        {
+            <p class="den-muted" data-testid="runs-empty">Nothing has run yet.</p>
+        }
+        else
+        {
+            <ul class="den-members" data-testid="runs-list">
+                @foreach (var run in _runs)
+                {
+                    <li data-testid="run-row" data-status="@run.Status" data-id="@run.Id">
+                        <span>
+                            <strong data-testid="run-status">@AutomationFormat.Status(run.Status)</strong>
+                            <span class="den-muted"> · @run.Trigger · @AutomationFormat.When(run.ScheduledFor ?? run.CreatedAt)</span>
+                            @if (run.Summary is not null) { <br /><span data-testid="run-summary">@run.Summary</span> }
+                            @if (_open == run.Id)
+                            {
+                                <ol data-testid="run-events">
+                                    @foreach (var e in _events) { <li><code>@e</code></li> }
+                                    @if (_events.Count == 0) { <li class="den-muted">No steps were reported.</li> }
+                                </ol>
+                            }
+                        </span>
+                        <span>
+                            <button type="button" class="den-link" @onclick="() => OpenAsync(run.Id)" data-testid="run-details">@(_open == run.Id ? "Hide steps" : "Show steps")</button>
+                            @if (run.Status is "queued" or "running" or "claimed")
+                            {
+                                <button type="button" class="den-link den-danger" disabled="@Busy" @onclick="() => CancelAsync(run.Id)" data-testid="run-cancel">Cancel</button>
+                            }
+                        </span>
+                    </li>
+                }
+            </ul>
+        }
+        <a class="den-link" href="/dashboard/automations">Back to Automations</a>
+    }
+</section>
+
+@code {
+    [Parameter] public string Id { get; set; } = "";
+
+    private sealed record RunRow(string Id, string Status, string Trigger, long? ScheduledFor, long CreatedAt, string? Summary);
+
+    private bool _loading = true, _missing, _confirmArchive;
+    private string _name = "", _state = "", _schedule = "", _editName = "", _editInstructions = "", _open = "";
+    private string? _attention;
+    private long? _nextDueAt;
+    private int _version;
+    private List<RunRow> _runs = [];
+    private List<string> _events = [];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var me = await Den.RequestAsync("/api/browser/v1/me");
+        if (!me.Ok) { Nav.NavigateTo("/"); return; }
+        MyEmail = me.String("user", "email") ?? "";
+        await LoadAsync();
+        _loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        var detail = await Den.RequestAsync($"/api/browser/v1/automations/{Id}");
+        if (!detail.Ok || detail.Json is not { ValueKind: JsonValueKind.Object } body) { _missing = true; return; }
+        var a = body.GetProperty("automation");
+        var r = body.GetProperty("revision");
+        _name = a.GetProperty("name").GetString()!;
+        _state = a.GetProperty("state").GetString()!;
+        _nextDueAt = a.GetProperty("nextDueAt").ValueKind == JsonValueKind.Number ? a.GetProperty("nextDueAt").GetInt64() : null;
+        _attention = a.GetProperty("needsAttentionReason").ValueKind == JsonValueKind.Object ? a.GetProperty("needsAttentionReason").GetProperty("message").GetString() : null;
+        _schedule = AutomationFormat.Schedule(r.GetProperty("schedule"));
+        _version = r.GetProperty("version").GetInt32();
+        _editName = _name;
+        _editInstructions = r.GetProperty("instructions").GetString()!;
+        var runs = await Den.RequestAsync($"/api/browser/v1/automations/{Id}/runs?limit=50");
+        _runs = runs.Json is { ValueKind: JsonValueKind.Object } list
+            ? list.GetProperty("items").EnumerateArray().Select(x => new RunRow(x.GetProperty("id").GetString()!, x.GetProperty("status").GetString()!, x.GetProperty("trigger").GetString()!,
+                x.GetProperty("scheduledFor").ValueKind == JsonValueKind.Number ? x.GetProperty("scheduledFor").GetInt64() : null, x.GetProperty("createdAt").GetInt64(),
+                x.GetProperty("resultSummary").ValueKind == JsonValueKind.String ? x.GetProperty("resultSummary").GetString() : null)).ToList()
+            : [];
+    }
+
+    private async Task RunNowAsync() => await RunAsync(() => Den.RequestAsync($"/api/browser/v1/automations/{Id}/run", "POST", new { }), "Run queued. Your desktop will pick it up.", r => r.String("message") ?? r.String("error"));
+
+    private async Task StateAsync(string action, string success) => await RunAsync(() => Den.RequestAsync($"/api/browser/v1/automations/{Id}/{action}", "POST", new { }), success, r => r.String("message") ?? r.String("error"));
+
+    private async Task SaveAsync() => await RunAsync(() => Den.RequestAsync($"/api/browser/v1/automations/{Id}", "PATCH", new { name = _editName.Trim(), instructions = _editInstructions.Trim() }), "Saved.", r => r.String("message") ?? r.String("error"));
+
+    private async Task ArchiveAsync()
+    {
+        if (!_confirmArchive) { _confirmArchive = true; return; }
+        _confirmArchive = false;
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/automations/{Id}", "DELETE"), "Archived. Its history stays here.");
+    }
+
+    private async Task CancelAsync(string runId) => await RunAsync(() => Den.RequestAsync($"/api/browser/v1/automation-runs/{runId}/cancel", "POST", new { }), "Cancel requested.", r => r.String("message") ?? r.String("error"));
+
+    private async Task OpenAsync(string runId)
+    {
+        if (_open == runId) { _open = ""; return; }
+        var receipt = await Den.RequestAsync($"/api/browser/v1/automation-runs/{runId}");
+        _events = receipt.Json is { ValueKind: JsonValueKind.Object } body
+            ? body.GetProperty("events").EnumerateArray().Select(e => $"{e.GetProperty("type").GetString()}: {e.GetProperty("payload").GetRawText()}").ToList()
+            : [];
+        _open = runId;
+    }
+}

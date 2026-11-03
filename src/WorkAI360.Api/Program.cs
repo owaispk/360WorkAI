@@ -25,6 +25,8 @@ builder.Services.AddSingleton<LoginThrottle>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection(EmailOptions.Section));
 builder.Services.AddSingleton<RateLimiter>();
+builder.Services.AddHttpClient<IPwnedPasswords, PwnedPasswords>(c => c.Timeout = TimeSpan.FromSeconds(5));
+builder.Services.AddScoped<PasswordScreening>();
 builder.Services.AddSingleton<TokenRateLimit>();
 builder.Services.AddScoped<EmailVerificationService>();
 builder.Services.AddScoped<PermissionService>();
@@ -99,11 +101,7 @@ app.Use((context, next) =>
 {
     context.Response.OnStarting(() =>
     {
-        var headers = context.Response.Headers;
-        headers["X-Frame-Options"] = "DENY";
-        headers["Content-Security-Policy"] = "frame-ancestors 'none'";
-        headers.TryAdd("X-Content-Type-Options", "nosniff");
-        if (!app.Environment.IsDevelopment() && context.Request.IsHttps) headers.TryAdd("Strict-Transport-Security", "max-age=31536000");
+        SecurityHeaders.Apply(context.Response.Headers, context.Request.IsHttps, app.Environment.IsDevelopment());
         return Task.CompletedTask;
     });
     return next(context);

@@ -1,0 +1,87 @@
+@page "/reauth/desktop"
+@inherits OnboardingPage
+@using System.Text.RegularExpressions
+
+<PageTitle>Confirm your identity · OpenWork Cloud</PageTitle>
+<OnboardingStyles />
+
+<section class="den-card ob-page" data-testid="reauth-desktop">
+    @if (!Ready)
+    {
+        <p class="den-muted" role="status">Loading security check…</p>
+    }
+    else if (!_valid)
+    {
+        <h1>Confirm your identity to share apps</h1>
+        <p class="den-muted" data-testid="reauth-invalid">Open verification from the Share dialog in OpenWork to start a new security check.</p>
+    }
+    else if (_link.Length > 0)
+    {
+        <h1>Return to OpenWork to finish sharing</h1>
+        <p class="den-muted">Return to the app to finish your pending share. If it doesn't open, copy this link and paste it into the Share dialog.</p>
+        <a class="den-button" href="@_link" data-testid="return-to-app">Return to OpenWork</a>
+        <input readonly aria-label="Verification link" value="@_link" data-testid="reauth-link" />
+        <button type="button" class="den-button den-secondary" @onclick="CopyAsync">@(_copied ? "Copied" : "Copy verification link")</button>
+    }
+    else if (_cancelled)
+    {
+        <h1>Confirm your identity to share apps</h1>
+        <p class="den-muted">Verification cancelled. Return to the Share dialog in OpenWork.</p>
+        <button type="button" class="den-button" @onclick="() => _cancelled = false">Try verification again</button>
+    }
+    else
+    {
+        <h1>Confirm your identity to share apps</h1>
+        <p class="den-muted">After verification, return to OpenWork to finish sharing your selected apps. Confirming as @_email.</p>
+        <form @onsubmit="ConfirmAsync" data-testid="reauth">
+            <label for="reauth-password">Password</label>
+            <input id="reauth-password" type="password" autocomplete="current-password" @bind="_password" @bind:event="oninput" />
+            @if (_error is not null) { <p class="den-error" role="alert" data-testid="error">@_error</p> }
+            <button type="submit" class="den-button" disabled="@(Busy || _password.Length == 0)">Confirm</button>
+            <button type="button" class="den-link" @onclick="() => _cancelled = true">Cancel</button>
+        </form>
+    }
+</section>
+
+@code {
+    private string _nonce = "", _userId = "", _email = "", _password = "", _link = "";
+    private string? _error;
+    private bool _valid, _cancelled, _copied;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _nonce = System.Web.HttpUtility.ParseQueryString(new Uri(Nav.Uri).Query)["nonce"] ?? "";
+        // The account reference rides in the fragment, so it never reaches a server log. It is a hint: the signed-in identity is what counts.
+        var module = await Module();
+        _userId = System.Web.HttpUtility.ParseQueryString(await module.InvokeAsync<string>("readHash"))["userId"] ?? "";
+        _valid = Regex.IsMatch(_nonce, "^[a-f0-9-]{36}$", RegexOptions.IgnoreCase) && _userId.Length > 0;
+        if (_valid)
+        {
+            var me = await Den.RequestAsync("/api/auth/get-session");
+            if (me.Ok && me.String("user", "id") == _userId) _email = me.String("user", "email") ?? "";
+            // Not signed in as that person here: the verification is for the account the app named, so ask for the browser sign-in first.
+            if (_email.Length == 0) { Nav.NavigateTo("/?returnTo=" + Uri.EscapeDataString("/reauth/desktop?nonce=" + Uri.EscapeDataString(_nonce) + "#userId=" + Uri.EscapeDataString(_userId))); return; }
+        }
+        Ready = true;
+        StateHasChanged();
+    }
+
+    private async Task ConfirmAsync()
+    {
+        _error = null;
+        Busy = true;
+        var signIn = await Den.RequestAsync("/api/auth/sign-in/email", "POST", new { email = _email, password = _password });
+        _password = "";
+        if (!signIn.Ok) { Busy = false; _error = "That password is not right."; return; }
+        var session = await Den.RequestAsync("/api/auth/get-session");
+        if (session.String("user", "id") != _userId) { Busy = false; _error = $"Sign in as {_email} to confirm this share."; return; }
+        var handoff = await Den.RequestAsync("/api/auth/desktop-handoff", "POST", new { desktopScheme = "openwork" });
+        Busy = false;
+        var grant = handoff.String("grant");
+        if (!handoff.Ok || string.IsNullOrEmpty(grant)) { _error = handoff.Message("Could not return verification to OpenWork. Try again."); return; }
+        _link = $"openwork://den-reauth?nonce={Uri.EscapeDataString(_nonce)}&grant={Uri.EscapeDataString(grant)}";
+    }
+
+    private async Task CopyAsync() => _copied = await Den.CopyAsync(_link);
+}

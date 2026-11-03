@@ -30,6 +30,14 @@ public sealed class WebFactory(string caller, params string[] trustedProxies) : 
 
 public sealed class WebHostSecurityTests
 {
+    [Theory]
+    [InlineData(null, "frame-ancestors 'none'")]
+    [InlineData("frame-ancestors 'self'", "frame-ancestors 'none'")]
+    [InlineData("default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'", "default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")]
+    [InlineData("default-src 'none'; frame-ancestors 'self'; form-action 'self'", "default-src 'none'; form-action 'self'; frame-ancestors 'none'")]
+    public void A_strict_policy_from_the_api_keeps_its_other_directives(string? existing, string expected) =>
+        Assert.Equal(expected, WorkAI360.Web.Proxy.WebHostSecurity.WithFrameLock(existing));
+
     private static HttpRequestMessage Write(string origin, string? proto = null, string? host = null)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/api/browser/v1/org") { Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json") };

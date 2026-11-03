@@ -1,0 +1,108 @@
+@page "/claim"
+@inherits OnboardingPage
+
+<PageTitle>Claim your workspace · OpenWork Cloud</PageTitle>
+<OnboardingStyles />
+
+<section class="den-card ob-page" data-testid="workspace-claim">
+    @if (!Ready)
+    {
+        <p class="den-muted" role="status">Loading…</p>
+    }
+    else
+    {
+        <h1>Claim your workspace.</h1>
+        <p class="den-muted">@(_orgName is null ? "Your agent set up a workspace for you." : $"Your agent set up {_orgName} for you.")</p>
+
+        @if (_claimed)
+        {
+            <p class="ob-ok" role="status" data-testid="claimed"><strong>@_orgName is yours.</strong></p>
+            <a class="den-button" href="/dashboard" data-testid="open-workspace">Open workspace</a>
+        }
+        else if (_state == "invalid")
+        {
+            <h2>This code can't be used</h2>
+            <p class="den-muted" data-testid="code-invalid">This code is invalid or has expired. Ask your agent for a new one.</p>
+            <button type="button" class="den-button den-secondary" @onclick="Reset">Enter a different code</button>
+        }
+        else if (_state == "pending")
+        {
+            <h2>Claim @_orgName?</h2>
+            <dl class="ob-facts">
+                <div><dt>Code</dt><dd class="ob-code" data-testid="claim-user-code">@_code</dd></div>
+                <div><dt>Owner</dt><dd>@MyEmail</dd></div>
+                <div><dt>Keep as</dt><dd>A new organization</dd></div>
+            </dl>
+            <p class="den-muted" data-testid="claim-consent-line">You become the owner of @_orgName and everything your agent added to it. The agent's temporary access ends now.</p>
+            @if (_error is not null) { <p class="den-error" role="alert" data-testid="error">@_error</p> }
+            <button type="button" class="den-button" disabled="@_busy" @onclick="ClaimAsync" data-testid="claim-workspace">@(_busy ? "Claiming…" : "Claim workspace")</button>
+            <button type="button" class="den-link" disabled="@_busy" @onclick="SignOutAsync">Use a different account</button>
+        }
+        else
+        {
+            <form @onsubmit="LookUpAsync">
+                <label for="code">Enter the code from your agent</label>
+                <input id="code" class="ob-code" type="text" placeholder="ABCD-EFGH" autocomplete="off" @bind="_draft" @bind:event="oninput" />
+                <dl class="ob-facts"><div><dt>Account</dt><dd>@MyEmail</dd></div></dl>
+                @if (_error is not null) { <p class="den-error" role="alert" data-testid="error">@_error</p> }
+                <button type="submit" class="den-button" disabled="@(_busy || string.IsNullOrWhiteSpace(_draft))">Continue</button>
+            </form>
+        }
+    }
+</section>
+
+@code {
+    private string _draft = "", _code = "", _state = "idle";
+    private string? _orgName, _error;
+    private bool _busy, _claimed;
+
+    /// <summary>ABCD-EFGH: eight characters in two groups, whatever the person typed.</summary>
+    private static string Format(string value)
+    {
+        var clean = value.Replace(" ", "").Replace("-", "").ToUpperInvariant();
+        return clean.Length == 8 ? $"{clean[..4]}-{clean[4..]}" : clean;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        var initial = System.Web.HttpUtility.ParseQueryString(new Uri(Nav.Uri).Query)["user_code"] ?? "";
+        var back = "/claim" + (initial.Length > 0 ? "?user_code=" + Uri.EscapeDataString(initial) : "");
+        if (!await RequireSignInAsync(back)) return;
+        Ready = true;
+        if (initial.Length > 0) { _draft = initial; await LookUpAsync(); }
+        StateHasChanged();
+    }
+
+    private async Task LookUpAsync()
+    {
+        _error = null;
+        _code = Format(_draft);
+        if (_code.Length < 4) return;
+        _busy = true;
+        var found = await Den.RequestAsync($"/api/browser/v1/bootstrap/claim-codes/{Uri.EscapeDataString(_code.Replace("-", ""))}");
+        _busy = false;
+        if (!found.Ok) { _state = "invalid"; return; }
+        _orgName = found.String("organization", "name") ?? "this workspace";
+        _state = "pending";
+    }
+
+    private async Task ClaimAsync()
+    {
+        _error = null;
+        _busy = true;
+        var claimed = await Den.RequestAsync("/api/browser/v1/bootstrap/claim-codes/accept", "POST", new { userCode = _code.Replace("-", ""), mode = "new_org" });
+        _busy = false;
+        if (!claimed.Ok) { _error = claimed.Message("Could not claim this workspace. Ask your agent for a new code."); return; }
+        _orgName = claimed.String("organization", "name") ?? _orgName;
+        _claimed = true;
+    }
+
+    private void Reset() { _state = "idle"; _draft = ""; _orgName = null; }
+
+    private async Task SignOutAsync()
+    {
+        await Den.RequestAsync("/api/auth/sign-out", "POST", new { });
+        Nav.NavigateTo("/?returnTo=" + Uri.EscapeDataString("/claim?user_code=" + _code), forceLoad: true);
+    }
+}
