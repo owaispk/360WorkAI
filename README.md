@@ -40,7 +40,7 @@ Open `http://localhost:5081`. The API needs `Auth__Secret` (32+ characters). Dev
 ## Test
 
 ```bash
-dotnet test                                                    # 835 in-process API tests (~2 min)
+dotnet test                                                    # 1067 in-process API tests (~2.5 min)
 WORKAI_TEST_MYSQL="Server=127.0.0.1;User=root;Password=..." dotnet test   # the same tests on MySQL (a throwaway database per test class)
 
 # Contract tests against the running rewrite (web is W, API is A):
