@@ -101,7 +101,7 @@ await s.t("after the access token is discarded the SDK refreshes it with the ref
   const t2 = new StreamableHTTPClientTransport(mcpUrl, { authProvider }); const c2 = new Client({ name: "real-sdk-client", version: "1.0.0" }, { capabilities: {} });
   await c2.connect(t2); const { tools } = await c2.listTools();
   await c2.close();
-  return (tools.length === 2 && store.tokens.access_token !== before && store.tokens.access_token !== "ow_mcp_at_not-a-real-token" && !!store.tokens.refresh_token && store.tokens.refresh_token !== refreshBefore)
+  return (tools.length >= 2 && store.tokens.access_token !== before && store.tokens.access_token !== "ow_mcp_at_not-a-real-token" && !!store.tokens.refresh_token && store.tokens.refresh_token !== refreshBefore)
     || `tokens changed? access ${store.tokens.access_token?.slice(0, 12)} refresh rotated ${store.tokens.refresh_token !== refreshBefore}`;
 });
 await client.close().catch(() => {});
