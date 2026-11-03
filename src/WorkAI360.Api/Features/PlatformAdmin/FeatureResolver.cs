@@ -27,8 +27,8 @@ public sealed record ResolvedFeature(string Key, bool Enabled, string Source, bo
 
 /// <summary>
 /// Decides whether each feature is on, in the reference's order: not part of this deployment (off), kill switch (off), operator lock (as set:
-/// <c>Features:Overrides:&lt;key&gt;</c> in configuration), the workspace's override, then on or off for everyone (the stored rollout, else this
-/// build's default from <see cref="FeatureState.Default"/>).
+/// <c>Features:Overrides:&lt;key&gt;</c> in configuration), the member's own override, the workspace's override, then on or off for everyone (the
+/// stored rollout, else this build's default from <see cref="FeatureState.Default"/>).
 /// </summary>
 public sealed class FeatureResolver(DenDbContext db, IConfiguration configuration)
 {
@@ -40,11 +40,21 @@ public sealed class FeatureResolver(DenDbContext db, IConfiguration configuratio
     public async Task<Dictionary<string, bool>> OverridesAsync(string organizationId) =>
         (await db.Set<PlatformOrganizationFeature>().AsNoTracking().Where(o => o.OrganizationId == organizationId).ToListAsync()).ToDictionary(o => o.FeatureKey, o => o.Enabled, StringComparer.Ordinal);
 
+    /// <summary>
+    /// The overrides of <paramref name="userId"/>'s membership in the workspace. Read through the membership, so rows of a membership that ended
+    /// (or of a pending placeholder) never apply.
+    /// </summary>
+    public async Task<Dictionary<string, bool>> MemberOverridesAsync(string organizationId, string userId) =>
+        (await (from f in db.Set<PlatformMemberFeature>().AsNoTracking()
+                join m in db.Members.AsNoTracking() on f.MemberId equals m.Id
+                where m.OrganizationId == organizationId && m.UserId == userId
+                select new { f.FeatureKey, f.Enabled }).ToListAsync()).ToDictionary(o => o.FeatureKey, o => o.Enabled, StringComparer.Ordinal);
+
     public bool? Lock(string key) => bool.TryParse(configuration.GetSection("Features:Overrides")[key], out var value) ? value : null;
 
     public Rollout RolloutOf(string key, IReadOnlyDictionary<string, Rollout> rollouts) => rollouts.GetValueOrDefault(key) ?? new Rollout(FeatureState.Default(key), false);
 
-    public ResolvedFeature Resolve(FeatureInfo feature, IReadOnlyDictionary<string, Rollout> rollouts, IReadOnlyDictionary<string, bool> overrides)
+    public ResolvedFeature Resolve(FeatureInfo feature, IReadOnlyDictionary<string, Rollout> rollouts, IReadOnlyDictionary<string, bool> overrides, IReadOnlyDictionary<string, bool>? memberOverrides = null)
     {
         var rollout = RolloutOf(feature.Key, rollouts);
         var @lock = Lock(feature.Key);
@@ -52,18 +62,21 @@ public sealed class FeatureResolver(DenDbContext db, IConfiguration configuratio
         if (!feature.Available) return new(feature.Key, false, "unavailable", rollout.Enabled, rollout.Killed, @lock, over, false);
         if (rollout.Killed) return new(feature.Key, false, "killed", rollout.Enabled, true, @lock, over, false);
         if (@lock is { } locked) return new(feature.Key, locked, "lock", rollout.Enabled, false, @lock, over, false);
+        if (memberOverrides is not null && memberOverrides.TryGetValue(feature.Key, out var mine)) return new(feature.Key, mine, "member", rollout.Enabled, false, null, over, true);
         if (over is { } overridden) return new(feature.Key, overridden, "override", rollout.Enabled, false, null, over, true);
         return new(feature.Key, rollout.Enabled, "everyone", rollout.Enabled, false, null, null, true);
     }
 
-    public async Task<IReadOnlyList<ResolvedFeature>> DescribeAsync(string? organizationId)
+    /// <summary>Every feature, for a workspace (none: the deployment-wide state) and, when <paramref name="userId"/> is given, that person's membership in it.</summary>
+    public async Task<IReadOnlyList<ResolvedFeature>> DescribeAsync(string? organizationId, string? userId = null)
     {
         var rollouts = await RolloutsAsync();
         var overrides = organizationId is null ? new Dictionary<string, bool>() : await OverridesAsync(organizationId);
-        return FeatureCatalog.All.Select(f => Resolve(f, rollouts, overrides)).ToList();
+        var mine = organizationId is null || userId is null ? null : await MemberOverridesAsync(organizationId, userId);
+        return FeatureCatalog.All.Select(f => Resolve(f, rollouts, overrides, mine)).ToList();
     }
 
-    /// <summary>On or off for every feature, for one workspace (or for everyone when none is given). Order: the registry's.</summary>
-    public async Task<Dictionary<string, bool>> EffectiveAsync(string? organizationId) =>
-        (await DescribeAsync(organizationId)).ToDictionary(r => r.Key, r => r.Enabled);
+    /// <summary>On or off for every feature, for one workspace (or for everyone when none is given) and optionally one person in it. Order: the registry's.</summary>
+    public async Task<Dictionary<string, bool>> EffectiveAsync(string? organizationId, string? userId = null) =>
+        (await DescribeAsync(organizationId, userId)).ToDictionary(r => r.Key, r => r.Enabled);
 }

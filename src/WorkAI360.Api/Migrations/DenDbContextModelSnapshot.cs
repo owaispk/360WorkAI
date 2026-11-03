@@ -1688,6 +1688,39 @@ namespace WorkAI360.Api.Migrations
                     b.ToTable("OidcGrant");
                 });
 
+            modelBuilder.Entity("WorkAI360.Api.Domain.Onboarding.ActivationEvent", b =>
+                {
+                    b.Property<string>("MemberId")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("Step")
+                        .HasMaxLength(32)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<int?>("DurationMs")
+                        .HasColumnType("int");
+
+                    b.Property<string>("OrganizationId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("varchar(16)");
+
+                    b.HasKey("MemberId", "Step");
+
+                    b.HasIndex("OrganizationId");
+
+                    b.ToTable("ActivationEvent");
+                });
+
             modelBuilder.Entity("WorkAI360.Api.Domain.Onboarding.DesktopStartupReport", b =>
                 {
                     b.Property<string>("Id")
@@ -2560,6 +2593,9 @@ namespace WorkAI360.Api.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("varchar(64)");
 
+                    b.Property<string>("MemberId")
+                        .HasColumnType("longtext");
+
                     b.Property<string>("OrganizationId")
                         .HasMaxLength(255)
                         .HasColumnType("varchar(255)");
@@ -2598,6 +2634,33 @@ namespace WorkAI360.Api.Migrations
                     b.HasKey("FeatureKey");
 
                     b.ToTable("PlatformFeatureRollout");
+                });
+
+            modelBuilder.Entity("WorkAI360.Api.Domain.PlatformAdmin.PlatformMemberFeature", b =>
+                {
+                    b.Property<string>("MemberId")
+                        .HasMaxLength(255)
+                        .HasColumnType("varchar(255)");
+
+                    b.Property<string>("FeatureKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("tinyint(1)");
+
+                    b.Property<string>("SetByUserId")
+                        .HasColumnType("longtext");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("datetime(6)");
+
+                    b.HasKey("MemberId", "FeatureKey");
+
+                    b.ToTable("PlatformMemberFeature");
                 });
 
             modelBuilder.Entity("WorkAI360.Api.Domain.PlatformAdmin.PlatformOrganization", b =>

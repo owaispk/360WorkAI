@@ -115,6 +115,9 @@ public sealed class SocialFlow(
         // A workspace that requires single sign-on closes every other way in: an address on its verified domain, or a person already in it.
         if (await sso.ForEmailDomainAsync(email) is not null || await sso.ForExistingUserAsync(email) is not null) return Fail("sso_required", SsoManaged);
 
+        // While first-administrator setup is open there are no accounts yet, so this sign-in would make the first one: it waits for setup.
+        if (await ctx.RequestServices.GetRequiredService<WorkAI360.Api.Features.PlatformAdmin.InitialAdminSetup>().BlocksOrdinarySignUpAsync()) return Fail("setup_required", WorkAI360.Api.Features.PlatformAdmin.InitialAdminSetup.SetupRequired);
+
         var (user, isNew) = await ResolveUserAsync(p, identity with { Email = email }, ct);
         // The link may lead to a person whose email is no longer the one that was checked above.
         if (user.Email != email && await sso.ForExistingUserAsync(user.Email) is not null) return Fail("sso_required", SsoManaged);

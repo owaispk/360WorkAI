@@ -14,6 +14,8 @@ public sealed class PlatformAdminFeature : IFeature
         {
             var section = configuration.GetSection($"{PlatformAdminOptions.Section}:BootstrapEmails");
             options.BootstrapEmails = [.. section.GetChildren().Select(c => c.Value).Where(v => !string.IsNullOrWhiteSpace(v)).Select(v => v!), .. section.Value is { Length: > 0 } single ? new[] { single } : []];
+            options.InitialAdminCode = configuration[$"{PlatformAdminOptions.Section}:InitialAdminCode"];
+            options.InitialWorkspaceName = configuration[$"{PlatformAdminOptions.Section}:InitialWorkspaceName"];
         });
         services.AddScoped<PlatformAdmins>();
         services.AddScoped<PlatformAdminGuard>();
@@ -21,6 +23,7 @@ public sealed class PlatformAdminFeature : IFeature
         services.AddScoped<FeatureChanges>();
         services.AddScoped<OrganizationPlans>();
         services.AddScoped<FeatureUsageStore>();
+        services.AddScoped<InitialAdminSetup>();
     }
 
     public void MapEndpoints(WebApplication app)
@@ -31,5 +34,8 @@ public sealed class PlatformAdminFeature : IFeature
         app.MapAdminFeatureUsageEndpoints();
         app.MapAdminSecurityEndpoints();
         app.MapAdminServicesEndpoints();
+        app.MapInitialAdminSetupEndpoints();
+        app.MapAdminMemberFeatureEndpoints();
+        app.MapAdminDashboardEndpoints();
     }
 }

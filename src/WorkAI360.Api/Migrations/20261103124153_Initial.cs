@@ -15,6 +15,23 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "ActivationEvent",
+                columns: table => new
+                {
+                    MemberId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Step = table.Column<string>(type: "varchar(32)", maxLength: 32, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    DurationMs = table.Column<int>(type: "int", nullable: true),
+                    Source = table.Column<string>(type: "varchar(16)", maxLength: 16, nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_ActivationEvent", x => new { x.MemberId, x.Step });
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "AdminAllowlistEntry",
                 columns: table => new
                 {
@@ -1012,6 +1029,7 @@ namespace WorkAI360.Api.Migrations
                     Scope = table.Column<string>(type: "longtext", nullable: false),
                     Action = table.Column<string>(type: "longtext", nullable: false),
                     OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: true),
+                    MemberId = table.Column<string>(type: "longtext", nullable: true),
                     ChangedByUserId = table.Column<string>(type: "longtext", nullable: true),
                     CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
                 },
@@ -1034,6 +1052,23 @@ namespace WorkAI360.Api.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_PlatformFeatureRollout", x => x.FeatureKey);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "PlatformMemberFeature",
+                columns: table => new
+                {
+                    MemberId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    FeatureKey = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false),
+                    Enabled = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    SetByUserId = table.Column<string>(type: "longtext", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_PlatformMemberFeature", x => new { x.MemberId, x.FeatureKey });
                 })
                 .Annotation("MySQL:Charset", "utf8mb4");
 
@@ -1902,6 +1937,11 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateIndex(
+                name: "IX_ActivationEvent_OrganizationId",
+                table: "ActivationEvent",
+                column: "OrganizationId");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_AdminAllowlistEntry_Email",
                 table: "AdminAllowlistEntry",
                 column: "Email",
@@ -2629,6 +2669,9 @@ namespace WorkAI360.Api.Migrations
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(
+                name: "ActivationEvent");
+
+            migrationBuilder.DropTable(
                 name: "AdminAllowlistEntry");
 
             migrationBuilder.DropTable(
@@ -2798,6 +2841,9 @@ namespace WorkAI360.Api.Migrations
 
             migrationBuilder.DropTable(
                 name: "PlatformFeatureRollout");
+
+            migrationBuilder.DropTable(
+                name: "PlatformMemberFeature");
 
             migrationBuilder.DropTable(
                 name: "PlatformOrganization");

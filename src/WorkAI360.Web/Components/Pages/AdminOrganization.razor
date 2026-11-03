@@ -31,7 +31,10 @@
         <ul class="den-members" data-testid="people">
             @foreach (var person in _people)
             {
-                <li data-testid="person-row"><div class="den-member-main"><strong>@person.Name <span class="den-muted">· @person.Email</span></strong><span class="den-muted">@person.Role</span></div></li>
+                <li data-testid="person-row">
+                    <div class="den-member-main"><strong>@person.Name <span class="den-muted">· @person.Email</span></strong><span class="den-muted">@person.Role</span></div>
+                    <div class="den-member-actions"><a class="den-link" href="/admin/organizations/@OrganizationId/members/@person.Id" data-testid="person-features">Features</a></div>
+                </li>
             }
         </ul>
 
@@ -109,7 +112,7 @@
 @code {
     [Parameter] public string OrganizationId { get; set; } = "";
 
-    private sealed record Person(string Name, string Email, string Role);
+    private sealed record Person(string Id, string Name, string Email, string Role);
     private sealed class FeatureChoice
     {
         public string Key = "", Label = "", Source = "";
@@ -149,7 +152,7 @@
         _endsAt = plan.GetProperty("endsAt").ValueKind == JsonValueKind.String ? plan.GetProperty("endsAt").GetString() : null;
         _planTier = _tier; _planUsers = _seats ?? Number(org, "seatLimit"); _planEnds = _endsAt ?? "";
         _webAccess = Flag(org.GetProperty("openworkWeb"), "complimentaryAccess");
-        _people = root.GetProperty("members").EnumerateArray().Select(m => new Person(Text(m, "name"), Text(m, "email"), Text(m, "role"))).ToList();
+        _people = root.GetProperty("members").EnumerateArray().Select(m => new Person(Text(m, "id"), Text(m, "name"), Text(m, "email"), Text(m, "role"))).ToList();
 
         var list = await Den.RequestAsync($"/api/browser/v1/admin/organizations?includeFeatures=0&search={Uri.EscapeDataString(OrganizationId)}");
         if (list.Json is { ValueKind: JsonValueKind.Object } l && l.GetProperty("organizations").GetArrayLength() > 0) _freeSeats = Number(l.GetProperty("organizations")[0], "freeSeatCount");

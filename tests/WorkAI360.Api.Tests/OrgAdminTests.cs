@@ -845,7 +845,8 @@ public sealed class OrgAdminTests : IClassFixture<OrgAdminFactory>
         var features = body.GetProperty("features");
         Assert.True(features.GetProperty("engineV2ForceUpgrade").GetBoolean());
         // Things this build cannot serve are reported off, never on.
-        Assert.False(features.GetProperty("activationChecklist").GetBoolean());
+        Assert.False(features.GetProperty("customConnectorSetup").GetBoolean());
+        Assert.True(features.GetProperty("activationChecklist").GetBoolean()); // the reference's default, now that the checklist is built
         var org = (await w.OrgAsync()).GetProperty("features");
         foreach (var property in features.EnumerateObject()) Assert.Equal(property.Value.GetBoolean(), org.GetProperty(property.Name).GetBoolean());
     }

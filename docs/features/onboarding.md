@@ -30,12 +30,22 @@ workspaces sees Settings on `/organization` (Profile: rename; Organizations: swi
 | `GET /v1/org/diagnostics`, `POST /v1/org/diagnostics/check`, `POST /v1/diagnostics/desktop-startup` | Sections granted or locked by permission (desktop `desktop_policies.view`, providers `llm_providers.view`, connectors `connections.view`, network `egress_diagnostics.view`; installation always locked). Desktop launches (24 hours, per-launch idempotent, 20 reports an hour per member, 7-day/5-minute window) feed the desktop section and the attention item |
 | `GET /v1/diagnostics/egress`, `PUT /v1/diagnostics/egress/token`, `POST /v1/diagnostics/egress` | Configuration, an encrypted per-workspace token (never returned), and the run |
 | `GET /v1/resources`, `GET /v1/resources/marketplace-capabilities` | What a desktop polls: marketplaces the member may see with their plugins and skills and update times; and the grant-scoped capability references (not widened by being an administrator) |
-| `GET/PUT /v1/me/agent`, `GET /v1/me/agent/checks`, `GET /v1/me/activation`, `POST /v1/me/activation/events` | Answer `404 {error: "feature_disabled", feature}` to members: both features are off in this build (see below) |
+| `GET /v1/me/activation` | The "Get set up" checklist for the caller in the active workspace (the reference's `activation.ts`): six steps in recipe order (`first_response`, `invite_teammate`, `use_skill`, `own_provider`, `gateway_provider`, `connector`), each `{id, done, detail?, lockedReason?}`, plus `dismissed`. `Cache-Control: no-store`. How each step is decided here is below |
+| `POST /v1/me/activation/events` | `{step: first_response\|use_skill\|own_provider\|dismiss, durationMs?}` (strict; `durationMs` an integer 0 to 86,400,000, kept for `first_response` only). One row per member and step (`ActivationEvent`): the first report wins, repeats change nothing. Answers the updated checklist |
+| `GET/PUT /v1/me/agent`, `GET /v1/me/agent/checks` | Answer `404 {error: "feature_disabled", feature}` to members: "My agent" is off in this build (see below) |
 
 ## Differences from the reference
 
-* **Activation checklist and "My agent" are off**, not built. The reference's checklist is on by default and needs gateway, provider and Workbot facts; here `GET /v1/me/activation` answers the reference's
-  own "feature is off" response (and `/v1/org` already reports `activationChecklist` off). The parity script therefore does not cover activation.
+* **The checklist is built from what this build knows.** `first_response`: the client's report (there is no desktop telemetry or Workbot here); the detail reads "Answered in 2.1 s".
+  `invite_teammate`: for someone who may invite, an invitation they sent that is pending or accepted; for others, any teammate or pending invitation; detail "N joined, M invited";
+  locked with "{owner} can invite people" when nobody else is there. `use_skill`: the client's report or a skill their agent read through the library (`LibraryUsageEvent`).
+  `own_provider`: the client's report ("Your key, on this device"), or done when the person's desktop policy does not allow custom providers ("Your team manages models");
+  there are no model providers in this build, so the reference's "added in Den" and "models from your organization" cases never occur. `gateway_provider`: there is no AI Gateway
+  here, so it stays open, locked with "{owner} manages AI Gateway" for anyone without `gateway_providers.manage`. `connector`: the first MCP connection usable by the person that is
+  connected for them, needs no reconnect and no setup ("Linear connected"). Like the reference, the routes are not behind the `activationChecklist` flag, which is now on by
+  default (the reference's default). Tests: `tests/WorkAI360.Api.Tests/ActivationTests.cs` (10); mutation checks 5 of 5 killed (reports not per member, a later report
+  replacing the first, the gateway lock inverted, the caller counted as a teammate, a teammate's skill use counting).
+* **"My agent" is off**, not built: it needs Workbot.
 * **The pre-claim assertion cannot be exchanged for tokens.** The assertion (HS256, key derived from `Auth:Secret`, audience = the token endpoint) is issued and verified on the claim routes, but the JWT-bearer grant at
   `/api/auth/oauth2/token` is not built, so the setup agent cannot yet act on the workspace before it is claimed. The claim flows (code and link) work end to end.
 * **A claim link is claimed by a click**, not automatically after sign-in (the reference auto-accepts). Members are deleted rather than soft-removed here, so the reference's `membership_removed` (403) case does not exist.
@@ -46,7 +56,7 @@ workspaces sees Settings on `/organization` (Profile: rename; Organizations: swi
 * **Diagnostics have no providers, connectors or installation checks** (those areas do not exist here): the sections are granted but empty, `POST .../check` just returns the current picture (202), and nothing can reach error severity.
 * **`marketplace-capabilities`** follows the grant rules of the library area (a skill is visible through its own grant, or a plugin the person made or was given); it is an approximation of the reference's query.
 * **Onboarding pages**: the models step does not call `/v1/inference` (not built); it says models are set up from the dashboard. The tools step can only add what the server can reach (presets point at public services; on a machine with no internet the server's refusal is shown).
-  `/setup` shows "complete/unavailable" only (see below). The install page is the cloud variant (the reference's enterprise step guide is not built).
+  `/setup` is first-administrator setup ([platform-admin.md](platform-admin.md#first-administrator-setup-setup)). The install page is the cloud variant (the reference's enterprise step guide is not built).
 
 ## Configuration
 
@@ -65,6 +75,5 @@ Claim tokens and codes are stored as SHA-256 only; the assertion is not stored (
 
 ## Not built
 
-* **First-administrator setup** (`/v1/auth/bootstrap/status` and `/verify` stay the existing "unavailable" stubs; the `/setup` page shows that state). It depends on the platform-admin area and a one-time operator code.
-* The JWT-bearer token exchange for the pre-claim assertion; the activation checklist and My agent (above); the egress probes; provider/connector/installation diagnostics.
+* The JWT-bearer token exchange for the pre-claim assertion; My agent (above); the egress probes; provider/connector/installation diagnostics.
 * Cloud sandbox joins (`join-sandbox`, sandbox join, Workbot hand-off), billing and the AI gateway, as instructed; den-web's `workspace-claim` desktop-app handoff button after claiming.

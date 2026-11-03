@@ -99,8 +99,6 @@ public static partial class MeEndpoints
         MapDisabled(app, "GET", "/v1/me/agent", "workbotProactive");
         MapDisabled(app, "PUT", "/v1/me/agent", "workbotProactive");
         MapDisabled(app, "GET", "/v1/me/agent/checks", "workbotProactive");
-        MapDisabled(app, "GET", "/v1/me/activation", "activationChecklist");
-        MapDisabled(app, "POST", "/v1/me/activation/events", "activationChecklist");
     }
 
     private static void MapDisabled(WebApplication app, string method, string path, string feature)

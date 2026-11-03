@@ -42,6 +42,8 @@ public sealed class EmailCodesFeature : IFeature
 
             var now = DateTime.UtcNow;
             var user = await db.Users.FirstOrDefaultAsync(u => u.Email == email);
+            if (user is null && await ctx.RequestServices.GetRequiredService<WorkAI360.Api.Features.PlatformAdmin.InitialAdminSetup>().BlocksOrdinarySignUpAsync())
+                return Results.Json(new { error = "setup_required", message = WorkAI360.Api.Features.PlatformAdmin.InitialAdminSetup.SetupRequired }, statusCode: 403);
             if (user is null)
             {
                 user = new User { Id = Ids.New("usr"), Email = email, Name = "", EmailVerified = true, PasswordHash = SsoProvisioning.UnusablePassword, CreatedAt = now, UpdatedAt = now };

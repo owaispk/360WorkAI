@@ -31,6 +31,19 @@ public static class OrgEndpoints
         await db.SaveChangesAsync();
     }
 
+    /// <summary>Creates a workspace owned by <paramref name="userId"/>, with its default permission sets.</summary>
+    public static async Task<Organization> CreateWorkspaceAsync(DenDbContext db, PermissionService permissions, string userId, string name)
+    {
+        var now = DateTime.UtcNow;
+        var id = Ids.New("org");
+        var org = new Organization { Id = id, Name = name, Slug = id, CreatedAt = now };
+        db.Organizations.Add(org);
+        db.Members.Add(new Member { Id = Ids.New("om"), OrganizationId = id, UserId = userId, Role = "owner", CreatedAt = now, JoinedAt = now });
+        await db.SaveChangesAsync();
+        await permissions.EnsureDefaultSetsAsync(id);
+        return org;
+    }
+
     public static void MapOrgEndpoints(this WebApplication app)
     {
         var v1 = app.MapGroup("/v1");
@@ -91,14 +104,8 @@ public static class OrgEndpoints
             var name = body?.Name?.Trim() ?? "";
             if (name.Length < 2 || name.Length > 80) return Responses.Error(400, "invalid_request", "Workspace name must be 2 to 80 characters.");
 
-            var now = DateTime.UtcNow;
-            var id = Ids.New("org");
-            var org = new Organization { Id = id, Name = name, Slug = id, CreatedAt = now };
-            db.Organizations.Add(org);
-            db.Members.Add(new Member { Id = Ids.New("om"), OrganizationId = id, UserId = current.User.Id, Role = "owner", CreatedAt = now, JoinedAt = now });
-            await db.SaveChangesAsync();
-            await permissions.EnsureDefaultSetsAsync(id);
-            await SetActiveAsync(db, current.Session, id);
+            var org = await CreateWorkspaceAsync(db, permissions, current.User.Id, name);
+            await SetActiveAsync(db, current.Session, org.Id);
             return Results.Json(new { organization = Responses.OrganizationJson(org) }, statusCode: StatusCodes.Status201Created);
         });
 
@@ -108,7 +115,7 @@ public static class OrgEndpoints
             if (failure is not null) return failure;
             // The area that owns features, capabilities and entitlements adds them to the payload.
             var payload = System.Text.Json.JsonSerializer.SerializeToNode(await OrgPayload.BuildAsync(db, context!))!.AsObject();
-            await envelope.AddToAsync(payload, context!.Organization.Id);
+            await envelope.AddToAsync(payload, context!.Organization.Id, context.Member.UserId);
             return Results.Json(payload);
         });
     }

@@ -43,14 +43,54 @@ owner can read them. Feature rollouts have no workspace and, as in the reference
 | `GET /v1/admin/security[?days=1..30]` | 14 threshold findings with their rules, in the reference's wording: sign-up bursts, unverified and throwaway sign-ups, unverified domains, accounts on many networks, many workspaces from one person, new platform admins, API key bursts, app registrations, invitation bursts, sign-ins from automation tools; the three that need model usage (spend spikes, round the clock, free allowance on day one) are always clear. App registrations are not attributed to a person here (a client has no owner), so only the volume rule applies |
 | `GET /v1/admin/services`, `POST /v1/admin/services/check` | deployment readiness in the reference's v2 shape: database (a real query), email (settings only, nothing is sent), and the gateway, headless runner and Workbot as not set up; a check less than 30 seconds old is answered again (`202`) |
 | `GET /v1/admin/sandbox-orgs` | `{enabled: false, sandboxes: []}`: sandbox organizations are a cloud feature (`sandboxOrgs`), off on a self-hosted deployment as in the reference |
+| `GET/PUT /v1/admin/organizations/{id}/members/{memberId}/capabilities` | per-member overrides (the reference's `member-features.ts`): `{capabilities: {key: true\|false\|null}}` strict (unknown keys and extra fields 400; cloud-only keys 400 unless clearing). Each feature with `enabled`, `source` (`member` when the person's own setting decides), `everyone` (what the workspace gives them without it), `killed`, `lock`, `override` (the member's), `overrideApplies`, `lastChange` (including member-scope changes). A member of another workspace, a removed member or the setup member of an agent-provisioned workspace is `404 "Active organization member not found."`; the membership is re-read under the workspace lock before writing. Audited in the workspace as `member.capabilities.updated` (origin `platform_admin`). Page `/admin/organizations/{id}/members/{memberId}` (the Features link on each person) |
+| `GET /v1/admin/dashboard` | the reference's 30-day AI usage shape (`from`, `to`, `activeOrganizations`, `totals`, 30 `daily` rows, up to 8 `organizations`). There is no AI gateway here, so it answers what the reference does on a deployment whose gateway served nothing: zeros and no leaders. `Cache-Control: no-store`. `/admin` says so |
+| `GET /v1/admin/dashboard/active-users` | distinct people active `today`, in `days7` and `days30` (UTC calendar days), across every workspace. Active = a session created or a feature use a client reported (`POST /v1/org/feature-usage`), this build's equivalent of the reference's sign-in-or-telemetry rule. Read on request (the "Count active people" button on `/admin`). Sessions end at sign-out here, so someone who signed in and out again is still counted by their feature use only |
 | `PUT /v1/admin/oauth-clients/{id}/client-credentials-scopes` | this build's only addition: lets an operator give a machine client its scopes ([oauth-extras.md](oauth-extras.md)) |
+
+## First-administrator setup (`/setup`)
+
+Reference: `ee/apps/den-api/src/initial-admin-bootstrap.ts`, the bootstrap routes in `routes/auth/index.ts`, and den-web `app/(den)/setup/page.tsx`. Code:
+`Features/PlatformAdmin/InitialAdminSetup.cs`, the grant check in `POST /api/auth/sign-up/email`, page `Components/Pages/Setup.razor`. Tests:
+`tests/WorkAI360.Api.Tests/InitialAdminSetupTests.cs` (6), `tests/parity/ui-setup.js` (11, browser; needs a fresh deployment, see its header).
+
+A private deployment gets its first administrator without anyone choosing a password over email. The operator sets `PlatformAdmin__BootstrapEmails`
+(who may become the first administrator) and `PlatformAdmin__InitialAdminCode` (a one-time code, handed over through a secret store), then opens `/setup`.
+
+| Route | Notes |
+|---|---|
+| `GET /v1/auth/bootstrap/status` | Public. `available` (an address and the code are configured and no account exists), `complete` (any account exists), `unavailable` (not configured). Never names an address |
+| `POST /v1/auth/bootstrap/verify` | `{email, code}`. `200 {grant, expiresAt}`: a grant (`ow_bootstrap_…`, HMAC-signed with a key derived from `Auth:Secret`, 10 minutes, bound to the address). `409 bootstrap_unavailable` when setup is not open; `403 bootstrap_verification_failed` with one message for a wrong code, an unlisted address or a bad body. 5 attempts per address per 5 minutes (`429 rate_limited` + `Retry-After`) |
+| `POST /api/auth/sign-up/email` with `bootstrapGrant` | The grant must be genuine, unexpired, for this address, the address still configured, and setup still open; otherwise `403 bootstrap_verification_failed` and nothing is created. The account is created **verified**, gets a workspace it owns (`PlatformAdmin__InitialWorkspaceName`, default "OpenWork") as the session's active one, and is put on the admin list with the note "Initial administrator bootstrap" |
+
+**While setup is open, nothing else can create the first account**: ordinary email sign-up, sign-in by email code for a new address, social sign-in
+and agent workspace provisioning (`POST /v1/bootstrap/workspace`) answer `403 setup_required`. Once any account exists, status is `complete` for good:
+verification is `409` and an unused grant stops working.
+
+Differences from the reference: the reference closes public sign-up through its single-workspace mode (`DEN_SINGLE_ORG_*`), which this build does not
+have, so here ordinary sign-up is closed only until setup is done and the first administrator gets an ordinary workspace. The admin addresses come from
+`PlatformAdmin__BootstrapEmails` (the reference prefers `DEN_SINGLE_ORG_OWNER_EMAILS`). The code is compared as SHA-256 hashes (so its length does not
+show in timing either). With `Auth__RequireEmailVerification=true` the reference completes setup only when sign-up returns a session; here the
+workspace and admin entry are made either way, and the verified person signs in next.
+
+Mutation checks (8 of 8 killed): no code check, no address check at verify, grant not bound to its address, no expiry, no signature check, grant still
+valid after setup, no sign-up gate while setup is open, setup account not verified.
+
+Member overrides are tested in `tests/WorkAI360.Api.Tests/MemberFeatureTests.cs` (4) and `tests/parity/ui-member-features.js` (10, browser). Mutation checks
+(5 of 5 killed): the override following the person into another workspace, beating the operator lock, accepting another workspace's member, not reaching
+`GET /v1/org`, and rows not tied to the membership.
+
+The dashboard is tested in `tests/WorkAI360.Api.Tests/AdminDashboardTests.cs` (4: exact counts with backdated sign-ins and feature use, the shape, and access),
+and in the browser by `tests/parity/ui-member-features.js`.
 
 ## How feature flags resolve
 
 In the reference's order (`FeatureResolver`): not part of this deployment (cloud-only: `autoRouter`, `sandboxOrgs`, `managedDeployments`) off, then the kill switch (off),
-then an operator lock (`Features:Overrides:<key>` in configuration, the former override setting; reported as `source: "lock"`), then the workspace's override, then
-on or off for everyone (the stored rollout, else this build's default). `GET /v1/features` uses everything except the workspace override; the `features` of `GET /v1/org`
-use all of it. `Features/OrgAdmin/FeatureDefaults.g.cs` still holds the defaults; `FeatureCatalog.g.cs` (generated by `scripts/gen-admin-features.mjs` from the reference's
+then an operator lock (`Features:Overrides:<key>` in configuration, the former override setting; reported as `source: "lock"`), then the member's own override
+(`source: "member"`), then the workspace's override, then on or off for everyone (the stored rollout, else this build's default). `GET /v1/features` uses
+everything except the workspace and member overrides; the `features` of `GET /v1/org` use all of it for the caller, and so does `POST /v1/org/feature-usage`.
+A member override belongs to the membership (`PlatformMemberFeature`, keyed by member id) and is read through it, so it never follows the person into another
+workspace and stops applying when they leave; joining again starts from the workspace's value. `Features/OrgAdmin/FeatureDefaults.g.cs` still holds the defaults; `FeatureCatalog.g.cs` (generated by `scripts/gen-admin-features.mjs` from the reference's
 `/v1/admin/features`) holds each feature's label, description, category and dates.
 
 ## Metrics
@@ -76,10 +116,10 @@ and paid and unpaid are null.
 ## Not built
 
 * `GET /v1/admin/users/{id}/inference-usage` and the inference usage reset, free-auto (`free-auto/*`), the Stripe-backed plan, billing and `includeBilling` paid states, seat-subscription syncing.
-* `/v1/admin/dashboard`, `control-center` (+ refresh), `security/requests` (it reads a log of refused, rate-limited and failed requests that this build does not keep, so there is nothing honest to show), `opportunities*`,
+* The dashboard's AI usage numbers (no gateway), `control-center` (+ refresh), `security/requests` (it reads a log of refused, rate-limited and failed requests that this build does not keep, so there is nothing honest to show), `opportunities*`,
   `scale-performance`, the sandbox organization actions (create, rotate link, join role, extend, credit, close: always "turned off" on self-hosted), `mcp-registration`, organization `usage` and `insights`
   (they need gateway usage, telemetry or outside services). Feature outcomes for `slackSendAsBot` and `workbotProactive` (no Slack or Workbot here); background Automation work is not recorded as feature usage.
-* Member-level feature overrides (`member-features`) and the `members` admin list of a workspace beyond the detail page.
+* The `members` admin list of a workspace beyond the detail page (the detail page shows up to 100 people with a link to each one's features).
 * Pages for what is built: `/admin/feature-usage`, `/admin/security`, `/admin/services` (Blazor, in the admin navigation). The den-web pages for the rest, and a dashboard link to `/admin` (the page is reached by URL and answers anyone else with a plain message).
 
 ## Running it

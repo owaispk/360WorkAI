@@ -17,6 +17,9 @@ public static class BootstrapEndpoints
     {
         app.MapPost("/v1/bootstrap/workspace", async (HttpContext ctx, BootstrapService service, WindowLimiter limiter, IOptions<OnboardingOptions> options, OAuth.OAuthUrls urls) =>
         {
+            // An agent-provisioned workspace adds an account, which would close first-administrator setup: it waits until setup is done.
+            if (await ctx.RequestServices.GetRequiredService<WorkAI360.Api.Features.PlatformAdmin.InitialAdminSetup>().BlocksOrdinarySignUpAsync())
+                return Results.Json(new { error = "setup_required", message = WorkAI360.Api.Features.PlatformAdmin.InitialAdminSetup.SetupRequired }, statusCode: 403);
             var (root, invalid) = await Zod.ReadObjectAsync(ctx, "workspaceName");
             if (invalid is not null) return invalid;
             var issues = new List<ZodIssue>();

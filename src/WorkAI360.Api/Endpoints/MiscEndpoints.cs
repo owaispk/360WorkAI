@@ -33,10 +33,7 @@ public static class MiscEndpoints
             });
         });
 
-        // First-administrator setup for private deployments is not built yet: report it as unavailable.
-        app.MapGet("/v1/auth/bootstrap/status", () => Results.Json(new { status = "unavailable" }));
-        app.MapPost("/v1/auth/bootstrap/verify", () =>
-            Results.Json(new { error = "bootstrap_unavailable", message = "Initial administrator setup is not enabled for this deployment." }, statusCode: 409));
+        // First-administrator setup (/v1/auth/bootstrap/*) lives in Features/PlatformAdmin/InitialAdminSetup.cs.
 
         // Which sign-in method an address uses: its workspace's SSO when one claims the domain, else password (or sign-up when there is no account).
         app.MapGet("/v1/orgs/sso/resolve", async (string? email, DenDbContext db, SsoRouting sso, OAuthUrls urls) =>

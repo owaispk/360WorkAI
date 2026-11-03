@@ -171,7 +171,7 @@ public static class OrgSettingsEndpoints
             // Stores member, feature and day only, for features that are on for the caller; unknown keys are ignored. Best effort: always answers ok.
             try
             {
-                var on = await resolver.EffectiveAsync(context!.Organization.Id);
+                var on = await resolver.EffectiveAsync(context!.Organization.Id, context.Member.UserId);
                 var keys = features.EnumerateArray().Select(f => f.GetString()!).Where(k => on.GetValueOrDefault(k)).ToList();
                 if (keys.Count > 0) await usage.RecordAsync(context.Organization.Id, context.Member.Id, keys);
             }
@@ -294,7 +294,7 @@ public static class FeatureState
     /// <summary>On in the reference, but they need server routes this build does not have yet (checklist, gateway, connectors, remote sessions, analytics): reported off until those exist.</summary>
     private static readonly HashSet<string> NeedsUnbuiltServerAreas =
     [
-        "activationChecklist", "customConnectorSetup", "expandedMcpPresets", "gatewayProviderAuthErrors", "gatewayProviderRemovalLimits",
+        "customConnectorSetup", "expandedMcpPresets", "gatewayProviderAuthErrors", "gatewayProviderRemovalLimits",
         "gatewayProviderTest", "guidedSlackSetup", "libraryConnectorNavigation", "libraryConnectorOrgSetup", "liveProviderSync", "mcpAppLibraries",
         "providerCredentialStatus", "remoteSessionAnswers", "remoteSessionSubagents", "slackSendAsBot",
     ];

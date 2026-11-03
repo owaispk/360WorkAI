@@ -330,11 +330,12 @@ public sealed class OnboardingTests : IClassFixture<OnboardingFactory>
     // ---- my agent and the checklist (off) ---------------------------------------------------------------------------------------------------------
 
     [Fact]
-    public async Task My_agent_and_the_checklist_are_off_and_say_so_to_members_only()
+    public async Task My_agent_is_off_and_says_so_to_members_only()
     {
         var w = await Workspace.CreateAsync(_factory, "Agent Space");
         var member = await w.AddAsync();
-        foreach (var (method, path, feature) in new[] { (HttpMethod.Get, "/v1/me/agent", "workbotProactive"), (HttpMethod.Put, "/v1/me/agent", "workbotProactive"), (HttpMethod.Get, "/v1/me/agent/checks", "workbotProactive"), (HttpMethod.Get, "/v1/me/activation", "activationChecklist"), (HttpMethod.Post, "/v1/me/activation/events", "activationChecklist") })
+        // The checklist (/v1/me/activation) is built: see ActivationTests.
+        foreach (var (method, path, feature) in new[] { (HttpMethod.Get, "/v1/me/agent", "workbotProactive"), (HttpMethod.Put, "/v1/me/agent", "workbotProactive"), (HttpMethod.Get, "/v1/me/agent/checks", "workbotProactive") })
         {
             var r = await w.CallAsync(member, method, path, method == HttpMethod.Get ? null : new { });
             Assert.Equal(HttpStatusCode.NotFound, r.Status);
