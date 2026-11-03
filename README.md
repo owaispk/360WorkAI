@@ -40,7 +40,7 @@ Open `http://localhost:5081`. The API needs `Auth__Secret` (32+ characters). Dev
 ## Test
 
 ```bash
-dotnet test                                                    # 1286 in-process API tests (~2 min)
+dotnet test                                                    # 1300 in-process API tests (~2 min)
 WORKAI_TEST_MYSQL="Server=127.0.0.1;User=root;Password=..." dotnet test   # the same tests on MySQL (a throwaway database per test class)
 
 # Contract tests against the running rewrite (web is W, API is A):
@@ -95,6 +95,7 @@ It is the yardstick for "does the rewrite behave like Den": a route is done when
 | SSO and SCIM ([docs](docs/features/sso-scim.md)) | `/v1/sso*` (OIDC connection, domain proof by DNS TXT, test, enable/disable), `POST /api/auth/sign-in/sso` + callback (state, nonce, PKCE, ID-token validation), SSO-enforced workspaces close password sign-in, SCIM v2 `/Users` and `/Groups` with a hashed bearer token, group-to-team mapping, reconcile, deprovisioning. Pages `/dashboard/sso`, `/scim`, `/sso/{slug}` and the sign-in form's SSO step |
 | SAML sign-in ([docs](docs/features/saml.md)) | SAML 2.0 for SSO connections: `POST /v1/sso/saml` configuration, SP metadata, SP-initiated sign-in (redirect or POST binding), the assertion consumer service, and a same-browser step that stops login CSRF. Signed responses or assertions are required (XML signature wrapping guard, no DTD), with issuer, audience, recipient, destination, `InResponseTo`, time-window and replay checks. Settings `Sso__SamlClockSkewSeconds`, `Sso__SamlAllowIdpInitiated`. Form on `/dashboard/sso` |
 | OAuth extras ([docs](docs/features/oauth-extras.md)) | `client_credentials` grant (machine clients; scopes granted by a platform admin), `private_key_jwt` client authentication (`jwks` or `jwks_uri`), and DPoP (RFC 9449) sender-constrained access and refresh tokens, enforced at the MCP endpoint and userinfo |
+| Model providers ([docs](docs/features/llm-providers.md)) | `/v1/llm-providers*` and `/v1/llm-provider-catalog*`: providers from the models.dev catalog (live, cached, with a bundled snapshot) or pasted custom configurations, shared or per-person keys (encrypted, versioned, blockable), access by person, team or everyone, `/connect` for desktops with runtime env names, endpoint test-connection. Pages under `/dashboard/custom-llm-providers` |
 | Policy ([docs](docs/features/policy.md)) | Desktop policies (default, access/execution limits, assignments by role, team or person, by-key), agent permissions (everyone/team), prompts, default model, Automation and Workbot settings; what a person's desktop receives (`/v1/me/desktop-config`, `/v1/me/prompts`). Pages `/dashboard/policy`, `/desktop-policies` |
 | Onboarding and the person's own routes ([docs](docs/features/onboarding.md)) | `/v1/me/profile`, `/v1/me/invitations`, `/v1/me/send-download-link`, install config and links (`/v1/install*`, `/v1/me/install*`, `POST /v1/orgs/{id}/install-links`), bootstrap workspaces and claim links/codes (`/v1/bootstrap/*`), the "Get set up" checklist (`/v1/me/activation`), diagnostics and egress checks, `/v1/resources*`, `/v1/app-version`. Pages: create workspace and settings (`/organization`), `/dashboard/onboarding` (invite people, tools), `/install`, `/claim`, `/workspace-claim`, `/setup`, `/reauth/*` |
 | Platform admin ([docs](docs/features/platform-admin.md)) | `/v1/admin/*` for the operator of a deployment: overview and metrics, users (search, delete), organizations (detail, plan, free seats, DPA, web access, capabilities, per-member feature overrides), feature flags with per-workspace overrides, platform admins (a table plus `PlatformAdmin__BootstrapEmails`), feature usage and health, active people (dashboard), security findings, services readiness and the sandbox organizations listing (off on self-hosted). The flags drive `GET /v1/features` and the `features` fields of `GET /v1/org`. First-administrator setup on `/setup` (`PlatformAdmin__InitialAdminCode`). Pages under `/admin` |
@@ -122,6 +123,7 @@ Set with environment variables (`Auth__Secret`) or `appsettings`.
 | `Connections__AllowPrivateUrls`, `__ToolTimeoutSeconds`, `__MaxResponseBytes`, `__ExpandedPresets` | Connections: outbound calls to private addresses are refused unless this is true (local runs and tests only). |
 | `Library__GithubApiBase`, `Library__GithubRawBase` | Where GitHub import reads from (default GitHub). |
 | `Sso__AllowPrivateNetworks` | Let SSO providers and DNS proof use private networks (never in production). |
+| `LlmProviders__CatalogUrl`, `__CatalogFile`, `__CatalogCacheMinutes`, `__CatalogFallbackToSnapshot` | Where the model provider catalog comes from (empty URL: the bundled snapshot) ([docs](docs/features/llm-providers.md#the-catalog)). |
 | `PlatformAdmin__InitialAdminCode`, `PlatformAdmin__InitialWorkspaceName` | First-administrator setup on `/setup` for the `PlatformAdmin__BootstrapEmails` addresses while no account exists ([docs](docs/features/platform-admin.md#first-administrator-setup-setup)). |
 | `Auth__PasswordBreachScreening`, `Auth__PwnedPasswordsUrl` | Refuse passwords found in public breaches. Default: on everywhere except Development. |
 | `Cors__Origins__0`, `__1`… | Extra exact origins allowed to call the API from a browser, besides this deployment's own and the ones workspaces approved ([docs](docs/features/web-origins.md)). |
@@ -171,7 +173,7 @@ Set with environment variables (`Auth__Secret`) or `appsettings`.
 The reference has about 400 distinct `/v1` paths and 129 web pages; this covers the core and the five areas above. What is **not** built, and why:
 
 **Needs outside services that were not available (so it was not faked):**
-- **Billing and plans** (Stripe checkout, plan limits, free seats), the **AI Gateway and model providers** (LiteLLM-style sync, usage limits, provider inventory, `inference*`, `llm-providers*`, the Auto Router), **managed deployments** in customers' clouds, and **cloud sandboxes** (sandbox join, headless/remote sessions, session runners, workers).
+- **Billing and plans** (Stripe checkout, plan limits, free seats), the **AI Gateway** (LiteLLM sync, usage limits, provider inventory, `inference*`, the Auto Router), **managed deployments** in customers' clouds, and **cloud sandboxes** (sandbox join, headless/remote sessions, session runners, workers).
 - **Google Workspace, Microsoft 365 and Gmail** integrations (and every connection of kind `native_provider`), the Slack assistant, and the GitHub App install routes.
 
 **Not reached yet (no outside dependency):**

@@ -1,0 +1,92 @@
+@page "/dashboard/custom-llm-providers"
+@inherits ConnectionsPageBase
+@using System.Text.Json
+
+<PageTitle>Model providers · OpenWork Cloud</PageTitle>
+
+<ConnectionStyles />
+<section class="den-card den-wide cx-page" data-testid="llm-providers-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else
+    {
+        <h1>Model providers</h1>
+        <p class="den-muted">@OrgName · bring your own keys. People you share a provider with get its models in OpenWork on their desktop.</p>
+
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+
+        @if (_rows.Count == 0)
+        {
+            <p class="den-muted" data-testid="no-providers">No providers yet. Add one with your organization's key for OpenAI, Anthropic or any OpenAI-compatible endpoint.</p>
+        }
+        <ul class="den-members" data-testid="provider-list">
+            @foreach (var p in _rows)
+            {
+                <li data-testid="provider-row" data-name="@Str(p, "name")" data-id="@Str(p, "id")">
+                    <div class="den-member-main">
+                        <strong>@Str(p, "name")</strong>
+                        <span class="den-muted">@SourceLabel(p) · @Models(p)</span>
+                        <span class="den-muted">@KeyLabel(p) · @SharedWith(p)</span>
+                    </div>
+                    <div class="den-member-actions">
+                        @if (Flag(p, "canManage")) { <span class="den-badge">You manage this</span> }
+                        <a class="den-link" href="/dashboard/custom-llm-providers/@Str(p, "id")" data-testid="open-provider">Open</a>
+                    </div>
+                </li>
+            }
+        </ul>
+        <p><a class="cx-button" href="/dashboard/custom-llm-providers/new" data-testid="add-provider">Add a provider</a></p>
+        <a class="den-link" href="/dashboard">Back to dashboard</a>
+    }
+</section>
+
+@code {
+    private List<JsonElement> _rows = [];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await LoadOrgAsync()) return;
+        await LoadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override Task ReloadAsync() => LoadAsync();
+
+    /// <summary>What the person manages and what they may use, once each (managed first).</summary>
+    private async Task LoadAsync()
+    {
+        var rows = new List<JsonElement>();
+        foreach (var scope in new[] { "manageable", "usable" })
+        {
+            var r = await Den.RequestAsync($"/api/browser/v1/llm-providers?scope={scope}");
+            if (!r.Ok || r.Json is not { ValueKind: JsonValueKind.Object } body) { Error = r.Message("Providers could not be loaded."); return; }
+            foreach (var p in body.GetProperty("llmProviders").EnumerateArray())
+                if (rows.All(x => Str(x, "id") != Str(p, "id"))) rows.Add(p);
+        }
+        _rows = rows;
+    }
+
+    public static string SourceLabel(JsonElement p) => Str(p, "source") == "custom" ? $"Custom ({Str(p, "providerId")})" : Str(p, "providerId");
+
+    public static string Models(JsonElement p)
+    {
+        var n = p.GetProperty("models").GetArrayLength();
+        return $"{n} {(n == 1 ? "model" : "models")}";
+    }
+
+    public static string KeyLabel(JsonElement p) => Str(p, "credentialMode") == "per_member"
+        ? "Each person's own key"
+        : Flag(p, "configRedacted") ? "Shared key" : Flag(p, "hasApiKey") ? "Shared key saved" : "No key yet";
+
+    public static string SharedWith(JsonElement p)
+    {
+        var a = p.GetProperty("access");
+        if (Flag(a, "allMembers")) return "Shared with everyone";
+        var n = a.GetProperty("members").GetArrayLength() + a.GetProperty("teams").GetArrayLength();
+        return $"Shared with {n} {(n == 1 ? "person or team" : "people and teams")}";
+    }
+}

@@ -1,0 +1,270 @@
+@page "/dashboard/custom-llm-providers/new"
+@page "/dashboard/custom-llm-providers/{LlmProviderId}/edit"
+@inherits ConnectionsPageBase
+@using System.Text.Json
+@using System.Text.Json.Nodes
+
+<PageTitle>@(LlmProviderId is null ? "Add a provider" : "Edit provider") · OpenWork Cloud</PageTitle>
+
+<ConnectionStyles />
+<section class="den-card den-wide cx-page" data-testid="llm-provider-edit-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (_missing)
+    {
+        <h1>Provider not found</h1>
+        <a class="den-link" href="/dashboard/custom-llm-providers">Back to providers</a>
+    }
+    else
+    {
+        <h1>@(LlmProviderId is null ? "Add a provider" : $"Edit {_name}")</h1>
+        <p class="den-muted">Keys are stored encrypted and only sent to the desktops of people you share the provider with.</p>
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @if (NeedsReauth)
+        {
+            <ReauthForm @bind-Password="ReauthPassword" Busy="Busy" OnConfirm="ConfirmItsYouAsync" OnCancel="CancelReauth" />
+        }
+
+        <form @onsubmit="SaveAsync" novalidate data-testid="provider-form">
+            <label for="lp-name">Name</label>
+            <input id="lp-name" autocomplete="off" @bind="_name" @bind:event="oninput" />
+
+            <h2>Provider</h2>
+            <label class="den-check"><input type="radio" name="lp-source" checked="@(_source == "models_dev")" @onchange='() => _source = "models_dev"' data-testid="source-catalog" /> <span>From the catalog</span></label>
+            <label class="den-check"><input type="radio" name="lp-source" checked="@(_source == "custom")" @onchange='() => _source = "custom"' data-testid="source-custom" /> <span>Custom (any OpenAI-compatible endpoint)</span></label>
+
+            @if (_source == "models_dev")
+            {
+                <label for="lp-catalog">Provider</label>
+                <select id="lp-catalog" @onchange="PickCatalogAsync" data-testid="catalog-select">
+                    <option value="" selected="@(_catalogId == "")">Choose a provider…</option>
+                    @foreach (var p in _catalog)
+                    {
+                        <option value="@p.Id" selected="@(_catalogId == p.Id)">@p.Name</option>
+                    }
+                </select>
+                @if (_catalogModels.Count > 0)
+                {
+                    <label for="lp-filter">Models (@_selected.Count selected)</label>
+                    <input id="lp-filter" autocomplete="off" placeholder="Filter models" @bind="_filter" @bind:event="oninput" />
+                    <div class="lp-models" data-testid="model-list">
+                        @foreach (var m in _catalogModels.Where(m => _filter.Length == 0 || m.Name.Contains(_filter, StringComparison.OrdinalIgnoreCase) || m.Id.Contains(_filter, StringComparison.OrdinalIgnoreCase)).Take(60))
+                        {
+                            <label class="den-check"><input type="checkbox" checked="@_selected.Contains(m.Id)" @onchange="e => Toggle(_selected, m.Id, e.Value is true)" data-model="@m.Id" /> <span>@m.Name <span class="den-muted">@m.Id</span></span></label>
+                        }
+                    </div>
+                }
+            }
+            else
+            {
+                <h3>Test an endpoint</h3>
+                <p class="den-muted">Enter the base URL and key: OpenWork asks the endpoint which models it serves and can write the configuration for you.</p>
+                <label for="lp-api">Base URL</label>
+                <input id="lp-api" autocomplete="off" placeholder="https://llm.example.com/v1" @bind="_probeApi" @bind:event="oninput" />
+                <label for="lp-probe-key">Key for the test (not saved)</label>
+                <input id="lp-probe-key" type="password" autocomplete="off" @bind="_probeKey" @bind:event="oninput" />
+                <div class="cx-row-actions">
+                    <button type="button" class="cx-button cx-secondary" disabled="@Busy" @onclick="ProbeAsync" data-testid="test-connection">Test connection</button>
+                    @if (_probeModels.Count > 0)
+                    {
+                        <button type="button" class="cx-button cx-secondary" @onclick="UseProbe" data-testid="use-probe">Use these @_probeModels.Count models</button>
+                    }
+                </div>
+                @if (_probeResult is not null) { <p class="cx-discovery" data-testid="probe-result">@_probeResult</p> }
+                <label for="lp-config">Provider configuration (JSON or JSONC)</label>
+                <textarea id="lp-config" rows="12" spellcheck="false" @bind="_configText" @bind:event="oninput" data-testid="custom-config"></textarea>
+            }
+
+            <h2>Key</h2>
+            <label class="den-check"><input type="radio" name="lp-mode" checked="@(_mode == "shared")" @onchange='() => _mode = "shared"' data-testid="mode-shared" /> <span>One key for everyone</span></label>
+            <label class="den-check"><input type="radio" name="lp-mode" checked="@(_mode == "per_member")" @onchange='() => _mode = "per_member"' data-testid="mode-per-member" /> <span>Each person adds their own key</span></label>
+            @if (_mode == "shared")
+            {
+                @foreach (var env in EnvNames)
+                {
+                    <label for="lp-key-@env">@env</label>
+                    <input id="lp-key-@env" type="password" autocomplete="off" value="@_keys.GetValueOrDefault(env)" @oninput='e => _keys[env] = e.Value?.ToString() ?? ""' data-env="@env" data-testid="key-input" />
+                }
+                @if (LlmProviderId is not null) { <span class="cx-hint">Leave a field empty to keep the saved value.</span> }
+            }
+
+            <h2>Who can use it</h2>
+            <label class="den-check"><input type="radio" name="lp-who" checked="@_everyone" @onchange="() => _everyone = true" data-testid="share-everyone" /> <span>Everyone in @OrgName</span></label>
+            <label class="den-check"><input type="radio" name="lp-who" checked="@(!_everyone)" @onchange="() => _everyone = false" data-testid="share-some" /> <span>Only people and teams I choose (you always keep access)</span></label>
+            @if (!_everyone)
+            {
+                @foreach (var team in Teams)
+                {
+                    <label class="den-check"><input type="checkbox" checked="@_teams.Contains(team.Id)" @onchange="e => Toggle(_teams, team.Id, e.Value is true)" /> <span>Team: @team.Name</span></label>
+                }
+                @foreach (var person in People.Where(p => p.Email != MyEmail))
+                {
+                    <label class="den-check"><input type="checkbox" checked="@_members.Contains(person.Id)" @onchange="e => Toggle(_members, person.Id, e.Value is true)" data-email="@person.Email" /> <span>@person.Name <span class="den-muted">@person.Email</span></span></label>
+                }
+            }
+            <div class="cx-row-actions">
+                <button type="submit" class="cx-button" disabled="@Busy" data-testid="save-provider">@(LlmProviderId is null ? "Add provider" : "Save changes")</button>
+            </div>
+        </form>
+        <p><a class="den-link" href="@(LlmProviderId is null ? "/dashboard/custom-llm-providers" : $"/dashboard/custom-llm-providers/{LlmProviderId}")">Cancel</a></p>
+    }
+</section>
+
+<style>
+    .lp-models { max-height: 18rem; overflow-y: auto; border: 1px solid var(--den-border, #e5e7eb); border-radius: .75rem; padding: .5rem .75rem; display: grid; gap: .25rem; }
+    #lp-config { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; width: 100%; }
+</style>
+
+@code {
+    [Parameter] public string? LlmProviderId { get; set; }
+
+    private sealed record CatalogEntry(string Id, string Name);
+    private sealed record ModelEntry(string Id, string Name);
+
+    private bool _missing, _everyone = true;
+    private string _name = "", _source = "models_dev", _catalogId = "", _filter = "", _configText = "", _mode = "shared";
+    private string _probeApi = "", _probeKey = "";
+    private string? _probeResult;
+    private string? _normalizedApi;
+    private List<string> _probeModels = [];
+    private List<CatalogEntry> _catalog = [];
+    private List<ModelEntry> _catalogModels = [];
+    private List<string> _catalogEnv = [];
+    private HashSet<string> _selected = [], _members = [], _teams = [];
+    private Dictionary<string, string> _keys = [];
+
+    /// <summary>The env names the key fields are for: the catalog provider's, or those in the pasted configuration.</summary>
+    private IEnumerable<string> EnvNames
+    {
+        get
+        {
+            if (_source == "models_dev") return _catalogEnv;
+            try
+            {
+                var node = JsonNode.Parse(_configText, documentOptions: new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true }) as JsonObject;
+                if (node?["provider"] is JsonObject wrapped && wrapped.Count == 1) node = wrapped.First().Value as JsonObject;
+                return node?["env"] is JsonArray env ? env.Select(e => e?.GetValue<string>() ?? "").Where(e => e.Length > 0).ToList() : [];
+            }
+            catch (Exception e) when (e is JsonException or InvalidOperationException or FormatException) { return []; }
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await LoadOrgAsync()) return;
+        var catalog = await Den.RequestAsync("/api/browser/v1/llm-provider-catalog");
+        if (catalog.Ok && catalog.Json is { ValueKind: JsonValueKind.Object } c)
+            _catalog = c.GetProperty("providers").EnumerateArray().Select(p => new CatalogEntry(Str(p, "id"), Str(p, "name"))).ToList();
+        else Error = catalog.Message("The provider catalog could not be loaded.");
+        if (LlmProviderId is not null) await LoadExistingAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    private async Task LoadExistingAsync()
+    {
+        var r = await Den.RequestAsync("/api/browser/v1/llm-providers?scope=manageable");
+        var p = r.Json is { ValueKind: JsonValueKind.Object } body ? body.GetProperty("llmProviders").EnumerateArray().FirstOrDefault(x => Str(x, "id") == LlmProviderId) : default;
+        if (p.ValueKind != JsonValueKind.Object) { _missing = true; return; }
+        _name = Str(p, "name");
+        _source = Str(p, "source");
+        _mode = Str(p, "credentialMode");
+        var access = p.GetProperty("access");
+        _everyone = Flag(access, "allMembers");
+        _members = access.GetProperty("members").EnumerateArray().Select(m => Str(m, "orgMembershipId")).ToHashSet();
+        _teams = access.GetProperty("teams").EnumerateArray().Select(t => Str(t, "teamId")).ToHashSet();
+        if (_source == "models_dev")
+        {
+            await LoadCatalogProviderAsync(Str(p, "providerId"));
+            _selected = p.GetProperty("models").EnumerateArray().Select(m => Str(m, "id")).ToHashSet();
+        }
+        else
+        {
+            // The stored block, models included, as people pasted it.
+            var config = JsonNode.Parse(p.GetProperty("providerConfig").GetRawText())!.AsObject();
+            var models = new JsonObject();
+            foreach (var m in p.GetProperty("models").EnumerateArray()) models[Str(m, "id")] = JsonNode.Parse(m.GetProperty("config").GetRawText());
+            config["models"] = models;
+            _configText = config.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        }
+    }
+
+    private async Task PickCatalogAsync(ChangeEventArgs e)
+    {
+        _selected.Clear();
+        _keys.Clear();
+        await LoadCatalogProviderAsync(e.Value?.ToString() ?? "");
+        if (_name.Length == 0) _name = _catalog.FirstOrDefault(c => c.Id == _catalogId)?.Name ?? "";
+    }
+
+    private async Task LoadCatalogProviderAsync(string id)
+    {
+        _catalogId = id;
+        _catalogModels = [];
+        _catalogEnv = [];
+        if (id.Length == 0) return;
+        var r = await Den.RequestAsync($"/api/browser/v1/llm-provider-catalog/{Uri.EscapeDataString(id)}");
+        if (!r.Ok || r.Json is not { ValueKind: JsonValueKind.Object } body) { Error = r.Message("That provider could not be loaded."); return; }
+        var provider = body.GetProperty("provider");
+        _catalogModels = provider.GetProperty("models").EnumerateArray().Select(m => new ModelEntry(Str(m, "id"), Str(m, "name"))).ToList();
+        _catalogEnv = provider.GetProperty("env").EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0).ToList();
+    }
+
+    private async Task ProbeAsync()
+    {
+        Error = null; _probeResult = null; _probeModels = [];
+        if (_probeApi.Trim().Length == 0) { Error = "Enter the endpoint's base URL first."; return; }
+        Busy = true;
+        var r = await Den.RequestAsync("/api/browser/v1/llm-providers/test-connection", "POST", new { api = _probeApi.Trim(), apiKey = _probeKey });
+        Busy = false;
+        if (!r.Ok || r.Json is not { ValueKind: JsonValueKind.Object } body) { Error = r.Message("The endpoint could not be tested."); return; }
+        var result = body.GetProperty("result");
+        if (!Flag(result, "ok")) { _probeResult = Str(result, "hint"); return; }
+        _normalizedApi = Str(result, "normalizedApi");
+        _probeModels = result.GetProperty("models").EnumerateArray().Select(m => Str(m, "id")).ToList();
+        _probeResult = $"Connected to {_normalizedApi}: {_probeModels.Count} {(_probeModels.Count == 1 ? "model" : "models")}.";
+    }
+
+    /// <summary>Writes an OpenAI-compatible configuration from the tested endpoint and its models.</summary>
+    private void UseProbe()
+    {
+        var id = new string((_name.Length > 0 ? _name : "custom").ToLowerInvariant().Select(ch => char.IsLetterOrDigit(ch) ? ch : '-').ToArray()).Trim('-');
+        if (id.Length == 0) id = "custom";
+        var env = id.ToUpperInvariant().Replace('-', '_') + "_API_KEY";
+        var models = new JsonObject();
+        foreach (var m in _probeModels) models[m] = new JsonObject { ["name"] = m };
+        var config = new JsonObject
+        {
+            ["id"] = id, ["name"] = _name.Length > 0 ? _name : id, ["npm"] = "@ai-sdk/openai-compatible", ["env"] = new JsonArray(env),
+            ["options"] = new JsonObject { ["baseURL"] = _normalizedApi }, ["models"] = models,
+        };
+        _configText = config.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        if (_probeKey.Length > 0) _keys[env] = _probeKey;
+    }
+
+    private static void Toggle(HashSet<string> set, string id, bool on) { if (on) set.Add(id); else set.Remove(id); }
+
+    private async Task SaveAsync()
+    {
+        var name = _name.Trim();
+        if (name.Length == 0) { Error = "Give the provider a name."; return; }
+        var body = new Dictionary<string, object?>
+        {
+            ["name"] = name, ["source"] = _source, ["credentialMode"] = _mode, ["allMembers"] = _everyone,
+            ["memberIds"] = _everyone ? Array.Empty<string>() : _members.ToArray(), ["teamIds"] = _everyone ? Array.Empty<string>() : _teams.ToArray(),
+        };
+        if (_source == "models_dev") { body["providerId"] = _catalogId; body["modelIds"] = _selected.ToArray(); }
+        else body["customConfigText"] = _configText;
+        // Only filled-in fields are sent: an empty one keeps what is saved.
+        var keys = _mode == "shared" ? EnvNames.Where(e => _keys.GetValueOrDefault(e, "").Trim().Length > 0).ToDictionary(e => e, e => _keys[e].Trim()) : [];
+        if (keys.Count > 0) body["apiKeys"] = keys;
+
+        DenResponse? saved = null;
+        var path = LlmProviderId is null ? "/api/browser/v1/llm-providers" : $"/api/browser/v1/llm-providers/{LlmProviderId}";
+        await RunAsync(async () => { var r = await Den.RequestAsync(path, LlmProviderId is null ? "POST" : "PATCH", body); saved = r; return r; }, $"{name} was saved.");
+        if (saved is { Ok: true } && saved.String("llmProvider", "id") is { } id) Nav.NavigateTo($"/dashboard/custom-llm-providers/{id}");
+    }
+}

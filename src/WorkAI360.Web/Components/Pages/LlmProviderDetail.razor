@@ -1,0 +1,198 @@
+@page "/dashboard/custom-llm-providers/{LlmProviderId}"
+@inherits ConnectionsPageBase
+@using System.Text.Json
+
+<PageTitle>@(_name.Length > 0 ? _name : "Provider") · OpenWork Cloud</PageTitle>
+
+<ConnectionStyles />
+<section class="den-card den-wide cx-page" data-testid="llm-provider-detail-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (_provider is not { } p)
+    {
+        <h1>Provider not found</h1>
+        <p class="den-muted" data-testid="not-found">That provider could not be found, or it is not shared with you.</p>
+        <a class="den-link" href="/dashboard/custom-llm-providers">Back to providers</a>
+    }
+    else
+    {
+        <h1 data-testid="provider-name">@_name</h1>
+        <p class="den-muted">@LlmProviders.SourceLabel(p) · @LlmProviders.KeyLabel(p) · @LlmProviders.SharedWith(p)</p>
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @if (NeedsReauth)
+        {
+            <ReauthForm @bind-Password="ReauthPassword" Busy="Busy" OnConfirm="ConfirmItsYouAsync" OnCancel="CancelReauth" />
+        }
+
+        <h2>Models</h2>
+        <ul class="den-members" data-testid="models">
+            @foreach (var m in p.GetProperty("models").EnumerateArray())
+            {
+                <li><div class="den-member-main"><strong>@Str(m, "name")</strong><span class="den-muted">@Str(m, "id")</span></div></li>
+            }
+        </ul>
+
+        @if (Str(p, "credentialMode") == "per_member" && _usable)
+        {
+            <h2>Your key</h2>
+            <p class="den-muted" data-testid="my-credential-state">@(_mine ? "Your key is saved. Saving a new one replaces it." : "Add your own key to use this provider.")</p>
+            <form @onsubmit="SaveMineAsync" novalidate data-testid="my-credential-form">
+                <label for="lp-mine">Your key</label>
+                <input id="lp-mine" type="password" autocomplete="off" @bind="_myKey" @bind:event="oninput" />
+                <div class="cx-row-actions">
+                    <button type="submit" class="cx-button" disabled="@Busy" data-testid="save-my-credential">Save my key</button>
+                    @if (_mine) { <button type="button" class="cx-button cx-secondary" disabled="@Busy" @onclick="RemoveMineAsync" data-testid="remove-my-credential">Remove my key</button> }
+                </div>
+            </form>
+        }
+
+        <h2>Who can use it</h2>
+        var access = p.GetProperty("access");
+        <ul class="den-members" data-testid="access-list">
+            @if (Flag(access, "allMembers")) { <li><div class="den-member-main"><strong>Everyone in @OrgName</strong></div></li> }
+            @foreach (var t in access.GetProperty("teams").EnumerateArray())
+            {
+                <li data-testid="access-row">
+                    <div class="den-member-main"><strong>Team: @Str(t, "name")</strong></div>
+                    @if (_canManage) { <div class="den-member-actions"><button type="button" class="den-link den-danger" disabled="@Busy" @onclick='() => RemoveAccessAsync(Str(t, "id"))'>Remove</button></div> }
+                </li>
+            }
+            @foreach (var m in access.GetProperty("members").EnumerateArray())
+            {
+                var creator = Str(m, "orgMembershipId") == Str(p, "createdByOrgMembershipId");
+                <li data-testid="access-row">
+                    <div class="den-member-main">
+                        @if (m.TryGetProperty("user", out var user)) { <strong>@Str(user, "name") <span class="den-muted">@Str(user, "email")</span></strong> }
+                        else { <strong>A person in @OrgName</strong> }
+                        @if (creator) { <span class="den-muted">Added this provider</span> }
+                    </div>
+                    @if (_canManage && !creator) { <div class="den-member-actions"><button type="button" class="den-link den-danger" disabled="@Busy" @onclick='() => RemoveAccessAsync(Str(m, "id"))'>Remove</button></div> }
+                </li>
+            }
+        </ul>
+
+        @if (Str(p, "credentialMode") == "per_member" && Can("llm_provider_credentials.manage"))
+        {
+            <h2>People's keys</h2>
+            <ul class="den-members" data-testid="member-credentials">
+                @foreach (var c in _credentials)
+                {
+                    var id = Str(c, "orgMembershipId");
+                    var person = People.FirstOrDefault(x => x.Id == id);
+                    var state = Str(c, "state");
+                    <li data-testid="member-credential-row" data-email="@person?.Email">
+                        <div class="den-member-main">
+                            <strong>@(person?.Name ?? id)</strong>
+                            <span class="den-muted" data-testid="credential-state">@StateLabel(state)</span>
+                        </div>
+                        <div class="den-member-actions">
+                            <input type="password" autocomplete="off" placeholder="Set a key for them" aria-label="Key for @(person?.Name ?? id)" value="@_adminKeys.GetValueOrDefault(id)" @oninput='e => _adminKeys[id] = e.Value?.ToString() ?? ""' />
+                            <button type="button" class="den-link" disabled="@Busy" @onclick="() => SetForAsync(id)" data-testid="set-member-credential">Save</button>
+                            @if (state is "active" or "stale" or "error") { <button type="button" class="den-link den-danger" disabled="@Busy" @onclick="() => BlockAsync(id)" data-testid="block-member-credential">Block</button> }
+                        </div>
+                    </li>
+                }
+            </ul>
+        }
+
+        @if (_canManage)
+        {
+            <div class="cx-row-actions">
+                <a class="cx-button cx-secondary" href="/dashboard/custom-llm-providers/@LlmProviderId/edit" data-testid="edit-provider">Edit</a>
+                @if (_confirmDelete)
+                {
+                    <button type="button" class="cx-button cx-danger" disabled="@Busy" @onclick="DeleteAsync" data-testid="confirm-delete">Delete for everyone</button>
+                    <button type="button" class="den-link" @onclick="() => _confirmDelete = false">Cancel</button>
+                }
+                else { <button type="button" class="cx-button cx-secondary" @onclick="() => _confirmDelete = true" data-testid="delete-provider">Delete</button> }
+            </div>
+        }
+        <p><a class="den-link" href="/dashboard/custom-llm-providers">Back to providers</a></p>
+    }
+</section>
+
+@code {
+    [Parameter] public string LlmProviderId { get; set; } = "";
+
+    private JsonElement? _provider;
+    private string _name = "", _myKey = "";
+    private bool _usable, _mine, _canManage, _confirmDelete;
+    private List<JsonElement> _credentials = [];
+    private readonly Dictionary<string, string> _adminKeys = [];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await LoadOrgAsync()) return;
+        await LoadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override Task ReloadAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        JsonElement? usable = null, managed = null;
+        foreach (var scope in new[] { "usable", "manageable" })
+        {
+            var r = await Den.RequestAsync($"/api/browser/v1/llm-providers?scope={scope}");
+            if (r.Json is not { ValueKind: JsonValueKind.Object } body) continue;
+            var found = body.GetProperty("llmProviders").EnumerateArray().FirstOrDefault(x => Str(x, "id") == LlmProviderId);
+            if (found.ValueKind != JsonValueKind.Object) continue;
+            if (scope == "usable") usable = found; else managed = found;
+        }
+        _provider = managed ?? usable;
+        _usable = usable is not null;
+        _mine = usable is { } u && Flag(u, "hasMyCredential");
+        _canManage = _provider is { } p && Flag(p, "canManage");
+        _name = _provider is { } q ? Str(q, "name") : "";
+        _credentials = [];
+        if (_provider is { } provider && Str(provider, "credentialMode") == "per_member" && Can("llm_provider_credentials.manage"))
+        {
+            var r = await Den.RequestAsync($"/api/browser/v1/llm-providers/{LlmProviderId}/member-credentials");
+            if (r.Json is { ValueKind: JsonValueKind.Object } body && r.Ok) _credentials = body.GetProperty("memberCredentials").EnumerateArray().ToList();
+        }
+    }
+
+    private static string StateLabel(string state) => state switch
+    {
+        "active" => "Key saved", "blocked" => "Blocked by an administrator", "stale" => "Key needs replacing", "error" => "Key failed", _ => "No key yet",
+    };
+
+    private async Task SaveMineAsync()
+    {
+        if (_myKey.Trim().Length == 0) { Error = "Enter your key."; return; }
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/llm-providers/{LlmProviderId}/my-credential", "PUT", new { apiKey = _myKey.Trim() }), "Your key was saved.",
+            r => r.String("error") == "credential_blocked" ? "An administrator blocked your key for this provider. Ask them to set a new one." : null);
+        if (Error is null) _myKey = "";
+    }
+
+    private Task RemoveMineAsync() =>
+        RunAsync(() => Den.RequestAsync($"/api/browser/v1/llm-providers/{LlmProviderId}/my-credential", "DELETE"), "Your key was removed.",
+            r => r.String("error") == "credential_blocked" ? "An administrator blocked your key for this provider, so only they can change it." : null);
+
+    private Task RemoveAccessAsync(string accessId) =>
+        RunAsync(() => Den.RequestAsync($"/api/browser/v1/llm-providers/{LlmProviderId}/access/{accessId}", "DELETE"), "Access was removed.");
+
+    private async Task SetForAsync(string memberId)
+    {
+        var key = _adminKeys.GetValueOrDefault(memberId, "").Trim();
+        if (key.Length == 0) { Error = "Enter the key to set."; return; }
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/llm-providers/{LlmProviderId}/member-credentials/{memberId}", "PUT", new { apiKey = key }), "The key was saved.");
+        if (Error is null) _adminKeys.Remove(memberId);
+    }
+
+    private Task BlockAsync(string memberId) =>
+        RunAsync(() => Den.RequestAsync($"/api/browser/v1/llm-providers/{LlmProviderId}/member-credentials/{memberId}/block", "POST"), "The key was blocked.");
+
+    private async Task DeleteAsync()
+    {
+        DenResponse? result = null;
+        await RunAsync(async () => { var r = await Den.RequestAsync($"/api/browser/v1/llm-providers/{LlmProviderId}", "DELETE"); result = r; return r; }, $"{_name} was deleted.");
+        if (result is { Ok: true }) Nav.NavigateTo("/dashboard/custom-llm-providers");
+    }
+}
