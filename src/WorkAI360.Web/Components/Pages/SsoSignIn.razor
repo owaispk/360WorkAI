@@ -51,6 +51,9 @@
         "access_denied" when description is not null && description.Contains("deprovisioned") => description,
         "email_outside_sso_domain" => description ?? "Your sign-in provider returned an email outside this organization's verified domain.",
         "invalid_state" or "state_mismatch" => "This sign-in link has expired or was already used. Start again.",
+        "invalid_saml_response" => description is { Length: > 0 } ? $"Your identity provider’s response was refused: {description}" : "Your identity provider’s response was refused.",
+        "replay_detected" => "That sign-in response was already used. Start again from this page.",
+        "unsolicited_response" => "Your organization only allows signing in from this page. Start again here.",
         _ => description is { Length: > 0 } ? $"{error}: {description}" : error,
     };
 
@@ -60,7 +63,10 @@
         StateHasChanged();
         var self = $"/sso/{Uri.EscapeDataString(Slug)}";
         var module = await Js.InvokeAsync<IJSObjectReference>("import", "./js/sso.js");
-        var body = System.Text.Json.JsonSerializer.Serialize(new { organizationSlug = Slug, callbackURL = _callback, errorCallbackURL = self, loginHint = _loginHint });
+        // A hint that is not there is left out (the API refuses a null), so the workspace address works on its own.
+        var fields = new Dictionary<string, string?> { ["organizationSlug"] = Slug, ["callbackURL"] = _callback, ["errorCallbackURL"] = self };
+        if (!string.IsNullOrEmpty(_loginHint)) fields["loginHint"] = _loginHint;
+        var body = System.Text.Json.JsonSerializer.Serialize(fields);
         var raw = await module.InvokeAsync<DenRaw>("post", "/api/auth/sign-in/sso", null, body);
         var response = new DenResponse(raw.Status, raw.Text);
         if (!response.Ok || response.String("url") is not { Length: > 0 } url)

@@ -127,12 +127,24 @@ public static class SsoAdminEndpoints
             return Results.Json(new { connection = sso.Payload(connection), domainVerificationToken = domainToken }, statusCode: 201);
         });
 
-        app.MapPost("/v1/sso/saml", async (HttpContext ctx, OrgAccess access) =>
+        app.MapPost("/v1/sso/saml", async (HttpContext ctx, OrgAccess access, SsoService sso) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
             if (access.Require(context!, "sso.manage") is { } denied) return denied;
-            return Results.Json(new { error = "not_implemented", message = "SAML single sign-on is not available in this build. Use OpenID Connect." }, statusCode: 501);
+            var body = await BodyReader.ReadAsync(ctx.Request);
+            var issuer = body.String("issuer", true, url: true);
+            var domain = body.String("domain", true, minOne: true)?.Trim();
+            var entryPoint = body.String("entryPoint", true, url: true);
+            var cert = body.String("cert", true, minOne: true);
+            var audience = body.String("audience", false, url: true);
+            var binding = body.Enum("binding", "redirect", "post");
+            if (body.Failure is { } invalid) return invalid;
+
+            var (connection, error) = await sso.RegisterSamlAsync(context!.Organization, new SamlRegistration(issuer!, domain!, entryPoint!, cert!, audience, binding), ctx.RequestAborted);
+            if (connection is null) return Invalid(error!);
+            var domainToken = connection.DomainVerified ? null : await sso.RequestDomainTokenAsync(connection, ctx.RequestAborted);
+            return Results.Json(new { connection = sso.Payload(connection), domainVerificationToken = domainToken }, statusCode: 201);
         });
 
         app.MapDelete("/v1/sso", async (HttpContext ctx, OrgAccess access, SsoService sso) =>
@@ -158,7 +170,7 @@ public static class SsoAdminEndpoints
             return Results.Json(new { intentId = intent, expiresAt = Responses.IsoUtc(expires), testUrl }, statusCode: 201);
         });
 
-        app.MapPost("/v1/sso/test/{intentId}/start", async (string intentId, HttpContext ctx, OrgAccess access, SsoService sso, OidcFlow flow, OAuthUrls urls) =>
+        app.MapPost("/v1/sso/test/{intentId}/start", async (string intentId, HttpContext ctx, OrgAccess access, SsoService sso, OidcFlow flow, SamlFlow saml, OAuthUrls urls) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -168,7 +180,8 @@ public static class SsoAdminEndpoints
             var completion = $"{urls.Web}/sso/test/complete?{SsoService.TestIntentQueryKey}={Uri.EscapeDataString(intentId)}";
             try
             {
-                var url = await flow.StartAsync(ctx, connection, new OidcFlow.Start(completion, completion, null, context.Auth.User.Email, intentId), ctx.RequestAborted);
+                var start = new OidcFlow.Start(completion, completion, null, context.Auth.User.Email, intentId);
+                var url = connection.Kind == "saml" ? await saml.StartAsync(ctx, connection, start, ctx.RequestAborted) : await flow.StartAsync(ctx, connection, start, ctx.RequestAborted);
                 return Results.Json(new { url });
             }
             catch (Exception e) when (e is InvalidOperationException or DbUpdateException or JsonException)
@@ -205,13 +218,17 @@ public static class SsoAdminEndpoints
             return await sso.DisableAsync(context!.Organization.Id, ctx.RequestAborted) ? Results.NoContent() : OrgNotFound();
         });
 
-        // Only SAML connections have service provider metadata.
-        app.MapGet("/v1/sso/metadata", async (HttpContext ctx, OrgAccess access) =>
+        // Only SAML connections have service provider metadata. As in the reference, `format` is validated and the answer is always the XML document.
+        app.MapGet("/v1/sso/metadata", async (HttpContext ctx, OrgAccess access, SsoService sso) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
             if (access.Require(context!, "sso.view") is { } denied) return denied;
-            return OrgNotFound();
+            var format = ctx.Request.Query["format"].ToString();
+            if (ctx.Request.Query.ContainsKey("format") && format is not ("xml" or "json"))
+                return Results.Json(new { error = "invalid_request", details = new[] { new { message = "Invalid option: expected one of \"xml\"|\"json\"", path = new[] { "format" } } } }, statusCode: 400);
+            var connection = await sso.ForOrganizationAsync(context!.Organization.Id);
+            return (connection is null ? null : SamlEndpoints.SamlMetadataResult(sso, connection)) ?? OrgNotFound();
         });
 
         app.MapPost("/v1/sso/request-domain-verification", async (HttpContext ctx, OrgAccess access, SsoService sso) =>

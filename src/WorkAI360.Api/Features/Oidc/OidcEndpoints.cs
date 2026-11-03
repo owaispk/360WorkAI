@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
+using WorkAI360.Api.Domain;
 using WorkAI360.Api.OAuth;
 
 namespace WorkAI360.Api.Features.Oidc;
@@ -28,23 +29,33 @@ public static class OidcEndpoints
 
     // ============================== userinfo ==============================
 
-    private static async Task<IResult> UserInfoAsync(HttpContext ctx, DenDbContext db, SigningKeyStore keys, OAuthUrls urls)
+    private static async Task<IResult> UserInfoAsync(HttpContext ctx, DenDbContext db, SigningKeyStore keys, OAuthUrls urls, DpopVerifier dpop)
     {
         ctx.Response.Headers.CacheControl = "no-store";
         ctx.Response.Headers.Pragma = "no-cache";
 
-        var header = SessionService.ReadBearer(ctx.Request);
+        var (header, scheme) = McpAuthenticator.ReadAuthorization(ctx.Request);
         string? bodyToken = null;
         if (ctx.Request.Method == "POST" && ctx.Request.HasFormContentType) bodyToken = (await ctx.Request.ReadFormAsync()).TryGetValue("access_token", out var v) && v.Count == 1 ? v[0] : null;
         if (header is not null && !string.IsNullOrEmpty(bodyToken)) return Error(400, "invalid_request", "Multiple access token transport methods are not allowed");
         var token = header ?? (string.IsNullOrEmpty(bodyToken) ? null : bodyToken);
         if (token is null) return Error(401, "invalid_request", "access token not found");
+        if (header is null) scheme = "Bearer";
 
         var principal = await VerifyAccessTokenAsync(token, keys, urls, db);
         if (principal is null)
         {
             ctx.Response.Headers.WWWAuthenticate = InvalidTokenChallenge;
             return Error(401, "invalid_token", "Invalid access token");
+        }
+        // Sender-constrained tokens (RFC 9449 7.1): a bound token needs the DPoP scheme and a proof; a plain one must not use the DPoP scheme.
+        var bound = DpopVerifier.BoundKey(principal.Payload);
+        if (bound is null ? scheme == "DPoP" : scheme != "DPoP")
+            return DpopChallenge(ctx, "invalid_token", bound is null ? "DPoP authorization requires a DPoP-bound access token" : "DPoP-bound access token requires the DPoP authorization scheme");
+        if (bound is not null)
+        {
+            try { await dpop.VerifyAsync(ctx.Request.Headers["DPoP"].Count == 1 ? ctx.Request.Headers["DPoP"][0] : null, ctx.Request.Method, [$"{ctx.Request.Scheme}://{ctx.Request.Host}{ctx.Request.Path}", urls.UserInfoEndpoint, $"{urls.Api}/api/auth/oauth2/userinfo"], token, bound, ctx.RequestAborted); }
+            catch (DpopException e) { return DpopChallenge(ctx, e.Code, e.Message); }
         }
         if (!OAuthConstants.SplitScope(principal.Scope).Contains(OAuthConstants.OpenIdScope)) return Error(400, "invalid_scope", "Missing required scope");
 
@@ -69,6 +80,12 @@ public static class OidcEndpoints
         return Results.Json(claims);
     }
 
+    private static IResult DpopChallenge(HttpContext ctx, string error, string description)
+    {
+        ctx.Response.Headers.WWWAuthenticate = $"DPoP error=\"{error}\", error_description=\"{description.Replace('"', '\'')}\", algs=\"{string.Join(' ', DpopVerifier.SigningAlgorithms)}\"";
+        return Error(401, error, description);
+    }
+
     private sealed record AccessPrincipal(string UserId, string OrganizationId, string ClientId, string Scope, JsonElement Payload);
 
     /// <summary>
@@ -89,9 +106,23 @@ public static class OidcEndpoints
         return new AccessPrincipal(sub, org, azp, Str("scope") ?? "", p);
     }
 
+    /// <summary>A <c>client_credentials</c> token (it speaks for the client: <c>sub</c> is the client id, no workspace) that is still good.</summary>
+    private static async Task<AccessPrincipal?> VerifyClientTokenAsync(string token, SigningKeyStore keys, OAuthUrls urls, DenDbContext db)
+    {
+        if (token.StartsWith(OAuthConstants.AccessTokenPrefix, StringComparison.Ordinal) || !token.Contains('.')) return null;
+        if (Jwt.Verify(token, await keys.KeysAsync()) is not { } p) return null;
+        string? Str(string name) => p.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        if (Str("iss") != urls.Issuer || Str("aud") != urls.CanonicalResource || p.TryGetProperty(OAuthConstants.ClaimOrg, out _) || p.TryGetProperty(OAuthConstants.ClaimTokenUse, out _)) return null;
+        if (!p.TryGetProperty("exp", out var exp) || exp.ValueKind != JsonValueKind.Number || exp.GetInt64() <= DateTimeOffset.UtcNow.ToUnixTimeSeconds()) return null;
+        var sub = Str("sub"); var azp = Str("azp");
+        if (sub is null || azp is null || sub != azp || Str("client_id") != azp) return null;
+        if (!await db.OAuthClients.AnyAsync(c => c.Id == azp)) return null;
+        return new AccessPrincipal(sub, "", azp, Str("scope") ?? "", p);
+    }
+
     // ============================== introspection ==============================
 
-    private static async Task<IResult> IntrospectAsync(HttpContext ctx, DenDbContext db, ClientResolver clients, SigningKeyStore keys, OAuthUrls urls, TokenRateLimit rateLimit)
+    private static async Task<IResult> IntrospectAsync(HttpContext ctx, DenDbContext db, ClientResolver clients, SigningKeyStore keys, OAuthUrls urls, TokenRateLimit rateLimit, ClientAssertionVerifier assertions)
     {
         ctx.Response.Headers.CacheControl = "no-store";
         ctx.Response.Headers.Pragma = "no-cache";
@@ -101,37 +132,48 @@ public static class OidcEndpoints
         var form = await OAuthEndpoints.ReadParamsAsync(ctx.Request);
         // The same numbers as the token endpoint, in budgets of their own: a caller guessing client secrets or probing tokens is slowed down
         // and, once refused, learns nothing more (the answer to an unknown token is the same {"active": false} as to someone else's).
-        var admission = rateLimit.Admit(ctx, form, OAuthEndpoints.BasicClientId(ctx.Request), "introspect");
+        var admission = rateLimit.Admit(ctx, form, OAuthEndpoints.BasicClientId(ctx.Request) ?? ClientAssertionVerifier.PeekClientId(form.GetValueOrDefault("client_assertion")), "introspect");
         if (admission.Refused is { } refused) return refused;
-        var result = await IntrospectCoreAsync(ctx, form, db, clients, keys, urls);
+        var result = await IntrospectCoreAsync(ctx, form, db, clients, keys, urls, assertions);
         rateLimit.RecordFailure(admission, result);
         return result;
     }
 
-    private static async Task<IResult> IntrospectCoreAsync(HttpContext ctx, Dictionary<string, string> form, DenDbContext db, ClientResolver clients, SigningKeyStore keys, OAuthUrls urls)
+    private static async Task<IResult> IntrospectCoreAsync(HttpContext ctx, Dictionary<string, string> form, DenDbContext db, ClientResolver clients, SigningKeyStore keys, OAuthUrls urls, ClientAssertionVerifier assertions)
     {
-        // Only a client that can prove itself with a secret may ask (RFC 7662 section 2.1): public clients have none, so they never can.
-        string? id = form.GetValueOrDefault("client_id"), secret = form.GetValueOrDefault("client_secret");
-        var viaHeader = false;
-        var header = ctx.Request.Headers.Authorization.ToString();
-        if (header.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
+        // Only a client that can prove itself may ask (RFC 7662 section 2.1): with a secret, or with a signed assertion (private_key_jwt).
+        // Public clients have neither, so they never can.
+        OAuthClient? client;
+        if (form.ContainsKey("client_assertion") || form.ContainsKey("client_assertion_type"))
         {
-            try
-            {
-                var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(header[6..].Trim()));
-                var colon = decoded.IndexOf(':');
-                if (colon > 0) { id = Uri.UnescapeDataString(decoded[..colon]); secret = Uri.UnescapeDataString(decoded[(colon + 1)..]); viaHeader = true; }
-            }
-            catch (Exception e) when (e is FormatException or UriFormatException) { return Error(401, "invalid_client", "invalid client credentials"); }
+            if (ctx.Request.Headers.Authorization.ToString().Length > 0 || form.ContainsKey("client_secret")) return Error(400, "invalid_request", "A request must use only one client authentication method");
+            try { client = await assertions.AuthenticateAsync(form.GetValueOrDefault("client_assertion"), form.GetValueOrDefault("client_assertion_type"), form.GetValueOrDefault("client_id"), "oauth2/introspect", ctx.RequestAborted); }
+            catch (OAuthProblem problem) { return problem.ToResult(); }
         }
-        if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(secret)) return Error(401, "invalid_client", "missing required credentials");
+        else
+        {
+            string? id = form.GetValueOrDefault("client_id"), secret = form.GetValueOrDefault("client_secret");
+            var viaHeader = false;
+            var header = ctx.Request.Headers.Authorization.ToString();
+            if (header.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(header[6..].Trim()));
+                    var colon = decoded.IndexOf(':');
+                    if (colon > 0) { id = Uri.UnescapeDataString(decoded[..colon]); secret = Uri.UnescapeDataString(decoded[(colon + 1)..]); viaHeader = true; }
+                }
+                catch (Exception e) when (e is FormatException or UriFormatException) { return Error(401, "invalid_client", "invalid client credentials"); }
+            }
+            if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(secret)) return Error(401, "invalid_client", "missing required credentials");
 
-        var client = await clients.ResolveAsync(id);
-        // One answer for an unknown client, a public client and a wrong secret, so the response does not say which client ids exist.
-        if (client is null || client.AuthMethod == "none" || client.SecretHash is null
-            || !CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(Ids.Sha256Hex(secret)), Encoding.ASCII.GetBytes(client.SecretHash))
-            || (client.AuthMethod == "client_secret_basic") != viaHeader)
-            return Error(401, "invalid_client", "invalid client credentials");
+            client = await clients.ResolveAsync(id);
+            // One answer for an unknown client, a public client and a wrong secret, so the response does not say which client ids exist.
+            if (client is null || client.AuthMethod is "none" or "private_key_jwt" || client.SecretHash is null
+                || !CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(Ids.Sha256Hex(secret)), Encoding.ASCII.GetBytes(client.SecretHash))
+                || (client.AuthMethod == "client_secret_basic") != viaHeader)
+                return Error(401, "invalid_client", "invalid client credentials");
+        }
 
         if (!form.TryGetValue("token", out var token) || string.IsNullOrEmpty(token)) return Error(400, "invalid_request", "token is required");
         var hint = form.GetValueOrDefault("token_type_hint");
@@ -145,12 +187,17 @@ public static class OidcEndpoints
     private static async Task<Dictionary<string, object?>?> IntrospectAccessTokenAsync(string token, string clientId, DenDbContext db, SigningKeyStore keys, OAuthUrls urls)
     {
         var principal = await VerifyAccessTokenAsync(token, keys, urls, db);
-        if (principal is null || principal.ClientId != clientId) return null;   // another client's token reads exactly like an unknown one
+        JsonElement payload;
+        string tokenClient;
+        if (principal is not null) { payload = principal.Payload; tokenClient = principal.ClientId; }
+        else if (await VerifyClientTokenAsync(token, keys, urls, db) is { } machine) { payload = machine.Payload; tokenClient = machine.ClientId; }
+        else return null;
+        if (tokenClient != clientId) return null;   // another client's token reads exactly like an unknown one
         var result = new Dictionary<string, object?>();
-        foreach (var property in principal.Payload.EnumerateObject()) result[property.Name] = property.Value.Clone();
-        result["client_id"] = principal.ClientId;
+        foreach (var property in payload.EnumerateObject()) result[property.Name] = property.Value.Clone();
+        result["client_id"] = tokenClient;
         result["active"] = true;
-        result["token_type"] = "Bearer";
+        result["token_type"] = DpopVerifier.BoundKey(payload) is null ? "Bearer" : "DPoP";
         return result;
     }
 

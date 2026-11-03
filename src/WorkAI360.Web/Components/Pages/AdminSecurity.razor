@@ -1,0 +1,84 @@
+@page "/admin/security"
+@inherits AdminPage
+@using System.Text.Json
+
+<PageTitle>Security · Platform admin · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="admin-security-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (Denied)
+    {
+        <h1>Security</h1>
+        <p class="den-muted" data-testid="no-access">This area is for the people who run this deployment. Your account is not one of them.</p>
+    }
+    else
+    {
+        <h1>Security</h1>
+        <AdminNav Current="security" />
+        <p class="den-muted">Signals about accounts, credentials and use. Each one states the rule that raised it. They are prompts for review, not verdicts, and nothing here changes an account.</p>
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        <div class="den-inline" data-testid="days">
+            @foreach (var d in new[] { 7, 14, 30 })
+            {
+                <button type="button" class="den-link @(_days == d ? "current" : "")" disabled="@Busy" @onclick="() => ChooseAsync(d)" data-testid="days-@d">Last @d days</button>
+            }
+        </div>
+        @foreach (var f in _findings)
+        {
+            <div class="den-panel" data-testid="finding" data-id="@f.Id" data-severity="@f.Severity">
+                <strong>@f.Title <span class="den-badge @(f.Severity is "high" or "medium" ? "den-badge-pending" : "den-badge-admin")" data-testid="severity">@f.Severity</span></strong>
+                <p data-testid="summary">@f.Summary</p>
+                @if (f.Entities.Count > 0)
+                {
+                    <ul class="den-members">
+                        @foreach (var e in f.Entities) { <li data-testid="entity"><strong>@e.Label</strong><span class="den-muted">@e.Detail</span><span class="den-badge">@e.Severity</span></li> }
+                    </ul>
+                    @if (f.EntityCount > f.Entities.Count) { <p class="den-muted">and @(f.EntityCount - f.Entities.Count) more</p> }
+                }
+                <details>
+                    <summary>How this is decided</summary>
+                    <p class="den-muted" data-testid="rule">@f.Rule</p>
+                    <p class="den-muted">@f.Why</p>
+                    <p class="den-muted">@f.Review</p>
+                </details>
+            </div>
+        }
+    }
+</section>
+
+@code {
+    private sealed record Entity(string Label, string Detail, string Severity);
+    private sealed record Finding(string Id, string Title, string Severity, string Summary, string Rule, string Why, string Review, int EntityCount, List<Entity> Entities);
+
+    private int _days = 7;
+    private List<Finding> _findings = [];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await EnterAsync()) return;
+        await LoadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync() => await LoadAsync();
+
+    private async Task ChooseAsync(int days)
+    {
+        _days = days;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        var response = await Den.RequestAsync($"/api/browser/v1/admin/security?days={_days}");
+        if (response.Json is not { ValueKind: JsonValueKind.Object } root) { Error = response.Message("Could not load the security signals."); return; }
+        Error = null;
+        _findings = root.GetProperty("findings").EnumerateArray().Select(f => new Finding(Text(f, "id"), Text(f, "title"), Text(f, "severity"), Text(f, "summary"), Text(f, "rule"), Text(f, "why"), Text(f, "review"), Number(f, "entityCount"),
+            f.GetProperty("entities").EnumerateArray().Select(e => new Entity(Text(e, "label"), Text(e, "detail"), Text(e, "severity"))).ToList())).ToList();
+    }
+}

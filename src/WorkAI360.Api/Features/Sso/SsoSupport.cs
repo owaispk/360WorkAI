@@ -24,6 +24,12 @@ public sealed class SsoOptions
     /// </summary>
     public bool? DevLoopbackIssuerIsVerified { get; set; }
 
+    /// <summary>SAML: how far clocks may differ when checking NotBefore / NotOnOrAfter, in seconds (default 300, the reference's).</summary>
+    public int? SamlClockSkewSeconds { get; set; }
+
+    /// <summary>SAML: accept responses the identity provider sends unasked (no InResponseTo). Default true, as the reference; turn off to allow only sign-ins started here.</summary>
+    public bool? SamlAllowIdpInitiated { get; set; }
+
     /// <summary>DNS servers used for domain verification. Empty uses the system's resolvers (/etc/resolv.conf), then public ones.</summary>
     public string[] DnsServers { get; set; } = [];
 }

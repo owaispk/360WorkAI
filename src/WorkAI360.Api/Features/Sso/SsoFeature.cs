@@ -22,11 +22,13 @@ public sealed class SsoFeature : IFeature
         services.AddScoped<SsoProvisioning>();
         services.AddScoped<SsoRouting>();
         services.AddScoped<OidcFlow>();
+        services.AddScoped<SamlFlow>();
     }
 
     public void MapEndpoints(WebApplication app)
     {
         SsoAdminEndpoints.Map(app);
         SsoSignInEndpoints.Map(app);
+        SamlEndpoints.Map(app);
     }
 }

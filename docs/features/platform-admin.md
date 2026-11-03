@@ -39,6 +39,12 @@ A platform admin runs a whole deployment. A workspace owner is not one, and noth
 Changes to a workspace (plan, free seats, DPA, web access, capabilities, user removal) are written to that workspace's audit history through `IAuditLog`, so its
 owner can read them. Feature rollouts have no workspace and, as in the reference, are recorded only in the feature history (`lastChange`).
 
+| `GET /v1/admin/feature-usage[?range=7d or 30d]`, `GET /v1/admin/feature-usage/{key}`, `GET /v1/admin/organizations/{id}/feature-usage` | per feature: workspaces it is on for, members using it, last use, one health state (`not_used`, `in_use`, `healthy`, `failing`, `limited`, `mostly_skipped`) and, for the two Automation features (`automationIntervalSchedules`, `automationCalendarTriggers`), run outcomes read from this database's Automation runs (by day, status, reason); the per-workspace report lists who used each feature. Usage is recorded when a client reports it (`POST /v1/org/feature-usage`, now stored as member, feature and UTC day, only for features that are on for the caller) |
+| `GET /v1/admin/security[?days=1..30]` | 14 threshold findings with their rules, in the reference's wording: sign-up bursts, unverified and throwaway sign-ups, unverified domains, accounts on many networks, many workspaces from one person, new platform admins, API key bursts, app registrations, invitation bursts, sign-ins from automation tools; the three that need model usage (spend spikes, round the clock, free allowance on day one) are always clear. App registrations are not attributed to a person here (a client has no owner), so only the volume rule applies |
+| `GET /v1/admin/services`, `POST /v1/admin/services/check` | deployment readiness in the reference's v2 shape: database (a real query), email (settings only, nothing is sent), and the gateway, headless runner and Workbot as not set up; a check less than 30 seconds old is answered again (`202`) |
+| `GET /v1/admin/sandbox-orgs` | `{enabled: false, sandboxes: []}`: sandbox organizations are a cloud feature (`sandboxOrgs`), off on a self-hosted deployment as in the reference |
+| `PUT /v1/admin/oauth-clients/{id}/client-credentials-scopes` | this build's only addition: lets an operator give a machine client its scopes ([oauth-extras.md](oauth-extras.md)) |
+
 ## How feature flags resolve
 
 In the reference's order (`FeatureResolver`): not part of this deployment (cloud-only: `autoRouter`, `sandboxOrgs`, `managedDeployments`) off, then the kill switch (off),
@@ -70,10 +76,11 @@ and paid and unpaid are null.
 ## Not built
 
 * `GET /v1/admin/users/{id}/inference-usage` and the inference usage reset, free-auto (`free-auto/*`), the Stripe-backed plan, billing and `includeBilling` paid states, seat-subscription syncing.
-* `/v1/admin/dashboard`, `control-center` (+ refresh), `security` and `security/requests`, `feature-usage` (+ per organization), `opportunities*`, `scale-performance`, `sandbox-organizations`, `services`, `mcp-registration`,
-  organization `usage` and `insights` (they need gateway usage, telemetry, security counters or outside services).
+* `/v1/admin/dashboard`, `control-center` (+ refresh), `security/requests` (it reads a log of refused, rate-limited and failed requests that this build does not keep, so there is nothing honest to show), `opportunities*`,
+  `scale-performance`, the sandbox organization actions (create, rotate link, join role, extend, credit, close: always "turned off" on self-hosted), `mcp-registration`, organization `usage` and `insights`
+  (they need gateway usage, telemetry or outside services). Feature outcomes for `slackSendAsBot` and `workbotProactive` (no Slack or Workbot here); background Automation work is not recorded as feature usage.
 * Member-level feature overrides (`member-features`) and the `members` admin list of a workspace beyond the detail page.
-* The den-web pages for those, and a dashboard link to `/admin` (the page is reached by URL and answers anyone else with a plain message).
+* Pages for what is built: `/admin/feature-usage`, `/admin/security`, `/admin/services` (Blazor, in the admin navigation). The den-web pages for the rest, and a dashboard link to `/admin` (the page is reached by URL and answers anyone else with a plain message).
 
 ## Running it
 

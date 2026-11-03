@@ -18,7 +18,7 @@ public static class SsoSignInEndpoints
 
     public static void Map(WebApplication app)
     {
-        app.MapPost("/api/auth/sign-in/sso", async (HttpContext ctx, DenDbContext db, OidcFlow flow, TrustedUrls trusted, RateLimiter limiter) =>
+        app.MapPost("/api/auth/sign-in/sso", async (HttpContext ctx, DenDbContext db, OidcFlow flow, SamlFlow saml, TrustedUrls trusted, RateLimiter limiter) =>
         {
             if (limiter.Hit(StartLimit, null, AuthEndpoints.ClientIp(ctx)) is { } wait) return AuthEndpoints.TooManyRequests(ctx, wait);
             var body = await BodyReader.ReadAsync(ctx.Request);
@@ -50,10 +50,11 @@ public static class SsoSignInEndpoints
             if (connection is null) return Message(404, "No provider found for the issuer");
             // A disabled connection only signs in for an administrator's test, which starts from the dashboard (never from here).
             if (!SsoService.Ready(connection)) return Message(403, NotEnabled);
-            if (connection.Kind != "oidc") return Message(400, "Invalid SSO provider");
+            if (connection.Kind is not ("oidc" or "saml")) return Message(400, "Invalid SSO provider");
 
             if (callback is null) return Message(400, "[body.callbackURL] Invalid input: expected string, received undefined", "VALIDATION_ERROR");
-            var url = await flow.StartAsync(ctx, connection, new OidcFlow.Start(callback, errorCallback, newUserCallback, loginHint ?? email, null), ctx.RequestAborted);
+            var start = new OidcFlow.Start(callback, errorCallback, newUserCallback, loginHint ?? email, null);
+            var url = connection.Kind == "saml" ? await saml.StartAsync(ctx, connection, start, ctx.RequestAborted) : await flow.StartAsync(ctx, connection, start, ctx.RequestAborted);
             return Results.Json(new { url, redirect = true });
         });
 

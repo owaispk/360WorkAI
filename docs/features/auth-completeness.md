@@ -44,7 +44,7 @@ the session and the request; the confirm POST only works with that cookie. Non-b
 | Access token `aud` is `[resource, userinfo]` for `openid` requests, claims are URL-named (`https://web/org_id`) | `aud` stays the resource string; claims keep the names this rewrite already used (`org_id`, `token_use`) | MCP clients and the existing `/mcp/agent` check read them; userinfo accepts exactly the tokens `/mcp/agent` accepts, never an ID token |
 | Access tokens carry `sid` and become inactive when the session is deleted | They do not carry `sid`; logout revokes refresh tokens, access tokens live at most 45 minutes | MCP grants outlive browser sessions here (membership is rechecked on every call) |
 | `enable_end_session` is never settable through the API (every dynamically registered client is refused logout) | Settable by a signed-in registrant | Otherwise the logout code could never run; an anonymous client can never use it |
-| Back-channel logout, `claims` request parameter, `prompt`/`max_age`/`id_token_hint` at authorize, `private_key_jwt`, DPoP, `client_credentials`, pairwise subjects | Not built (`claims_parameter_supported: false`, `subject_types_supported: ["public"]`) | MCP clients do not use them |
+| Back-channel logout, `claims` request parameter, `prompt`/`max_age`/`id_token_hint` at authorize, pairwise subjects | Not built (`private_key_jwt`, DPoP and `client_credentials` are now built: [oauth-extras.md](oauth-extras.md)) (`claims_parameter_supported: false`, `subject_types_supported: ["public"]`) | MCP clients do not use them |
 | An authorize request for `openid` without `resource` | Refused with `invalid_target`, as the reference does | |
 | Introspection by a resource-server client linked to a resource | Not built: a client only introspects its own tokens | no per-client resource links here |
 
@@ -122,7 +122,7 @@ The redirect URI to register with the provider is `{Auth__WebUrl}/api/auth/callb
 
 ## Not built
 
-`prompt`, `max_age`, `claims` and `login_hint` at authorize; back-channel logout; `client_credentials`; DPoP; pairwise subjects; `idToken` social sign-in and account linking for a signed-in person;
+`prompt`, `max_age`, `claims` and `login_hint` at authorize; back-channel logout; pairwise subjects; `idToken` social sign-in and account linking for a signed-in person;
 change-email by code (off in the reference as well).
 
 ## Verified

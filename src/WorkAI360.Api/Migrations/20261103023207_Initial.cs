@@ -559,6 +559,23 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "FeatureUsageDay",
+                columns: table => new
+                {
+                    MemberId = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false),
+                    FeatureKey = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false),
+                    Day = table.Column<string>(type: "varchar(10)", maxLength: 10, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    FirstUsedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    LastUsedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_FeatureUsageDay", x => new { x.MemberId, x.FeatureKey, x.Day });
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "HandoffGrants",
                 columns: table => new
                 {
@@ -717,6 +734,23 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "OAuthClientExtras",
+                columns: table => new
+                {
+                    ClientId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    GrantTypesJson = table.Column<string>(type: "longtext", nullable: true),
+                    JwksJson = table.Column<string>(type: "longtext", nullable: true),
+                    JwksUri = table.Column<string>(type: "varchar(2048)", maxLength: 2048, nullable: true),
+                    DpopBoundAccessTokens = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    ClientCredentialsScope = table.Column<string>(type: "longtext", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_OAuthClientExtras", x => x.ClientId);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "OAuthClients",
                 columns: table => new
                 {
@@ -751,6 +785,20 @@ namespace WorkAI360.Api.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_OAuthConsents", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "OAuthDpopBinding",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false),
+                    Jkt = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false),
+                    ExpiresAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_OAuthDpopBinding", x => x.Id);
                 })
                 .Annotation("MySQL:Charset", "utf8mb4");
 
@@ -1110,6 +1158,46 @@ namespace WorkAI360.Api.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_RefreshTokens", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "ReplayReservation",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false),
+                    Kind = table.Column<string>(type: "varchar(32)", maxLength: 32, nullable: false),
+                    ExpiresAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_ReplayReservation", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "SamlAuthRequest",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false),
+                    RelayStateHash = table.Column<string>(type: "varchar(64)", maxLength: 64, nullable: false),
+                    ProviderId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ConfigRevision = table.Column<string>(type: "longtext", nullable: false),
+                    BrowserBindingHash = table.Column<string>(type: "longtext", nullable: false),
+                    CallbackUrl = table.Column<string>(type: "longtext", nullable: false),
+                    ErrorCallbackUrl = table.Column<string>(type: "longtext", nullable: true),
+                    NewUserCallbackUrl = table.Column<string>(type: "longtext", nullable: true),
+                    TestIntentId = table.Column<string>(type: "longtext", nullable: true),
+                    RequestXml = table.Column<string>(type: "longtext", nullable: true),
+                    IdentityJson = table.Column<string>(type: "longtext", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    ExpiresAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    AnsweredAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    ConsumedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_SamlAuthRequest", x => x.Id);
                 })
                 .Annotation("MySQL:Charset", "utf8mb4");
 
@@ -2093,6 +2181,16 @@ namespace WorkAI360.Api.Migrations
                 unique: true);
 
             migrationBuilder.CreateIndex(
+                name: "IX_FeatureUsageDay_FeatureKey_Day",
+                table: "FeatureUsageDay",
+                columns: new[] { "FeatureKey", "Day" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_FeatureUsageDay_OrganizationId_FeatureKey",
+                table: "FeatureUsageDay",
+                columns: new[] { "OrganizationId", "FeatureKey" });
+
+            migrationBuilder.CreateIndex(
                 name: "IX_Invitations_InviteToken",
                 table: "Invitations",
                 column: "InviteToken",
@@ -2163,6 +2261,11 @@ namespace WorkAI360.Api.Migrations
                 table: "OAuthConsents",
                 columns: new[] { "ClientId", "UserId", "OrganizationId" },
                 unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_OAuthDpopBinding_ExpiresAt",
+                table: "OAuthDpopBinding",
+                column: "ExpiresAt");
 
             migrationBuilder.CreateIndex(
                 name: "IX_OnboardingRateLimit_Key",
@@ -2304,6 +2407,27 @@ namespace WorkAI360.Api.Migrations
                 name: "IX_RefreshTokens_FamilyId",
                 table: "RefreshTokens",
                 column: "FamilyId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_ReplayReservation_ExpiresAt",
+                table: "ReplayReservation",
+                column: "ExpiresAt");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_SamlAuthRequest_ExpiresAt",
+                table: "SamlAuthRequest",
+                column: "ExpiresAt");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_SamlAuthRequest_ProviderId",
+                table: "SamlAuthRequest",
+                column: "ProviderId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_SamlAuthRequest_RelayStateHash",
+                table: "SamlAuthRequest",
+                column: "RelayStateHash",
+                unique: true);
 
             migrationBuilder.CreateIndex(
                 name: "IX_ScimGroup_OrganizationId",
@@ -2595,6 +2719,9 @@ namespace WorkAI360.Api.Migrations
                 name: "ExternalMcpConnection");
 
             migrationBuilder.DropTable(
+                name: "FeatureUsageDay");
+
+            migrationBuilder.DropTable(
                 name: "HandoffGrants");
 
             migrationBuilder.DropTable(
@@ -2616,10 +2743,16 @@ namespace WorkAI360.Api.Migrations
                 name: "McpAccessTokens");
 
             migrationBuilder.DropTable(
+                name: "OAuthClientExtras");
+
+            migrationBuilder.DropTable(
                 name: "OAuthClients");
 
             migrationBuilder.DropTable(
                 name: "OAuthConsents");
+
+            migrationBuilder.DropTable(
+                name: "OAuthDpopBinding");
 
             migrationBuilder.DropTable(
                 name: "OidcClientSettings");
@@ -2683,6 +2816,12 @@ namespace WorkAI360.Api.Migrations
 
             migrationBuilder.DropTable(
                 name: "RefreshTokens");
+
+            migrationBuilder.DropTable(
+                name: "ReplayReservation");
+
+            migrationBuilder.DropTable(
+                name: "SamlAuthRequest");
 
             migrationBuilder.DropTable(
                 name: "ScimGroup");

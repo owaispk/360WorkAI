@@ -20,6 +20,7 @@ public sealed class PlatformAdminFeature : IFeature
         services.AddScoped<FeatureResolver>();
         services.AddScoped<FeatureChanges>();
         services.AddScoped<OrganizationPlans>();
+        services.AddScoped<FeatureUsageStore>();
     }
 
     public void MapEndpoints(WebApplication app)
@@ -27,5 +28,8 @@ public sealed class PlatformAdminFeature : IFeature
         app.MapAdminAccountEndpoints();
         app.MapAdminOrganizationEndpoints();
         app.MapAdminFeatureEndpoints();
+        app.MapAdminFeatureUsageEndpoints();
+        app.MapAdminSecurityEndpoints();
+        app.MapAdminServicesEndpoints();
     }
 }

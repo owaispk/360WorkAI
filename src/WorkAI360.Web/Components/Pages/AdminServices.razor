@@ -1,0 +1,104 @@
+@page "/admin/services"
+@inherits AdminPage
+@using System.Text.Json
+
+<PageTitle>Services · Platform admin · OpenWork Cloud</PageTitle>
+
+<section class="den-card den-wide" data-testid="admin-services-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (Denied)
+    {
+        <h1>Services</h1>
+        <p class="den-muted" data-testid="no-access">This area is for the people who run this deployment. Your account is not one of them.</p>
+    }
+    else
+    {
+        <h1>Services</h1>
+        <AdminNav Current="services" />
+        <p class="den-muted">What this deployment is connected to. Checks are read-only: nothing is sent and no credentials are shown.</p>
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        <p class="den-muted" data-testid="server">Server @_version · started @_started@(_checkedAt.Length > 0 ? " · last checked " + _checkedAt : "")</p>
+        <ul class="den-members" data-testid="service-list">
+            @foreach (var s in _services)
+            {
+                <li data-testid="service-row" data-id="@s.Id" data-state="@s.State">
+                    <div class="den-member-main">
+                        <strong>@Label(s.Id) <span class="den-badge @(s.State == "ready" ? "den-badge-admin" : "den-badge-pending")" data-testid="state">@StateLabel(s.State)</span></strong>
+                        <span class="den-muted" data-testid="reason">@ReasonLabel(s.Reason)</span>
+                        @if (s.Missing.Length > 0) { <span class="den-muted">Missing: @string.Join(", ", s.Missing)</span> }
+                    </div>
+                </li>
+            }
+        </ul>
+        <button type="button" class="den-button" disabled="@Busy" @onclick="CheckAsync" data-testid="check-now">Check now</button>
+
+        <h2>Sandbox organizations</h2>
+        <p class="den-muted" data-testid="sandboxes">@(_sandboxesEnabled ? $"{_sandboxCount} sandbox organizations." : "Sandbox organizations are turned off on this deployment (they are a cloud feature).")</p>
+    }
+</section>
+
+@code {
+    private sealed record Service(string Id, string State, string Reason, string[] Missing);
+
+    private List<Service> _services = [];
+    private string _version = "", _started = "", _checkedAt = "";
+    private bool _sandboxesEnabled;
+    private int _sandboxCount;
+
+    private static string Label(string id) => id switch { "database" => "Database", "gateway" => "AI Gateway", "headlessRunner" => "Headless runner", "workbot" => "Workbot", "email" => "Email", _ => id };
+
+    private static string StateLabel(string state) => state switch { "ready" => "Ready", "not_configured" => "Not set up", "misconfigured" => "Misconfigured", "unreachable" => "Unreachable", _ => "Couldn't verify" };
+
+    private static string ReasonLabel(string reason) => reason switch
+    {
+        "database_verified" => "A database query succeeded.",
+        "not_configured" => "Optional service. Set it up when you need it.",
+        "configuration_only" => "Settings are present, but a live check is not supported.",
+        "missing_configuration" => "Ask the deployment administrator to complete the missing settings.",
+        "invalid_configuration" => "Ask the deployment administrator to correct the service settings.",
+        "request_failed" => "The service could not be reached.",
+        "not_checked" => "Not checked yet.",
+        _ => reason,
+    };
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await EnterAsync()) return;
+        await LoadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override async Task ReloadAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        var response = await Den.RequestAsync("/api/browser/v1/admin/services");
+        if (response.Json is not { ValueKind: JsonValueKind.Object } root) { Error = response.Message("Could not load the services."); return; }
+        Read(root);
+        var sandboxes = await Den.RequestAsync("/api/browser/v1/admin/sandbox-orgs");
+        if (sandboxes.Json is { ValueKind: JsonValueKind.Object } sb) { _sandboxesEnabled = Flag(sb, "enabled"); _sandboxCount = sb.GetProperty("sandboxes").GetArrayLength(); }
+    }
+
+    private void Read(JsonElement root)
+    {
+        Error = null;
+        _checkedAt = Short(Text(root, "checkedAt"));
+        if (root.GetProperty("server") is { ValueKind: JsonValueKind.Object } server) { _version = Text(server, "version"); _started = Short(Text(server, "startedAt")); }
+        _services = root.GetProperty("services").EnumerateArray().Select(s => new Service(Text(s, "id"), Text(s, "state"), Text(s, "reason"), s.GetProperty("missingSettings").EnumerateArray().Select(m => m.GetString() ?? "").ToArray())).ToList();
+    }
+
+    private async Task CheckAsync()
+    {
+        Busy = true;
+        var response = await Den.RequestAsync("/api/browser/v1/admin/services/check", "POST", new { });
+        Busy = false;
+        if (response.Json is { ValueKind: JsonValueKind.Object } root && response.Status == 202) { Read(root); Notice = "Checked."; }
+        else Error = response.Message("The check could not be made.");
+    }
+}

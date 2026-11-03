@@ -13,7 +13,7 @@
     else
     {
         <h1>Single sign-on</h1>
-        <p class="den-muted">@_orgName · let people sign in with your company’s identity provider (OpenID Connect).</p>
+        <p class="den-muted">@_orgName · let people sign in with your company’s identity provider (OpenID Connect or SAML 2.0).</p>
 
         @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
         @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
@@ -34,8 +34,18 @@
                     <li><span>Status</span><strong data-testid="sso-status">@c.Status</strong></li>
                     <li><span>Domain</span><span data-testid="sso-domain">@c.Domain</span><span class="den-badge @(c.DomainVerified ? "den-badge-admin" : "den-badge-pending")" data-testid="sso-domain-verified">@(c.DomainVerified ? "Verified" : "Not verified")</span></li>
                     <li><span>Test</span><strong data-testid="sso-test-state">@c.TestStatus</strong></li>
+                    <li><span>Type</span><strong data-testid="sso-kind">@(c.Kind == "saml" ? "SAML 2.0" : "OpenID Connect")</strong></li>
                     <li><span>Provider</span><span class="den-muted">@c.Issuer</span></li>
-                    <li><span>Redirect URL for your provider</span><code data-testid="sso-redirect-url">@c.RedirectUrl</code></li>
+                    @if (c.Kind == "saml")
+                    {
+                        <li><span>Assertion consumer service (ACS) URL</span><code data-testid="sso-acs-url">@c.AcsUrl</code></li>
+                        <li><span>Service provider entity ID (audience)</span><code data-testid="sso-entity-id">@c.Audience</code></li>
+                        <li><span>Service provider metadata</span><a class="den-link" href="@c.MetadataUrl" target="_blank" rel="noopener" data-testid="sso-metadata-url">@c.MetadataUrl</a></li>
+                    }
+                    else
+                    {
+                        <li><span>Redirect URL for your provider</span><code data-testid="sso-redirect-url">@c.RedirectUrl</code></li>
+                    }
                     <li><span>People sign in at</span><code data-testid="sso-signin-url">@c.SignInUrl</code></li>
                 </ul>
                 @if (c.TestStatus == "failed" && c.LastError is not null) { <p class="den-error" data-testid="sso-test-failure">@c.LastError</p> }
@@ -77,20 +87,46 @@
                 <h2>@(_connection is null ? "Connect your identity provider" : "Change the connection")</h2>
                 <p class="den-muted">Saving replaces the current setup: SSO is turned off and has to be proven and tested again.</p>
                 <form @onsubmit="SaveAsync" novalidate data-testid="sso-form">
-                    <label for="sso-issuer">Issuer URL</label>
-                    <input id="sso-issuer" autocomplete="off" @bind="_issuer" @bind:event="oninput" placeholder="https://login.example.com" />
-                    <label for="sso-domain-input">Email domain</label>
-                    <input id="sso-domain-input" autocomplete="off" @bind="_domain" @bind:event="oninput" placeholder="example.com" />
-                    <label for="sso-client-id">Client ID</label>
-                    <input id="sso-client-id" autocomplete="off" @bind="_clientId" @bind:event="oninput" />
-                    <label for="sso-client-secret">Client secret</label>
-                    <input id="sso-client-secret" type="password" autocomplete="new-password" @bind="_clientSecret" @bind:event="oninput" placeholder="@(_connection is null ? "" : "Enter it again to save")" />
-                    <label class="den-check"><input id="sso-manual" type="checkbox" checked="@_manual" @onchange="e => _manual = e.Value is true" /> <span>Enter the endpoints myself (skip discovery)</span></label>
-                    @if (_manual)
+                    <label for="sso-type">Type</label>
+                    <select id="sso-type" value="@_type" @onchange="OnTypeChanged" data-testid="sso-type">
+                        <option value="oidc">OpenID Connect</option>
+                        <option value="saml">SAML 2.0</option>
+                    </select>
+                    @if (_type == "saml")
                     {
-                        <label for="sso-authz">Authorization endpoint</label><input id="sso-authz" @bind="_authz" @bind:event="oninput" />
-                        <label for="sso-token">Token endpoint</label><input id="sso-token" @bind="_token" @bind:event="oninput" />
-                        <label for="sso-jwks">Keys (JWKS) endpoint</label><input id="sso-jwks" @bind="_jwks" @bind:event="oninput" />
+                        <label for="sso-issuer">Identity provider entity ID (issuer)</label>
+                        <input id="sso-issuer" autocomplete="off" @bind="_issuer" @bind:event="oninput" placeholder="https://idp.example.com/metadata" />
+                        <label for="sso-domain-input">Email domain</label>
+                        <input id="sso-domain-input" autocomplete="off" @bind="_domain" @bind:event="oninput" placeholder="example.com" />
+                        <label for="sso-entry-point">Single sign-on URL</label>
+                        <input id="sso-entry-point" autocomplete="off" @bind="_entryPoint" @bind:event="oninput" placeholder="https://idp.example.com/sso" />
+                        <label for="sso-cert">Signing certificate (PEM)</label>
+                        <textarea id="sso-cert" rows="6" autocomplete="off" @bind="_cert" @bind:event="oninput" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+                        <label for="sso-audience">Service provider entity ID (optional)</label>
+                        <input id="sso-audience" autocomplete="off" @bind="_audience" @bind:event="oninput" placeholder="Defaults to this site’s address" />
+                        <label for="sso-binding">How sign-in requests are sent</label>
+                        <select id="sso-binding" value="@_binding" @onchange="OnBindingChanged" data-testid="sso-binding">
+                            <option value="redirect">HTTP redirect</option>
+                            <option value="post">HTTP POST</option>
+                        </select>
+                    }
+                    else
+                    {
+                        <label for="sso-issuer">Issuer URL</label>
+                        <input id="sso-issuer" autocomplete="off" @bind="_issuer" @bind:event="oninput" placeholder="https://login.example.com" />
+                        <label for="sso-domain-input">Email domain</label>
+                        <input id="sso-domain-input" autocomplete="off" @bind="_domain" @bind:event="oninput" placeholder="example.com" />
+                        <label for="sso-client-id">Client ID</label>
+                        <input id="sso-client-id" autocomplete="off" @bind="_clientId" @bind:event="oninput" />
+                        <label for="sso-client-secret">Client secret</label>
+                        <input id="sso-client-secret" type="password" autocomplete="new-password" @bind="_clientSecret" @bind:event="oninput" placeholder="@(_connection is null ? "" : "Enter it again to save")" />
+                        <label class="den-check"><input id="sso-manual" type="checkbox" checked="@_manual" @onchange="e => _manual = e.Value is true" /> <span>Enter the endpoints myself (skip discovery)</span></label>
+                        @if (_manual)
+                        {
+                            <label for="sso-authz">Authorization endpoint</label><input id="sso-authz" @bind="_authz" @bind:event="oninput" />
+                            <label for="sso-token">Token endpoint</label><input id="sso-token" @bind="_token" @bind:event="oninput" />
+                            <label for="sso-jwks">Keys (JWKS) endpoint</label><input id="sso-jwks" @bind="_jwks" @bind:event="oninput" />
+                        }
                     }
                     <button type="submit" class="den-button" disabled="@Busy" data-testid="sso-save">Save connection</button>
                 </form>
@@ -105,16 +141,19 @@
 </section>
 
 @code {
-    private sealed record Connection(string Status, string Domain, bool DomainVerified, string TestStatus, string? LastError, string Issuer, string RedirectUrl, string SignInUrl, string DnsName, string DnsHost);
+    private sealed record Connection(string Status, string Domain, bool DomainVerified, string TestStatus, string? LastError, string Issuer, string RedirectUrl, string SignInUrl, string DnsName, string DnsHost, string Kind, string? AcsUrl, string? MetadataUrl, string? Audience);
 
     private bool _loading = true, _manual, _confirmDelete;
     private string _orgName = "", _orgId = "";
     private HashSet<string> _permissions = [];
     private Connection? _connection;
     private string? _domainToken;
-    private string _issuer = "", _domain = "", _clientId = "", _clientSecret = "", _authz = "", _token = "", _jwks = "";
+    private string _type = "oidc", _binding = "redirect";
+    private string _issuer = "", _domain = "", _clientId = "", _clientSecret = "", _authz = "", _token = "", _jwks = "", _entryPoint = "", _cert = "", _audience = "";
 
     private bool Can(string permission) => _permissions.Contains(permission);
+    private void OnTypeChanged(ChangeEventArgs e) => _type = e.Value?.ToString() == "saml" ? "saml" : "oidc";
+    private void OnBindingChanged(ChangeEventArgs e) => _binding = e.Value?.ToString() == "post" ? "post" : "redirect";
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -143,25 +182,43 @@
         if (sso.Ok && sso.Json is { ValueKind: JsonValueKind.Object } body && body.TryGetProperty("connection", out var c) && c.ValueKind == JsonValueKind.Object)
         {
             string? S(string name) => c.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-            _connection = new Connection(S("status") ?? "disabled", S("domain") ?? "", c.GetProperty("domainVerified").GetBoolean(), S("testStatus") ?? "untested", S("lastError"), S("issuer") ?? "", S("redirectUrl") ?? "", S("signInUrl") ?? "", S("domainVerificationDnsName") ?? "", S("domainVerificationHost") ?? "");
-            if (_domain.Length == 0) { _domain = _connection.Domain; _issuer = _connection.Issuer; }
+            _connection = new Connection(S("status") ?? "disabled", S("domain") ?? "", c.GetProperty("domainVerified").GetBoolean(), S("testStatus") ?? "untested", S("lastError"), S("issuer") ?? "", S("redirectUrl") ?? "", S("signInUrl") ?? "", S("domainVerificationDnsName") ?? "", S("domainVerificationHost") ?? "",
+                S("kind") ?? "oidc", S("acsUrl"), S("metadataUrl"), c.TryGetProperty("saml", out var saml) && saml.ValueKind == JsonValueKind.Object && saml.TryGetProperty("audience", out var aud) ? aud.GetString() : null);
+            if (_domain.Length == 0) { _domain = _connection.Domain; _issuer = _connection.Issuer; _type = _connection.Kind; }
         }
         return true;
     }
 
     private async Task SaveAsync()
     {
-        if (string.IsNullOrWhiteSpace(_issuer) || string.IsNullOrWhiteSpace(_domain) || string.IsNullOrWhiteSpace(_clientId) || string.IsNullOrEmpty(_clientSecret))
+        string path;
+        Dictionary<string, object?> body;
+        if (_type == "saml")
         {
-            Error = "Fill in the issuer, domain, client ID and client secret.";
-            return;
+            if (string.IsNullOrWhiteSpace(_issuer) || string.IsNullOrWhiteSpace(_domain) || string.IsNullOrWhiteSpace(_entryPoint) || string.IsNullOrWhiteSpace(_cert))
+            {
+                Error = "Fill in the entity ID, domain, single sign-on URL and signing certificate.";
+                return;
+            }
+            path = "/api/browser/v1/sso/saml";
+            body = new() { ["issuer"] = _issuer.Trim(), ["domain"] = _domain.Trim(), ["entryPoint"] = _entryPoint.Trim(), ["cert"] = _cert.Trim(), ["binding"] = _binding };
+            if (!string.IsNullOrWhiteSpace(_audience)) body["audience"] = _audience.Trim();
         }
-        var body = new Dictionary<string, object?> { ["issuer"] = _issuer.Trim(), ["domain"] = _domain.Trim(), ["clientId"] = _clientId.Trim(), ["clientSecret"] = _clientSecret };
-        if (_manual) { body["skipDiscovery"] = true; body["authorizationEndpoint"] = _authz.Trim(); body["tokenEndpoint"] = _token.Trim(); body["jwksEndpoint"] = _jwks.Trim(); }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(_issuer) || string.IsNullOrWhiteSpace(_domain) || string.IsNullOrWhiteSpace(_clientId) || string.IsNullOrEmpty(_clientSecret))
+            {
+                Error = "Fill in the issuer, domain, client ID and client secret.";
+                return;
+            }
+            path = "/api/browser/v1/sso/oidc";
+            body = new() { ["issuer"] = _issuer.Trim(), ["domain"] = _domain.Trim(), ["clientId"] = _clientId.Trim(), ["clientSecret"] = _clientSecret };
+            if (_manual) { body["skipDiscovery"] = true; body["authorizationEndpoint"] = _authz.Trim(); body["tokenEndpoint"] = _token.Trim(); body["jwksEndpoint"] = _jwks.Trim(); }
+        }
         _domainToken = null;
         await RunAsync(async () =>
         {
-            var r = await Den.RequestAsync("/api/browser/v1/sso/oidc", "POST", body);
+            var r = await Den.RequestAsync(path, "POST", body);
             if (r.Ok) { _domainToken = r.String("domainVerificationToken"); _clientSecret = ""; }
             return r;
         }, "Connection saved. Prove your domain, then test it.", r => Explain(r));

@@ -66,8 +66,7 @@ plugins as configured in `auth.ts`. Code: `Features/Sso/`, `Features/Scim/`, `Do
 
 ## Not built
 
-* **SAML.** `POST /v1/sso/saml` answers `501 not_implemented`; `/api/auth/sso/saml2/*` are not routed (they answer the usual `404`). The OIDC connection model
-  (`SsoConnection.Kind`, `SamlConfigJson`) leaves room for it.
+* **SAML** is built: see [saml.md](saml.md) (older text on this page saying it answers 501 no longer holds). Not built there: single logout, encrypted assertions, signed requests, IdP metadata import.
 * Audit events, plan entitlements and seat limits, the SCIM retry worker (failures are recorded in `ScimSyncEvent` and shown as health; nothing retries them),
   `SCIM` `/Users` pagination (the reference returns everything too), SCIM `Bulk`/`sort`/`etag`.
 * Social sign-in (`provisionVerifiedDomainMembership` for Google/GitHub sign-ins has nothing to attach to yet).
