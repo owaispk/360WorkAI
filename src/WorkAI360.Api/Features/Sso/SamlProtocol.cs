@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Xml.Linq;
 
@@ -58,14 +59,43 @@ public static class SamlProtocol
         return (html, hash);
     }
 
-    /// <summary>The service provider metadata the identity provider administrator imports (entity id, ACS URL, signed assertions wanted).</summary>
-    public static string Metadata(string spEntityId, string acsUrl) =>
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" +
+    /// <summary>
+    /// The service provider metadata the identity provider administrator imports: entity id, ACS URL, signed assertions wanted, whether requests are signed,
+    /// the service provider's certificate (for checking its signatures and for encrypting assertions to it) and its Single Logout endpoints.
+    /// </summary>
+    public static string Metadata(string spEntityId, string acsUrl, string? sloUrl = null, string? spCertificate = null, bool authnRequestsSigned = false)
+    {
+        XNamespace ds = SamlValidator.DsigNs;
+        XElement? Key(string use) => spCertificate is null ? null
+            : new XElement(Md + "KeyDescriptor", new XAttribute("use", use),
+                new XElement(ds + "KeyInfo", new XAttribute(XNamespace.Xmlns + "ds", ds.NamespaceName), new XElement(ds + "X509Data", new XElement(ds + "X509Certificate", spCertificate))));
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" +
             new XElement(Md + "EntityDescriptor", new XAttribute(XNamespace.Xmlns + "md", Md.NamespaceName), new XAttribute("entityID", spEntityId),
                 new XElement(Md + "SPSSODescriptor",
-                    new XAttribute("AuthnRequestsSigned", "false"), new XAttribute("WantAssertionsSigned", "true"),
+                    new XAttribute("AuthnRequestsSigned", authnRequestsSigned ? "true" : "false"), new XAttribute("WantAssertionsSigned", "true"),
                     new XAttribute("protocolSupportEnumeration", SamlValidator.ProtocolNs),
+                    Key("signing"), Key("encryption"),
+                    sloUrl is null ? null : new XElement(Md + "SingleLogoutService", new XAttribute("Binding", RedirectBinding), new XAttribute("Location", sloUrl)),
+                    sloUrl is null ? null : new XElement(Md + "SingleLogoutService", new XAttribute("Binding", PostBinding), new XAttribute("Location", sloUrl)),
                     new XElement(Md + "NameIDFormat", EmailNameId),
                     new XElement(Md + "AssertionConsumerService", new XAttribute("Binding", PostBinding), new XAttribute("Location", acsUrl), new XAttribute("index", "0"), new XAttribute("isDefault", "true"))))
             .ToString(SaveOptions.DisableFormatting);
+    }
+
+    /// <summary>The AuthnRequest with an enveloped signature (POST binding of a connection that signs its requests).</summary>
+    public static string SignedAuthnRequest(string requestXml, X509Certificate2 key)
+    {
+        var doc = new System.Xml.XmlDocument { PreserveWhitespace = true };
+        doc.LoadXml(requestXml);
+        SamlSigning.SignEnveloped(doc, doc.DocumentElement!, key);
+        return doc.OuterXml;
+    }
+
+    /// <summary>The redirect-binding URL with a query signature (a connection that signs its requests).</summary>
+    public static string SignedRedirectUrl(string entryPoint, string requestXml, string relayState, X509Certificate2 key)
+    {
+        using var rsa = key.GetRSAPrivateKey()!;
+        var separator = entryPoint.Contains('?') ? "&" : "?";
+        return entryPoint + separator + SamlSigning.RedirectQuery("SAMLRequest", SamlLogout.Deflate(requestXml), relayState, rsa);
+    }
 }

@@ -4,7 +4,8 @@ using WorkAI360.Api.Domain.Sso;
 
 namespace WorkAI360.Api.Features.Sso;
 
-public sealed record SamlRegistration(string Issuer, string Domain, string EntryPoint, string Certificate, string? Audience, string? Binding);
+public sealed record SamlRegistration(string Issuer, string Domain, string EntryPoint, string Certificate, string? Audience, string? Binding,
+    bool SignAuthnRequests = false, string? SloUrl = null);
 
 /// <summary>The SAML half of a workspace's connection: saving it and the URLs the identity provider administrator needs.</summary>
 public sealed partial class SsoService
@@ -19,6 +20,9 @@ public sealed partial class SsoService
 
     public string MetadataUrl(string providerId) => $"{urls.Web}/api/auth/sso/saml2/sp/metadata?providerId={Uri.EscapeDataString(providerId)}";
 
+    /// <summary>Where the identity provider sends logout messages (redirect or POST binding).</summary>
+    public string SloUrl(string providerId) => $"{urls.Web}/api/auth/sso/saml2/sp/slo/{Uri.EscapeDataString(providerId)}";
+
     /// <summary>The service provider's entity id: the audience given at registration, else this deployment's web address (as the reference does).</summary>
     public string SpEntityId(SamlSettings settings) => settings.Audience;
 
@@ -31,8 +35,11 @@ public sealed partial class SsoService
         var certificates = SamlCertificates.Normalize(input.Certificate);
         if (certificates is null || certificates.Length == 0)
             return (null, "The signing certificate is not a valid X.509 certificate (paste the PEM text, or the base64 of the certificate).");
+        if (input.SloUrl is { } slo && !(Uri.TryCreate(slo, UriKind.Absolute, out var sloUri) && string.IsNullOrEmpty(sloUri.UserInfo) && string.IsNullOrEmpty(sloUri.Fragment)
+            && (sloUri.Scheme == Uri.UriSchemeHttps || (sloUri.Scheme == Uri.UriSchemeHttp && AllowPrivateNetworks))))
+            return (null, AllowPrivateNetworks ? "The single logout URL must be an http or https URL." : "The single logout URL must be an https URL.");
         var binding = input.Binding ?? DefaultSamlBinding;
-        var settings = new SamlSettings(input.EntryPoint, input.Audience ?? urls.Web, input.Issuer, certificates, WantAssertionsSigned: true, binding);
+        var settings = new SamlSettings(input.EntryPoint, input.Audience ?? urls.Web, input.Issuer, certificates, WantAssertionsSigned: true, binding, input.SignAuthnRequests, input.SloUrl);
         var samlJson = JsonSerializer.Serialize(settings, Json);
         var revision = Revision("saml", input.Issuer, input.Domain, null, null, samlJson);
         var connection = await SaveConnectionAsync(org, "saml", input.Issuer, input.Domain, null, null, samlJson, revision, ct);
