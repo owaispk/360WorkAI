@@ -71,7 +71,7 @@ services:
 
   litellm:
     # LiteLLM serves the AI Gateway's model calls; Den manages its teams and per-person keys. Pin a version you have tested in production.
-    image: ghcr.io/berriai/litellm:main-stable
+    image: ghcr.io/berriai/litellm:v1.106.6
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-change-me}
       DATABASE_URL: postgresql://litellm:${LITELLM_DB_PASSWORD:-change-me}@litellm-db:5432/litellm
