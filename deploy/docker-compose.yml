@@ -1,6 +1,8 @@
-# A complete local stack: MySQL, the API and the web host.
+# A complete local stack: MySQL, the API, the web host, and the AI Gateway's LiteLLM proxy (with its own Postgres).
 #   cd 360workai && AUTH_SECRET=$(openssl rand -hex 32) docker compose -f deploy/docker-compose.yml up --build
 # Then open http://localhost:8081. Sign-up emails need an SMTP server: set the EMAIL_* values below (or use a local mail catcher).
+# AI Gateway: set LITELLM_MASTER_KEY (it must start with "sk-") and add models to LiteLLM (its UI at http://localhost:4000/ui, or a config file);
+# workspaces then add the "deployment proxy" on /dashboard/ai-gateway. LITELLM_PUBLIC_URL is the address people's desktops use to reach LiteLLM.
 services:
   db:
     image: mysql:8.0
@@ -28,6 +30,11 @@ services:
       Email__Provider: smtp
       Email__From: ${EMAIL_FROM:-noreply@example.com}
       Email__Smtp__Host: ${EMAIL_SMTP_HOST:-mail}
+      # AI Gateway over the LiteLLM service below (docs/features/gateway.md). The API reaches it on the compose network; desktops use the public URL.
+      Gateway__Enabled: "true"
+      Gateway__LiteLlm__BaseUrl: http://litellm:4000
+      Gateway__LiteLlm__MasterKey: ${LITELLM_MASTER_KEY:-sk-change-me}
+      Gateway__LiteLlm__PublicUrl: ${LITELLM_PUBLIC_URL:-http://localhost:4000}
       Email__Smtp__Port: ${EMAIL_SMTP_PORT:-25}
       Email__Smtp__Security: ${EMAIL_SMTP_SECURITY:-none}
     depends_on: { db: { condition: service_healthy } }
@@ -49,9 +56,33 @@ services:
     depends_on: [api]
     networks: { default: { ipv4_address: 172.28.0.10 } }
 
+  litellm-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${LITELLM_DB_PASSWORD:-change-me}
+      POSTGRES_DB: litellm
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "litellm"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes: [litellmdata:/var/lib/postgresql/data]
+
+  litellm:
+    # LiteLLM serves the AI Gateway's model calls; Den manages its teams and per-person keys. Pin a version you have tested in production.
+    image: ghcr.io/berriai/litellm:main-stable
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-change-me}
+      DATABASE_URL: postgresql://litellm:${LITELLM_DB_PASSWORD:-change-me}@litellm-db:5432/litellm
+      STORE_MODEL_IN_DB: "True"
+    ports: ["4000:4000"]
+    depends_on: { litellm-db: { condition: service_healthy } }
+
 networks:
   default:
     ipam: { config: [{ subnet: 172.28.0.0/24 }] }
 
 volumes:
   dbdata:
+  litellmdata:

@@ -40,8 +40,8 @@ workspaces sees Settings on `/organization` (Profile: rename; Organizations: swi
   `invite_teammate`: for someone who may invite, an invitation they sent that is pending or accepted; for others, any teammate or pending invitation; detail "N joined, M invited";
   locked with "{owner} can invite people" when nobody else is there. `use_skill`: the client's report or a skill their agent read through the library (`LibraryUsageEvent`).
   `own_provider`: the client's report ("Your key, on this device"), a provider the person added ("OpenAI added"), any provider in the workspace
-  ("Models from your organization", see [llm-providers.md](llm-providers.md)), or done when the person's desktop policy does not allow custom providers ("Your team manages models"). `gateway_provider`: there is no AI Gateway
-  here, so it stays open, locked with "{owner} manages AI Gateway" for anyone without `gateway_providers.manage`. `connector`: the first MCP connection usable by the person that is
+  ("Models from your organization", see [llm-providers.md](llm-providers.md)), or done when the person's desktop policy does not allow custom providers ("Your team manages models"). `gateway_provider`: done once the workspace has an active AI Gateway provider ([gateway.md](gateway.md)), with "{name} on AI Gateway" for people who
+  may see Gateway providers; until then locked with "{owner} manages AI Gateway" for anyone without `gateway_providers.manage`. `connector`: the first MCP connection usable by the person that is
   connected for them, needs no reconnect and no setup ("Linear connected"). Like the reference, the routes are not behind the `activationChecklist` flag, which is now on by
   default (the reference's default). Tests: `tests/WorkAI360.Api.Tests/ActivationTests.cs` (10); mutation checks 5 of 5 killed (reports not per member, a later report
   replacing the first, the gateway lock inverted, the caller counted as a teammate, a teammate's skill use counting).
@@ -76,4 +76,4 @@ Claim tokens and codes are stored as SHA-256 only; the assertion is not stored (
 ## Not built
 
 * The JWT-bearer token exchange for the pre-claim assertion; My agent (above); the egress probes; provider/connector/installation diagnostics.
-* Cloud sandbox joins (`join-sandbox`, sandbox join, Workbot hand-off), billing and the AI gateway, as instructed; den-web's `workspace-claim` desktop-app handoff button after claiming.
+* Cloud sandbox joins (`join-sandbox`, sandbox join, Workbot hand-off), billing, den-web's `workspace-claim` desktop-app handoff button after claiming.

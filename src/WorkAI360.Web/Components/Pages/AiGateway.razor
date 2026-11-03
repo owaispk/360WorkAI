@@ -1,0 +1,195 @@
+@page "/dashboard/ai-gateway"
+@inherits ConnectionsPageBase
+@using System.Text.Json
+
+<PageTitle>AI Gateway · OpenWork Cloud</PageTitle>
+
+<ConnectionStyles />
+<section class="den-card den-wide cx-page" data-testid="ai-gateway-page">
+    @if (Loading)
+    {
+        <p class="den-muted">Loading…</p>
+    }
+    else if (_disabled)
+    {
+        <h1>AI Gateway</h1>
+        <p class="den-muted" data-testid="gateway-off">Gateway management is not enabled on this deployment. Ask your administrator to turn it on.</p>
+    }
+    else
+    {
+        <h1>AI Gateway</h1>
+        <p class="den-muted">@OrgName · models served through LiteLLM. OpenWork gives each person you allow their own LiteLLM key with only the models they may use, and takes it back when that changes.</p>
+        @if (Notice is not null) { <p class="den-notice" role="status" data-testid="notice">@Notice</p> }
+        @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
+
+        @if (_providers.Count == 0)
+        {
+            <p class="den-muted" data-testid="no-gateway-providers">No Gateway provider yet.</p>
+        }
+        @foreach (var p in _providers)
+        {
+            var id = Str(p, "id");
+            var lite = p.GetProperty("litellm");
+            <article class="cx-card" data-testid="gateway-provider" data-id="@id">
+                <h2>@Str(p, "name") <span class="den-badge">@Str(p, "status")</span></h2>
+                <p class="den-muted">@Str(lite, "baseUrl") · @(Flag(lite, "deploymentProxy") ? "this deployment's LiteLLM" : "your LiteLLM") · @lite.GetProperty("issuedMemberCount").GetInt32() people have a key
+                    @if (lite.GetProperty("lastSyncedAt").ValueKind == JsonValueKind.String) { <span> · synced @Str(lite, "lastSyncedAt")[..16].Replace('T', ' ')</span> }</p>
+                @if (Str(lite, "lastSyncError").Length > 0) { <p class="den-error" data-testid="sync-error">Last sync failed: @Str(lite, "lastSyncError")</p> }
+
+                <h3>Model groups</h3>
+                <ul class="den-members">
+                    @foreach (var g in p.GetProperty("modelGroups").EnumerateArray())
+                    {
+                        <li data-testid="model-group" data-name="@Str(g, "name")">
+                            <div class="den-member-main"><strong>@Str(g, "name")</strong><span class="den-muted">@string.Join(", ", g.GetProperty("modelIds").EnumerateArray().Select(m => m.GetString()))</span></div>
+                        </li>
+                    }
+                </ul>
+
+                <h3>Who may use it</h3>
+                <ul class="den-members" data-testid="grant-list">
+                    @foreach (var a in p.GetProperty("accessGrants").EnumerateArray())
+                    {
+                        var aud = a.GetProperty("audience");
+                        var grantId = Str(a, "id");
+                        <li data-testid="grant-row">
+                            <div class="den-member-main"><strong>@AudienceLabel(aud)</strong><span class="den-muted">@GroupName(p, Str(a, "modelGroupId"))</span></div>
+                            @if (Can("gateway_providers.manage"))
+                            {
+                                <div class="den-member-actions"><button type="button" class="den-link den-danger" disabled="@Busy" @onclick="() => RemoveGrantAsync(id, grantId)" data-testid="remove-grant">Remove</button></div>
+                            }
+                        </li>
+                    }
+                </ul>
+                @if (Can("gateway_providers.manage"))
+                {
+                    <form @onsubmit="() => AddGrantAsync(p)" novalidate data-testid="grant-form">
+                        <label for="grant-audience-@id">Allow</label>
+                        <select id="grant-audience-@id" @bind="_audience" data-testid="grant-audience">
+                            <option value="organization">Everyone in the workspace</option>
+                            @foreach (var t in Teams) { <option value="team:@t.Id">Team: @t.Name</option> }
+                            @foreach (var m in People) { <option value="member:@m.Id">@(m.Name.Length > 0 ? m.Name : m.Email)</option> }
+                        </select>
+                        <button type="submit" class="den-button" disabled="@Busy" data-testid="add-grant">Allow</button>
+                    </form>
+                    <p>
+                        <button type="button" class="den-button" disabled="@Busy" @onclick="() => SyncAsync(id)" data-testid="sync">Sync models</button>
+                        <button type="button" class="den-link" disabled="@Busy" @onclick="() => ToggleAsync(p)" data-testid="toggle-status">@(Str(p, "status") == "active" ? "Turn off" : "Turn on")</button>
+                        @if (_confirm == id)
+                        {
+                            <button type="button" class="den-link den-danger" disabled="@Busy" @onclick="() => DeleteAsync(id)" data-testid="confirm-delete">Confirm delete (takes every key back)</button>
+                        }
+                        else
+                        {
+                            <button type="button" class="den-link den-danger" @onclick="() => _confirm = id" data-testid="delete-provider">Delete</button>
+                        }
+                    </p>
+                }
+            </article>
+        }
+
+        @if (_usage is { } u)
+        {
+            <h2>Usage, last 31 days</h2>
+            <p class="den-muted" data-testid="usage-summary">@UsageLine(u)</p>
+        }
+
+        @if (Can("gateway_providers.manage"))
+        {
+            <h2>Add a LiteLLM provider</h2>
+            <form @onsubmit="CreateAsync" novalidate data-testid="create-form">
+                <label for="gw-name">Name</label>
+                <input id="gw-name" @bind="_name" @bind:event="oninput" />
+                @if (_deploymentAvailable)
+                {
+                    <label class="den-check"><input type="checkbox" @bind="_useDeployment" data-testid="use-deployment" /> Use this deployment's LiteLLM proxy</label>
+                }
+                @if (!_useDeployment)
+                {
+                    <label for="gw-url">LiteLLM URL</label>
+                    <input id="gw-url" placeholder="https://litellm.example.com" autocomplete="off" @bind="_url" @bind:event="oninput" />
+                    <label for="gw-key">LiteLLM admin key</label>
+                    <input id="gw-key" type="password" autocomplete="off" @bind="_key" @bind:event="oninput" />
+                    <p class="den-muted">The master key or a proxy admin key. OpenWork keeps it encrypted and never shows it again.</p>
+                }
+                <label class="den-check"><input type="checkbox" @bind="_allMembers" data-testid="all-members" /> Everyone in the workspace may use it</label>
+                <button type="submit" class="den-button" disabled="@Busy" data-testid="create-provider">Add provider</button>
+            </form>
+        }
+    }
+</section>
+
+@code {
+    private List<JsonElement> _providers = [];
+    private JsonElement? _usage;
+    private bool _disabled, _deploymentAvailable = true, _useDeployment = true, _allMembers = true;
+    private string _name = "LiteLLM", _url = "", _key = "", _audience = "organization";
+    private string? _confirm;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!await LoadOrgAsync()) return;
+        await LoadAsync();
+        Loading = false;
+        StateHasChanged();
+    }
+
+    protected override Task ReloadAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        var r = await Den.RequestAsync("/api/browser/v1/inference-providers?scope=manageable");
+        if (r.Status == 403 && r.String("error") == "gateway_not_enabled") { _disabled = true; return; }
+        if (!r.Ok || r.Json is not { ValueKind: JsonValueKind.Object } body) { Error = r.Message("The AI Gateway could not be loaded."); return; }
+        _providers = body.GetProperty("inferenceProviders").EnumerateArray().ToList();
+        var usage = await Den.RequestAsync("/api/browser/v1/inference-providers/usage?groupBy=model&days=31");
+        _usage = usage.Ok && usage.Json is { ValueKind: JsonValueKind.Object } u ? u.GetProperty("usage") : null;
+    }
+
+    private string AudienceLabel(JsonElement a) => Str(a, "type") switch
+    {
+        "team" => $"Team: {(Str(a, "name").Length > 0 ? Str(a, "name") : Str(a, "teamId"))}",
+        "member" => Str(a, "name").Length > 0 ? Str(a, "name") : People.FirstOrDefault(p => p.Id == Str(a, "memberId"))?.Name ?? "A member",
+        _ => "Everyone in the workspace",
+    };
+
+    private static string UsageLine(JsonElement u)
+    {
+        var unpriced = u.GetProperty("unpricedRequests").GetInt32();
+        var dollars = (u.GetProperty("totalCostMicroUsd").GetInt64() / 1_000_000m).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+        return $"{u.GetProperty("requestCount").GetInt32()} requests · {u.GetProperty("totalTokens").GetInt64()} tokens · ${dollars}" + (unpriced > 0 ? $" · {unpriced} without a price" : "");
+    }
+
+    private static string GroupName(JsonElement p, string groupId) =>
+        p.GetProperty("modelGroups").EnumerateArray().Where(g => Str(g, "id") == groupId).Select(g => Str(g, "name")).FirstOrDefault() ?? "";
+
+    private async Task CreateAsync()
+    {
+        object body = _useDeployment ? new { name = _name.Trim(), useDeploymentProxy = true, allMembers = _allMembers } : new { name = _name.Trim(), baseUrl = _url.Trim(), apiKey = _key, mode = "issued", allMembers = _allMembers };
+        await RunAsync(() => Den.RequestAsync("/api/browser/v1/inference-providers/litellm", "POST", body), "The provider was added and its models synced.");
+        if (Error is not null && Error.Contains("no LiteLLM proxy")) _deploymentAvailable = _useDeployment = false;
+        if (Error is null) _key = "";
+    }
+
+    private Task SyncAsync(string id) => RunAsync(() => Den.RequestAsync($"/api/browser/v1/inference-providers/{id}/litellm/sync", "POST"), "Models synced.");
+
+    private Task ToggleAsync(JsonElement p) =>
+        RunAsync(() => Den.RequestAsync($"/api/browser/v1/inference-providers/{Str(p, "id")}", "PATCH", new { status = Str(p, "status") == "active" ? "disabled" : "active" }), "Saved.");
+
+    private async Task DeleteAsync(string id)
+    {
+        _confirm = null;
+        await RunAsync(() => Den.RequestAsync($"/api/browser/v1/inference-providers/{id}", "DELETE"), "The provider was deleted and every key taken back.");
+    }
+
+    private Task RemoveGrantAsync(string id, string grantId) =>
+        RunAsync(() => Den.RequestAsync($"/api/browser/v1/inference-providers/{id}/access-grants/{grantId}", "DELETE"), "Access removed. Their keys changed at once.");
+
+    private Task AddGrantAsync(JsonElement p)
+    {
+        var group = p.GetProperty("modelGroups").EnumerateArray().FirstOrDefault();
+        object audience = _audience.StartsWith("team:") ? new { type = "team", teamId = _audience[5..] } : _audience.StartsWith("member:") ? new { type = "member", memberId = _audience[7..] } : new { type = "organization" };
+        return RunAsync(() => Den.RequestAsync($"/api/browser/v1/inference-providers/{Str(p, "id")}/access-grants", "POST", new { modelGroupId = Str(group, "id"), audience }), "Access granted.");
+    }
+}

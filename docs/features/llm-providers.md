@@ -7,7 +7,7 @@ Reference: `ee/apps/den-api/src/routes/org/{llm-providers,llm-provider-access}.t
 `tests/parity/ui-llm-providers.js` (17, browser; it starts its own fake OpenAI-compatible endpoint, see its header).
 
 A workspace saves model providers with its own keys and decides who may use them; people's desktops fetch what they need through `/connect` and call
-the provider directly. The AI Gateway (`/v1/inference-providers`, LiteLLM) is a separate area.
+the provider directly. The AI Gateway (`/v1/inference-providers`, LiteLLM) is a separate area: [gateway.md](gateway.md).
 
 ## Routes built
 
@@ -77,4 +77,4 @@ redundant: every provider is looked up within the workspace first.
 
 ## Not built
 
-The AI Gateway (`/v1/inference-providers*`, usage, limits), hosted OpenWork models, `migrate-from-llm-provider`, models analytics.
+Hosted OpenWork models, `migrate-from-llm-provider`, models analytics.
