@@ -28,8 +28,11 @@ repeated in the read model. The service provider entity id (audience) defaults t
 
 `SamlValidator` (pure, unit tested) then `SamlFlow`:
 
-* **XML**: DTDs prohibited (no entity is ever expanded: XXE and entity bombs are refused), no resolver, comments dropped (a comment cannot split a name), 256 KB limit,
-  encrypted assertions refused with a clear reason (not supported, see below).
+* **XML**: DTDs prohibited (no entity is ever expanded: XXE and entity bombs are refused), no resolver, comments dropped (a comment cannot split a name), 256 KB limit.
+* **Encrypted assertions** (one `EncryptedAssertion`, a direct child of the Response) are decrypted with the connection's service provider key (below): a signature on
+  the Response is verified over the encrypted form first, then the plaintext must be a SAML `Assertion`, which replaces the encrypted one and is held to every rule below,
+  its own signature included. Key transport RSA-OAEP (SHA-1 or SHA-256 digest; RSA PKCS#1 v1.5 is refused, it allows padding-oracle attacks), content AES-CBC or AES-GCM
+  (128 to 256 bits). Encrypted IDs and attributes are refused. Without a service provider key the answer is "no service provider key to decrypt it".
 * **Signature wrapping**: exactly one `Assertion` in the whole document and it is a direct child of the `Response`; signatures only directly under the Response or that
   Assertion, at most one each; a signature must reference exactly its own parent by id (`#id`), that id must be unique in the document (attribute `ID`, `Id` or `id`), and the
   reference lookup is pinned to that parent (the stock "first element with this id" is replaced), so the verified element is the very one the claims are read from. Only the
@@ -64,17 +67,48 @@ Failures redirect to the sign-in's `errorCallbackURL` (else its `callbackURL`; e
 |---|---|---|
 | samlify; any binding data from IdP metadata | A small validator on `System.Security.Cryptography.Xml`; configuration is the three fields above | Smaller, testable surface; samlify's behavior was matched where the source was readable |
 | No browser binding | Binding cookie checked at a same-site last step | Login CSRF |
-| `idpMetadata`, custom SP metadata, signed AuthnRequests, SLO, encrypted assertions, `additionalParams`, multiple `RelayState` shapes | Not built (see below) | Not reachable through the reference's `/v1/sso/saml` either, except the metadata/encryption options of the plugin |
+| `idpMetadata`, signed AuthnRequests, SLO, encrypted assertions (plugin options, not reachable through the reference's `/v1/sso/saml`) | Built (below); `idpMetadata`, `signAuthnRequests` and `singleLogoutUrl` are accepted by `/v1/sso/saml` | The plugin supports them; the routes are this build's |
+| Custom SP metadata, `additionalParams`, multiple `RelayState` shapes | Not built | |
 | `issuer` stored on the provider is the audience | `connection.issuer` is the identity provider's entity id, `saml.audience` the service provider's | Same as what the reference's routes show |
 | A transient NameID is the account key | A transient NameID cannot name a person: the (domain-checked) email is the key | The id changes at every sign-in |
 | Timestamps: NotBefore and/or NotOnOrAfter | Conditions need one of them and the bearer confirmation needs `NotOnOrAfter` | Web SSO profile |
 | `RelayState` that is not one of ours when IdP-initiated: rejected | Rejected the same (`invalid_state`) | Parity |
 | Plan gating (`402`), audit events | Not built (as for OIDC) | |
 
+## Service provider key, signed requests, metadata import, Single Logout
+
+Code: `Features/Sso/SamlServiceProvider.cs`, `SamlCrypto.cs`, `SamlLogoutFlow.cs`, entities `Domain/Saml/SamlSpEntities.cs`. Tests: `SamlExtrasTests` and friends (23),
+`tests/parity/ui-saml-extras.js` (6, browser).
+
+* **Service provider key** (`SamlSpKey`): one per connection, made on first use (RSA 2048, a self-signed certificate valid 10 years); the private key is stored encrypted
+  (AES-GCM, key derived from `Auth:Secret`). The SP metadata (`/api/auth/sso/saml2/sp/metadata` and `/v1/sso/metadata`) publishes its certificate as `KeyDescriptor use="signing"`
+  and `use="encryption"`, the Single Logout endpoints and `AuthnRequestsSigned`.
+* **Signed AuthnRequests** (`signAuthnRequests: true` on `/v1/sso/saml`, off by default): redirect binding with a `SigAlg`/`Signature` query signature (RSA-SHA256, SAML bindings
+  3.4.4.1), POST binding with an enveloped XML signature after the Issuer.
+* **IdP metadata import** (`idpMetadata` on `/v1/sso/saml`): an `EntityDescriptor` (or one inside an `EntitiesDescriptor`) with an `IDPSSODescriptor` gives the entity id, the
+  sign-on URL (redirect binding preferred, else POST, which sets `binding`), the signing certificates (`use="signing"` or no `use`) and the redirect-binding logout URL. Issuer,
+  sign-on URL and certificate become optional; fields given explicitly win. DTDs are refused, 256 KB at most, nothing is fetched (paste the XML; no metadata URL).
+* **Single Logout** (`singleLogoutUrl`, or from metadata):
+  * sessions opened by a SAML sign-in remember its NameID, format and SessionIndex (`SamlSessionLink`);
+  * IdP-initiated: `GET` (redirect binding) or `POST` `/api/auth/sso/saml2/sp/slo/{providerId}` with a `LogoutRequest`. It must be signed with the identity provider's
+    certificate (query signature over the parameters exactly as received, repeated parameters refused, SHA-256 or stronger; or an enveloped XML signature held to the response
+    rules), name the configured issuer, be addressed to this endpoint (when `Destination` is present), not have expired, and is used once (replay table). Every session that
+    sign-ins with that NameID (and, when given, those session indexes) opened through this connection ends; the answer is a signed `LogoutResponse` (redirect binding, RelayState
+    echoed) to the identity provider's logout URL, or "Signed out." when none is configured;
+  * SP-initiated: `GET /api/auth/sso/saml2/sp/logout/{providerId}` ends the session here (server side, cookie cleared) and, when the session came from this connection and a
+    logout URL is known, redirects to the identity provider with a signed `LogoutRequest`. Only a `LogoutResponse` answering a request this service sent (id hashed, 10 minutes,
+    answered once) is accepted back; the person lands on the home page.
+* **SSO page**: a metadata paste box, the logout URL and the "sign requests" option.
+
+Mutation checks (16 of 17 killed): redirect and POST signatures not required, issuer, destination and expiry not checked, logout-request replay allowed, every session of the
+connection ended instead of the NameID's, a LogoutResponse not matched to a sent request, own logout keeping the server session, RSA 1.5 accepted, the response signature over the
+encrypted form skipped, decrypted content not required to be an assertion, the missing-key refusal, RelayState not covered by the query signature, repeated parameters
+allowed. The survivor (an unknown `SigAlg` falling back to SHA-256) is equivalent: a SHA-1 signature never verifies under SHA-256.
+
 ## Not built
 
-SAML Single Logout, encrypted assertions (`EncryptedAssertion` is refused), signed AuthnRequests, importing IdP metadata XML (paste the certificate), ECDSA signatures are
-accepted by the validator but are only tested with RSA, the legacy `/sso/saml2/callback/{providerId}` path, SP-side key management, group/role mapping from assertions.
+SAML signatures with ECDSA are accepted by the validator but only tested with RSA; the SP key is RSA. Not built: the legacy `/sso/saml2/callback/{providerId}` path, group/role
+mapping from assertions, a metadata URL to fetch, SP key rotation (delete and recreate the connection), the SOAP back-channel binding for logout, encrypted NameIDs.
 
 ## Settings
 

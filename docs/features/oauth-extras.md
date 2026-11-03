@@ -45,13 +45,65 @@ The reference supports all three, so all three are built, as far as its source g
 * The code is not spent when a proof is missing or wrong (the reference checks after spending it), so a client that forgot the proof can retry.
 * `htu` may name the advertised token endpoint, the API's own address, or the address the request arrived at.
 
+## Client management (`/api/auth/oauth2/*-client`)
+
+Code: `Features/OAuthClients/OAuthClientManagement.cs` (and the shared registration core `OAuthEndpoints.RegisterFromBodyAsync`). Tests: `OAuthClientManagementTests` (5),
+`area-oauth-extras.mjs` (client section).
+
+Better Auth's client routes as Den serves them. Den configures neither `clientReference` nor `clientPrivileges`, so **a client belongs to the signed-in person
+who registered it** (`OAuthClientExtras.OwnerUserId`), whether through `/register` while signed in (which now answers `user_id`) or `create-client`; a
+client registered anonymously belongs to nobody and nobody can manage it.
+
+| Route | Notes |
+|---|---|
+| `POST /api/auth/oauth2/create-client` | Needs a session (`401 {code: "UNAUTHORIZED"}`); the registration rules of `/register`; `201` with the client, its secret (shown once) and `user_id` |
+| `GET /api/auth/oauth2/get-client?client_id=` | The owner only (`401` otherwise, `404 {error: "not_found", error_description: "client not found"}` for an unknown id); never the secret |
+| `GET /api/auth/oauth2/get-clients` | The caller's own clients |
+| `GET /api/auth/oauth2/public-client?client_id=` | Any signed-in person: `client_id`, `client_name`, `logo_uri`, `client_uri`, `contacts`, `tos_uri`, `policy_uri` (for sign-in and consent screens) |
+| `POST /api/auth/oauth2/update-client` | `{client_id, update: {…}}`, owner only: redirect URIs, scope, names and descriptive URLs, contacts, software fields, post-logout URIs, application type, grant and response types, with the registration rules. Dropping `client_credentials` (or a public client) clears the scopes a platform admin granted for it |
+| `POST /api/auth/oauth2/client/rotate-secret` | Owner only; secret clients only (`400 invalid_client "secret rotation is only available for clients using client_secret authentication"`); the old secret stops working at once |
+| `POST /api/auth/oauth2/delete-client` | Owner only; removes the client and its consents, unused codes, refresh tokens (and DPoP bindings) and OpenID Connect grants. Access tokens already issued are JWTs and run out within their lifetime, as in the reference |
+
+Descriptive RFC 7591 fields (`client_uri`, `contacts`, `tos_uri`, `policy_uri`, `software_id`, `software_version`, `software_statement`, `application_type`) are kept and shown back.
+The `/admin/oauth2/*` variants are server-only in the reference (not reachable over HTTP) and are not served. Mutation checks: 8 of 8 killed (each ownership
+check, list filtering, public-client session, redirect policy on update, secret replacement on rotation).
+
+## The JWT-bearer grant (pre-claim assertions)
+
+Code: `OAuth/PreclaimGrant.cs`. Tests: `PreclaimGrantTests` (4), `area-oauth-extras.mjs`.
+
+`grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=…` at the token endpoint, as the reference's `exchangePreclaimAssertion`: a provisional workspace's agent
+(`POST /v1/bootstrap/workspace`) trades its pre-claim assertion for an MCP access token for its setup member in that workspace: 15 minutes (never past the
+workspace's own expiry), `token_type: "Bearer"`, scope `mcp:read mcp:write`, client id `openwork-preclaim`, no refresh token (the agent exchanges again). It is
+answered before client authentication (the assertion is the credential) but after the token endpoint's rate limits. Errors: `invalid_request "The assertion parameter is required."`,
+`invalid_grant "The assertion is invalid or expired."` (bad signature, audience, type, expiry, unknown workspace or token id), `invalid_grant "This workspace was claimed or expired;
+its pre-claim credentials are revoked."`. Claiming removes the setup member, so tokens already minted stop working at once. Discovery lists the grant and the reference's
+`agent_auth` block (`identity_endpoint`, `claim_endpoint`, `identity_types_supported: ["anonymous"]`). Difference: the reference tells "missing its workspace" and "not recognized"
+apart; here every invalid assertion gets the one "invalid or expired" message. Mutation checks: 3 of 3 killed.
+
+## Server-provided DPoP nonces (opt-in)
+
+Code: `OAuth/DpopNonce.cs`. Tests: `DpopNonceTests` (4). RFC 9449 sections 8 and 9; the reference does not use nonces, so this is **off** unless
+`OAuth__DpopNonceRequired=true`. Then every DPoP proof at the token endpoint, the MCP endpoint and userinfo needs a recent `nonce` from this server: the token
+endpoint answers `400 use_dpop_nonce` ("Authorization server requires nonce in DPoP proof"), a resource a `401` with `WWW-Authenticate: DPoP error="use_dpop_nonce"`, and every
+answer of those endpoints carries a fresh `DPoP-Nonce` header (exposed to browsers). Nonces are stateless (a two-minute slot and an HMAC under a key derived from
+`Auth:Secret`), so all instances accept each other's; one is valid for its slot and the next. The check runs before the proof's `jti` is reserved, so the retry with a
+fresh proof works and an authorization code is not spent. Mutation checks: 3 of 3 killed.
+
+## EdDSA
+
+Ed25519 (`kty: OKP`, `crv: Ed25519`) is accepted for `private_key_jwt` assertions and DPoP proofs, verified with BouncyCastle (`BouncyCastle.Cryptography`, already in the
+dependency graph through MailKit, now referenced directly). OKP keys register (32-byte `x`, no private members), thumbprint per RFC 8037 and verify only EdDSA; X25519 keys never
+verify a signature. Discovery lists `EdDSA` for assertions and proofs. **Tokens this server issues stay ES256**: it verifies its own access tokens, and ID-token consumers
+support ES256 far more widely than EdDSA (the reference signs with EdDSA). Tests: `EdDsaTests` (4, including the RFC 8037 thumbprint vector); mutation checks 4 of 4 killed.
+
 ## Differences and gaps
 
 | Reference | Here |
 |---|---|
-| EdDSA (Ed25519) for assertions and proofs, OKP keys | Not available (.NET has no Ed25519): assertions RS/PS/ES, proofs ES256, ES512, PS256, RS256; OKP keys are refused at registration |
+| Tokens signed with EdDSA | ES256 (EdDSA is accepted from clients, above) |
 | `client_credentials_scopes` effectively unsettable | Settable by a platform administrator (above) |
-| `/oauth2/create-client`, `update-client`, `delete-client`, `client/rotate-secret`, `get-client(s)`, `jwt-bearer` grant, DPoP `DPoP-Nonce` | Not built |
+| No DPoP nonces | Optional server nonces (above), off by default |
 | Opaque access tokens when no resource is given | Always JWTs with the MCP resource as audience |
 | DPoP on the authorization endpoint beyond `dpop_jkt`, mTLS-bound tokens | Not built |
 | JWKS fetch results cached per process | The same (in memory, per instance) |

@@ -40,7 +40,7 @@ the session and the request; the confirm POST only works with that cookie. Non-b
 
 | Reference | Here | Why |
 |---|---|---|
-| ID tokens and access tokens signed with EdDSA | ES256 (already the case for access tokens) | .NET has no built-in Ed25519 |
+| ID tokens and access tokens signed with EdDSA | ES256 (already the case for access tokens) | ES256 is supported by every ID-token consumer; EdDSA is accepted from clients (assertions, DPoP proofs), see [oauth-extras.md](oauth-extras.md#eddsa) |
 | Access token `aud` is `[resource, userinfo]` for `openid` requests, claims are URL-named (`https://web/org_id`) | `aud` stays the resource string; claims keep the names this rewrite already used (`org_id`, `token_use`) | MCP clients and the existing `/mcp/agent` check read them; userinfo accepts exactly the tokens `/mcp/agent` accepts, never an ID token |
 | Access tokens carry `sid` and become inactive when the session is deleted | They do not carry `sid`; logout revokes refresh tokens, access tokens live at most 45 minutes | MCP grants outlive browser sessions here (membership is rechecked on every call) |
 | `enable_end_session` is never settable through the API (every dynamically registered client is refused logout) | Settable by a signed-in registrant | Otherwise the logout code could never run; an anonymous client can never use it |
