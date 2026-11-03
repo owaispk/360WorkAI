@@ -14,7 +14,7 @@ Reference: `ee/apps/den-api/src/routes/org/{api-keys,audit,core,activity,web-ori
 | `GET /v1/audit/operations`, `/operations/{id}/events`, `/event-types`, `/usage`, `/export`, `PATCH /v1/audit/settings` | Same filters, cursors, errors and headers as the reference (`audit_invalid_query`, `audit_invalid_cursor`, `410 audit_cursor_expired`, `X-Audit-*`, CSV and NDJSON exports with the reference's cell escaping) |
 | `PATCH /v1/org` | Name, allowed email domains, desktop versions, SSO requirement and brand fields (kept in the organization metadata, as in the reference). The response carries the metadata as an object and `GET /v1/org` as a string, like the reference |
 | `DELETE /v1/org` | Owner only, needs a recent sign-in; purges members, teams, roles, invitations, tokens, keys, settings, brand images, web origins and the workspace's audit history in one transaction |
-| `GET/POST/DELETE /v1/org/web-origins` | Exact https origins, at most 20, canonical form, duplicates refused |
+| `GET/POST/DELETE /v1/org/web-origins` | Exact https origins, at most 20, canonical form, duplicates refused. Enforced for CORS and web handoff return URLs ([web-origins.md](web-origins.md)) |
 | `POST /v1/org/brand-assets`, `GET /v1/brand-assets/{org}/{kind}/{version}` | Wordmark and icon, PNG or JPEG under 2 MB with the reference's size and aspect rules. Stored in the database; served from an immutable URL signed with an HMAC |
 | `GET /v1/org/activity` | Owners and admins; always an empty list for now (see below) |
 | `GET /v1/org/inventory-revision` | Opaque hash of members, teams, roles, role links and settings |
@@ -76,5 +76,4 @@ The policy is created on first use, ON, when the workspace is entitled (`OrgAdmi
 * `/v1/me/profile`, `/v1/me/invitations`, `/v1/me/send-download-link`, `/v1/me/desktop-config`, `/v1/me/prompts`: not part of org admin as built here.
 * `GET /v1/org/activity` returns an empty list: the reference reads connections, providers, plugins and skills, which do not exist yet.
 * The den-web `web` page (OpenWork Web billing, Stripe) and `advanced` (a redirect to marketplaces).
-* Enforcement of approved web origins (CORS and desktop-handoff return URLs): the list is stored and managed, but nothing reads it yet.
 * Audit capture for routes of areas not yet built (they call `IAuditLog` when they are), SCIM/SSO events, retention and cleanup jobs, the platform-admin view of feature usage.

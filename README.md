@@ -179,7 +179,7 @@ The reference has about 400 distinct `/v1` paths and 129 web pages; this covers 
 - The rest of platform admin (inference usage and the dashboard's AI usage numbers, the security request log, the control center, opportunities, sandbox organization actions), "my agent", and real egress probes (see [docs/features/platform-admin.md](docs/features/platform-admin.md) and [onboarding.md](docs/features/onboarding.md)).
 - Declarative team keys.
 - **OAuth**: EdDSA keys, client management routes (`create-client`, `rotate-secret`), `DPoP-Nonce`. **SAML**: single logout, encrypted assertions, signed requests. **OAuth-provider browser sign-in** connect (start and callback) and GitHub import bindings; and from the workspace area ([docs](docs/features/workspace.md)): direct uploads (they need Google or Microsoft), the app builder and each App's own MCP server.
-- **Operations**: Helm packaging; a shared store for rate limits and caches (they are per instance); the CI workflow has not had its first run on GitHub yet.
+- **Operations**: Helm packaging; a shared store for rate limits and caches (they are per instance). CI (`.github/workflows/ci.yml`) runs the tests on SQLite and MySQL, the migration check and the image build on every pull request.
 
 Each area's page in [docs/features](docs/features) lists its own gaps and its differences from the reference.
 
