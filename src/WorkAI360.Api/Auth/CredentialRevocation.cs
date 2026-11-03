@@ -8,7 +8,13 @@ namespace WorkAI360.Api.Auth;
 /// workspace, so all of them end (a live session could otherwise re-select the workspace and mint new tokens); the person
 /// signs in again and sees only what they still belong to. Their agent access to this workspace ends too.
 /// </summary>
-public sealed class CredentialRevocation(DenDbContext db, Features.OrgAdmin.IAuditLog audit)
+/// <summary>Something outside this database a person can hold for a workspace (e.g. LiteLLM keys), taken back when their access ends.</summary>
+public interface IMemberAccessEnded
+{
+    Task OnAccessEndedAsync(string userId, string organizationId);
+}
+
+public sealed class CredentialRevocation(DenDbContext db, Features.OrgAdmin.IAuditLog audit, IEnumerable<IMemberAccessEnded> others)
 {
     public async Task RevokeAsync(string userId, string organizationId, OrgContext? actor = null)
     {
@@ -33,5 +39,6 @@ public sealed class CredentialRevocation(DenDbContext db, Features.OrgAdmin.IAud
         await db.DeviceCodes.Where(d => d.UserId == userId && d.OrganizationId == organizationId && d.Status == Domain.DeviceStatus.Approved).ExecuteDeleteAsync();
         await db.HandoffGrants.Where(g => g.UserId == userId && g.OrganizationId == organizationId && g.ConsumedAt == null).ExecuteDeleteAsync();
         // Access tokens already issued (JWTs) cannot be recalled, but every MCP call re-checks membership, so they stop working at once.
+        foreach (var other in others) await other.OnAccessEndedAsync(userId, organizationId);
     }
 }

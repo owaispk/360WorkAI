@@ -19,14 +19,15 @@ public sealed record ActivationFacts(
     bool CanInvite, int InvitedByMe, int Teammates, int Joined, int Pending,
     bool SkillUsed,
     bool ProviderReportedOnDevice, string? AddedProviderName, bool OrgProvidesModels, bool CanConfigureProviders,
-    bool CanManageGateway,
+    bool CanManageGateway, bool GatewayHasProvider, string? GatewayProviderName,
     string? ReadyConnectionName,
     string? OwnerName,
     bool Dismissed);
 
 /// <summary>
 /// The "Get set up" checklist (the reference's <c>activation.ts</c> and <c>activation-steps.ts</c>): six steps, each checked off only from what
-/// actually happened, with who can do a step the caller cannot. This build has no AI Gateway, so "Share a provider on AI Gateway" stays open.
+/// actually happened, with who can do a step the caller cannot. "Share a provider on AI Gateway" is done once the workspace has an active Gateway
+/// (LiteLLM) provider.
 /// </summary>
 public static class Activation
 {
@@ -65,8 +66,9 @@ public static class Activation
                     else if (!f.CanConfigureProviders) step["detail"] = "Your team manages models";
                     break;
                 case "gateway_provider":
-                    step["done"] = false;
-                    if (!f.CanManageGateway) step["lockedReason"] = $"{owner} manages AI Gateway";
+                    step["done"] = f.GatewayHasProvider;
+                    if (f.GatewayHasProvider && f.GatewayProviderName is not null) step["detail"] = $"{f.GatewayProviderName} on AI Gateway";
+                    if (!f.GatewayHasProvider && !f.CanManageGateway) step["lockedReason"] = $"{owner} manages AI Gateway";
                     break;
                 case "connector":
                     step["done"] = f.ReadyConnectionName is not null;
@@ -125,12 +127,16 @@ public static class Activation
             if (json.GetValueOrDefault("connectedForMe") is true && json.GetValueOrDefault("needsReconnect") is not true && json.GetValueOrDefault("setupRequired") is not true) { ready = connection.Name; break; }
         }
 
+        var gatewayProvider = await db.Set<Domain.Gateway.GatewayProvider>().AsNoTracking().Where(p => p.OrganizationId == orgId && p.Status == "active").OrderBy(p => p.CreatedAt).Select(p => p.Name).FirstOrDefaultAsync();
+
         return new ActivationFacts(
             Answered: first is not null, DurationMs: first?.DurationMs,
             CanInvite: c.Permissions.Has("invitations.manage"), InvitedByMe: invitedByMe, Teammates: others + pending, Joined: others + 1, Pending: pending,
             SkillUsed: skillUsed,
             ProviderReportedOnDevice: reported.Any(e => e.Step == "own_provider"), AddedProviderName: addedProvider, OrgProvidesModels: orgProvides, CanConfigureProviders: canConfigure,
-            CanManageGateway: c.Permissions.Has("gateway_providers.manage"),
+            CanManageGateway: c.Permissions.Has("gateway_providers.manage"), GatewayHasProvider: gatewayProvider is not null,
+            // The provider's name only to people who may see Gateway providers, as the reference.
+            GatewayProviderName: c.Permissions.Has("gateway_providers.view") ? gatewayProvider : null,
             ReadyConnectionName: ready, OwnerName: ownerName, Dismissed: reported.Any(e => e.Step == "dismiss"));
     }
 

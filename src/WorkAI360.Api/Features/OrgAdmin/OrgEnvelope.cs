@@ -6,7 +6,7 @@ namespace WorkAI360.Api.Features.OrgAdmin;
 /// The parts of GET /v1/org that describe the deployment rather than the workspace: feature flags, capabilities, entitlements, plan and sign-in methods.
 /// Capabilities are advertised honestly: only what this build serves is on (the reference also reports connections, workflows and more).
 /// </summary>
-public sealed class OrgEnvelope(WorkAI360.Api.Features.PlatformAdmin.FeatureResolver features, WorkAI360.Api.Features.PlatformAdmin.OrganizationPlans plans, AuditPolicies audit)
+public sealed class OrgEnvelope(WorkAI360.Api.Features.PlatformAdmin.FeatureResolver features, WorkAI360.Api.Features.PlatformAdmin.OrganizationPlans plans, AuditPolicies audit, Microsoft.Extensions.Options.IOptions<WorkAI360.Api.Features.Gateway.GatewayOptions> gateway)
 {
     public async Task AddToAsync(JsonObject payload, string organizationId, string? userId = null)
     {
@@ -22,7 +22,7 @@ public sealed class OrgEnvelope(WorkAI360.Api.Features.PlatformAdmin.FeatureReso
         payload["entitlements"] = new JsonObject { ["sso"] = true, ["desktopPolicies"] = true, ["orgControls"] = true, ["analytics"] = true, ["auditLogs"] = audit.Entitled, ["scim"] = true };
         payload["capabilities"] = new JsonObject
         {
-            ["auditLogs"] = audit.Visible, ["gatewayDashboard"] = false, ["orgManagedDashboards"] = false, ["mcpConnections"] = false,
+            ["auditLogs"] = audit.Visible, ["gatewayDashboard"] = gateway.Value.Enabled, ["orgManagedDashboards"] = false, ["mcpConnections"] = false,
             ["appMcpServers"] = false, ["workflows"] = false, ["installLinks"] = false, ["openworkWeb"] = state.ComplimentaryWebAccess, ["workbot"] = false,
         };
         payload["authMethods"] = new JsonObject { ["sso"] = false, ["scim"] = false };

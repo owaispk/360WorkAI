@@ -14,11 +14,18 @@ public static class AdminDashboardEndpoints
 {
     public static void MapAdminDashboardEndpoints(this WebApplication app)
     {
-        app.MapGet("/v1/admin/dashboard", async (HttpContext ctx, PlatformAdminGuard guard) =>
+        app.MapGet("/v1/admin/dashboard", async (HttpContext ctx, PlatformAdminGuard guard, Gateway.GatewayUsage usage, DenDbContext db) =>
         {
             var (_, failure) = await guard.RequireAsync(ctx);
             if (failure is not null) return failure;
             ctx.Response.Headers.CacheControl = "no-store";
+            // AI Gateway usage read back from each workspace's LiteLLM proxy; with no Gateway provider anywhere, the reference's empty shape.
+            if (await db.Set<Domain.Gateway.GatewayProvider>().AnyAsync())
+            {
+                var json = System.Text.Json.JsonSerializer.SerializeToNode(await usage.PlatformAsync(ctx.RequestAborted), new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!.AsObject();
+                json["generatedAt"] = AdminSupport.Iso(DateTime.UtcNow);
+                return Results.Json(json);
+            }
             var today = DateOnly.FromDateTime(DateTime.UtcNow);
             var from = today.AddDays(-29);
             static object Zero() => new { requests = 0, tokens = 0, costMicroUsd = 0, unreportedRequests = 0, unpricedRequests = 0 };
