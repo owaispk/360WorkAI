@@ -80,7 +80,7 @@ await s.t("a fresh connection with the tokens initializes and reports the server
 });
 await s.t("tools/list shows search_capabilities and execute_capability with input schemas", async () => {
   const { tools } = await client.listTools(); const names = tools.map((t) => t.name).sort().join();
-  return (names === "execute_capability,search_capabilities" && tools.every((t) => t.inputSchema?.type === "object")) || names;
+  return ((names === "execute_capability,search_capabilities" || names === "execute_capability,execute_capability_script,search_capabilities") && tools.every((t) => t.inputSchema?.type === "object")) || names;
 });
 await s.t("search_capabilities finds capabilities and execute_capability runs one", async () => {
   const found = await client.callTool({ name: "search_capabilities", arguments: { query: "who" } });

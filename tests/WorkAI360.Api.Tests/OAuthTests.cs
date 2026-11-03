@@ -468,7 +468,7 @@ public sealed class OAuthTests : IClassFixture<ApiFactory>
         Assert.Equal("2025-06-18", unknownVersion.GetProperty("result").GetProperty("protocolVersion").GetString());
 
         var list = await McpAsync(browser, jwt, new { jsonrpc = "2.0", id = 3, method = "tools/list" });
-        Assert.Equal(["search_capabilities", "execute_capability"], list.GetProperty("result").GetProperty("tools").EnumerateArray().Select(t => t.GetProperty("name").GetString()!).ToArray());
+        Assert.Equal(["search_capabilities", "execute_capability", "execute_capability_script"], list.GetProperty("result").GetProperty("tools").EnumerateArray().Select(t => t.GetProperty("name").GetString()!).ToArray());
 
         var search = await McpAsync(browser, jwt, new { jsonrpc = "2.0", id = 4, method = "tools/call", @params = new { name = "search_capabilities", arguments = new { query = "members" } } });
         var found = search.GetProperty("result").GetProperty("structuredContent").GetProperty("capabilities").EnumerateArray().Select(c => c.GetProperty("id").GetString()!).ToArray();

@@ -164,3 +164,19 @@ node tests/parity/area-workspace.mjs                                            
 W=http://localhost:5291 A=http://localhost:5191 node tests/parity/area-workspace.mjs   # rewrite
 W=http://localhost:5291 A=http://localhost:5191 node tests/parity/ui-workspace.js /tmp/shots
 ```
+
+## Checks
+
+120 xUnit test methods (196 cases) for this area; the whole suite is 1031 cases and passes on SQLite and on MySQL 8. `area-workspace.mjs` is 82/82 on the
+reference and on the rewrite, `ui-workspace.js` 36/36. The added `execute_capability_script` tool changes the tool list `/mcp/agent` answers (an existing
+assertion in `OAuthTests` and in `real-mcp-client.mjs` was updated).
+
+Rules were mutation-checked: one rule removed at a time, a test must fail. All were killed (the first attempt at "no workspace filter" survived only because
+a second, redundant workspace filter on the plugin also holds; both removed, it is killed):
+no role check on a Workflow; no workspace filter; another person's receipt accepted; receipt window unchecked; one receipt usable twice; viewers get the
+source / the example input; every receipt readable by everyone; any manager erases anyone's run; results stored in clear; credentials allowed in a new
+version / in retained source; running without the Workflow being shared; every tool offered whether declared or not; live runs allowed write tools; GitHub and
+Stripe signatures not compared, Stripe timestamp tolerance ignored; library shows the source / search text carries it; a viewer may change a view; save ignores
+the expected revision; retire keeps dashboard cards; share lowers an existing grant; legacy views editable; catalog lists unshared apps; retained source not
+scoped to its person; script output keeping `undefined`; runner time limit ignored (that test hangs until stopped).
+On SQLite the lock around "one receipt, one version" cannot be seen failing (writers are serialized); it matters on MySQL, where the test passes with it.
