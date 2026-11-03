@@ -24,6 +24,14 @@ public sealed class PlatformAdminFeature : IFeature
         services.AddScoped<OrganizationPlans>();
         services.AddScoped<FeatureUsageStore>();
         services.AddScoped<InitialAdminSetup>();
+        services.Configure<ControlCenterOptions>(configuration.GetSection(ControlCenterOptions.Section));
+        services.AddScoped<ControlCenterMetrics>();
+        services.AddScoped<ControlCenterStore>();
+        services.AddSingleton<ControlCenterRefresher>();
+        services.AddHostedService(sp => sp.GetRequiredService<ControlCenterRefresher>());
+        services.Configure<RequestLogOptions>(configuration.GetSection(RequestLogOptions.Section));
+        services.AddSingleton<RequestLog>();
+        services.AddHostedService(sp => sp.GetRequiredService<RequestLog>());
     }
 
     public void MapEndpoints(WebApplication app)
@@ -37,5 +45,8 @@ public sealed class PlatformAdminFeature : IFeature
         app.MapInitialAdminSetupEndpoints();
         app.MapAdminMemberFeatureEndpoints();
         app.MapAdminDashboardEndpoints();
+        app.MapAdminControlCenterEndpoints();
+        app.MapAdminSecurityRequestsEndpoints();
+        RequestLog.UseRequestLog(app);
     }
 }

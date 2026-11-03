@@ -20,8 +20,10 @@ public sealed record SecurityFinding(string Id, string Category, string Severity
 /// </summary>
 public static partial class AdminSecurityEndpoints
 {
-    private const int EntityLimit = 20;
+    public const int EntityLimit = 20;
     private static readonly Dictionary<string, int> Rank = new() { ["high"] = 3, ["medium"] = 2, ["low"] = 1, ["clear"] = 0 };
+
+    public static int SeverityRank(string severity) => Rank.GetValueOrDefault(severity);
 
     // ---- thresholds (the reference's) ----
     private static readonly (int High, int Medium) SignupNetwork = (15, 5);
@@ -33,7 +35,7 @@ public static partial class AdminSecurityEndpoints
     private static readonly (int High, int Medium) Invitations = (100, 25);
     private static readonly (int High, int Medium) AutomationSignIns = (20, 3);
 
-    private static readonly string[] PersonalDomains =
+    public static readonly string[] PersonalDomains =
     [
         "gmail.com", "googlemail.com", "yahoo.com", "yahoo.co.uk", "yahoo.fr", "yahoo.de", "yahoo.co.jp", "ymail.com", "rocketmail.com",
         "outlook.com", "hotmail.com", "hotmail.co.uk", "hotmail.fr", "live.com", "live.co.uk", "live.fr", "msn.com",
@@ -71,7 +73,7 @@ public static partial class AdminSecurityEndpoints
     private static string Tiered(long value, int? high = null, int? medium = null, int? low = null) =>
         high is { } h && value >= h ? "high" : medium is { } m && value >= m ? "medium" : low is { } l && value >= l ? "low" : "clear";
 
-    private static SecurityFinding Finding(string id, string category, string title, string summary, string rule, string why, string review, long value, string unit, IEnumerable<SecurityEntity> entities)
+    public static SecurityFinding Finding(string id, string category, string title, string summary, string rule, string why, string review, long value, string unit, IEnumerable<SecurityEntity> entities)
     {
         var all = entities.ToList();
         var severity = all.Select(e => e.Severity).OrderByDescending(s => Rank[s]).FirstOrDefault() ?? "clear";
@@ -162,6 +164,8 @@ public static partial class AdminSecurityEndpoints
             findings = findings.OrderByDescending(f => Rank[f.Severity]).Select(Json),
         };
     }
+
+    public static object FindingJson(SecurityFinding f) => Json(f);
 
     private static object Json(SecurityFinding f) => new
     {
