@@ -10,8 +10,8 @@ RUN dotnet publish src/WorkAI360.Web/WorkAI360.Web.csproj -c Release -o /out --n
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
 COPY --from=build /out .
-RUN useradd --system --uid 10001 --no-create-home app && chown -R app /app
-USER app
+# Run as the unprivileged `app` user the .NET images ship with (UID 1654); the app files stay root-owned and read-only to it.
+USER $APP_UID
 ENV ASPNETCORE_URLS=http://+:8080 ASPNETCORE_ENVIRONMENT=Production
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "WorkAI360.Web.dll"]

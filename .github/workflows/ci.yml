@@ -1,0 +1,105 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+
+jobs:
+  test-sqlite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with: { dotnet-version: "10.0.x" }
+      - run: dotnet build --nologo -warnaserror
+      - run: dotnet test --nologo --no-build
+
+  test-mysql:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      mysql:
+        image: mysql:8.0
+        env: { MYSQL_ROOT_PASSWORD: password }
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -uroot -ppassword" --health-interval=5s --health-timeout=3s --health-retries=20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with: { dotnet-version: "10.0.x" }
+      - run: dotnet build --nologo
+      - name: Same tests, on MySQL (one throwaway database per test class)
+        run: dotnet test --nologo --no-build
+        env:
+          WORKAI_TEST_MYSQL: Server=127.0.0.1;User=root;Password=password
+
+  migrations:
+    # The checked-in migration must match the model: fails when an entity changed and no migration was added.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with: { dotnet-version: "10.0.x" }
+      - run: dotnet tool install --global dotnet-ef --version "10.*"
+      - run: dotnet build --nologo src/WorkAI360.Api
+      - run: dotnet ef migrations has-pending-model-changes --no-build --project src/WorkAI360.Api
+
+  docker:
+    # Builds both images, runs them as a pair and runs the contract checks against the containers.
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker build -f deploy/Dockerfile.api -t workai360-api .
+      - run: docker build -f deploy/Dockerfile.web -t workai360-web .
+      - name: Start the images (API on SQLite, mail to a local sink)
+        run: |
+          node tests/parity/smtp-sink.cjs &
+          docker run -d --name api --network host \
+            -e ASPNETCORE_URLS=http://+:8080 \
+            -e Database__Provider=sqlite -e "ConnectionStrings__Default=Data Source=/tmp/ci.db" -e Database__AutoMigrate=true \
+            -e Auth__Secret="$(openssl rand -hex 32)" -e Auth__WebUrl=http://localhost:8081 -e Auth__ApiPublicUrl=http://localhost:8080 \
+            -e Email__Provider=smtp -e Email__From=noreply@example.com -e Email__Smtp__Host=localhost -e Email__Smtp__Port=2525 -e Email__Smtp__Security=none \
+            -e Auth__PasswordBreachScreening=false -e Auth__RateLimitsEnabled=false \
+            workai360-api
+          docker run -d --name web --network host -e ASPNETCORE_URLS=http://+:8081 -e Den__ApiBaseUrl=http://localhost:8080 workai360-web
+          for i in $(seq 60); do
+            curl -fsS localhost:8080/health && curl -fsS localhost:8081/api/health && exit 0
+            sleep 1
+          done
+          docker logs api; docker logs web; exit 1
+      - name: Images run as a non-root user
+        run: |
+          for c in api web; do test "$(docker exec $c id -u)" != "0" || { echo "$c runs as root"; exit 1; }; done
+      - name: The API image's HEALTHCHECK reports healthy
+        run: |
+          for i in $(seq 30); do
+            s=$(docker inspect --format '{{.State.Health.Status}}' api); echo "$s"
+            [ "$s" = healthy ] && exit 0
+            sleep 3
+          done
+          exit 1
+      - name: Contract checks against the containers
+        run: node tests/parity/parity.mjs
+        env:
+          W: http://localhost:8081
+          A: http://localhost:8080
+          SECTIONS: health,auth,orgs,handoff,device,login-options,oauth-mcp,members,teams,sign-out
+      - name: Container logs
+        if: failure()
+        run: docker logs api; docker logs web

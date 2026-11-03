@@ -31,7 +31,7 @@ dotnet ef migrations add <WhatChanged> -o Migrations      # uses Data/DesignTime
 dotnet ef migrations has-pending-model-changes            # prints nothing wrong when the model and migrations agree
 ```
 
-CI fails when an entity changed without a migration (`deploy/ci/360workai-ci.yml`, job `migrations`).
+CI fails when an entity changed without a migration (`.github/workflows/ci.yml`, job `migrations`).
 
 ## Design rules that keep both databases working
 

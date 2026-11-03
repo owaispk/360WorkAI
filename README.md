@@ -22,7 +22,7 @@ model gateways, cloud sandboxes, Google/Microsoft integrations). Each area has a
 | `tests/parity` | Contract tests that run unchanged against the **reference** Den and this rewrite |
 | `scripts/dev.sh` | Start / stop the API (`:5080`) and web (`:5081`) |
 | `docs/` | `AREA_GUIDE.md` (how to build an area), `database.md`, and `features/*.md` (what each area implements and how it differs from the reference) |
-| `deploy/` | Dockerfiles, a compose stack (MySQL + migrate + API + web) and a GitHub Actions template |
+| `deploy/` | Dockerfiles and a compose stack (MySQL + migrate + API + web); CI is `.github/workflows/ci.yml` |
 
 ## Run
 
@@ -179,7 +179,7 @@ The reference has about 400 distinct `/v1` paths and 129 web pages; this covers 
 - The rest of platform admin (inference usage and the dashboard's AI usage numbers, the security request log, the control center, opportunities, sandbox organization actions), "my agent", and real egress probes (see [docs/features/platform-admin.md](docs/features/platform-admin.md) and [onboarding.md](docs/features/onboarding.md)).
 - Declarative team keys.
 - **OAuth**: EdDSA keys, client management routes (`create-client`, `rotate-secret`), `DPoP-Nonce`. **SAML**: single logout, encrypted assertions, signed requests. **OAuth-provider browser sign-in** connect (start and callback) and GitHub import bindings; and from the workspace area ([docs](docs/features/workspace.md)): direct uploads (they need Google or Microsoft), the app builder and each App's own MCP server.
-- **Operations**: Helm packaging; a shared store for rate limits and caches (they are per instance); the container images were written and the publishes verified, but not built (no Docker daemon here); the CI template is not enabled in the repository's own CI.
+- **Operations**: Helm packaging; a shared store for rate limits and caches (they are per instance); the CI workflow has not had its first run on GitHub yet.
 
 Each area's page in [docs/features](docs/features) lists its own gaps and its differences from the reference.
 
