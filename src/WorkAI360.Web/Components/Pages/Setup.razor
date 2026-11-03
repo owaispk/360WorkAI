@@ -6,36 +6,99 @@
 
 <section class="den-card ob-page" data-testid="initial-admin-setup">
     <p class="den-muted">PRIVATE DEPLOYMENT SETUP</p>
-    @if (_status == "loading")
-    {
-        <h1>Set up your administrator account</h1>
-        <p class="den-muted" role="status">Checking setup availability…</p>
-    }
-    else if (_status == "complete")
+    @if (_status == "complete")
     {
         <h1>Setup is complete</h1>
-        <p class="den-muted">This deployment already has its first administrator. Continue with the normal sign-in flow.</p>
-        <p data-testid="setup-state">Initial administrator setup is permanently disabled for this deployment.</p>
-        <a class="den-button" href="/">Sign in</a>
+        <p class="den-muted">This OpenWork deployment already has its first administrator. Continue with the normal sign-in flow.</p>
     }
     else
     {
         <h1>Set up your administrator account</h1>
-        <p class="den-muted">Create the first administrator for this private deployment. Public signup remains disabled during setup.</p>
-        <p data-testid="setup-state">Initial administrator setup is not available. Ask the deployment operator to verify the bootstrap configuration.</p>
+        <p class="den-muted">Create the first administrator for this private OpenWork deployment. Public signup remains disabled during setup.</p>
+    }
+
+    @if (_status == "loading")
+    {
+        <p class="den-muted" role="status">Checking setup availability...</p>
+    }
+    else if (_status != "available")
+    {
+        <p data-testid="setup-state" role="status" aria-live="polite">
+            @(_status == "complete"
+                ? "Initial administrator setup is permanently disabled for this deployment."
+                : "Initial administrator setup is not available. Ask the deployment operator to verify the bootstrap configuration.")
+        </p>
         <a class="den-button" href="/">Sign in</a>
+    }
+    else if (_grant is null)
+    {
+        <form @onsubmit="VerifyAsync" data-testid="setup-verify">
+            <label for="setup-email">Administrator email</label>
+            <input id="setup-email" name="email" type="email" autocomplete="email" required @bind="_email" @bind:event="oninput" />
+            <label for="setup-code">One-time setup code</label>
+            <input id="setup-code" name="setupCode" type="password" autocomplete="one-time-code" required @bind="_code" @bind:event="oninput" />
+            <p class="den-muted">Use the code supplied by the deployment operator through your secret-management system. It is not sent by email.</p>
+            @if (_error is not null) { <p class="den-error" role="alert">@_error</p> }
+            <button type="submit" class="den-button" disabled="@_busy">@(_busy ? "Checking..." : "Continue")</button>
+        </form>
+    }
+    else
+    {
+        <form @onsubmit="CreateAsync" data-testid="setup-create">
+            <p class="den-muted">CREATE YOUR ADMINISTRATOR ACCOUNT</p>
+            <p>Enter your name and password. OpenWork will create the first account, sign you in, and permanently close setup.</p>
+            <label for="setup-name">Name</label>
+            <input id="setup-name" name="name" type="text" autocomplete="name" @bind="_name" @bind:event="oninput" />
+            <label for="setup-password">Password</label>
+            <input id="setup-password" name="password" type="password" autocomplete="new-password" required @bind="_password" @bind:event="oninput" />
+            @if (_error is not null) { <p class="den-error" role="alert">@_error</p> }
+            <button type="submit" class="den-button" disabled="@_busy">@(_busy ? "Creating..." : "Create administrator")</button>
+        </form>
     }
 </section>
 
 @code {
+    private const string VerifyFailed = "Setup could not be verified. Check the administrator email and one-time setup code.";
     private string _status = "loading";
+    private string _email = "", _code = "", _name = "", _password = "";
+    private string? _grant, _error;
+    private bool _busy;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender) return;
-        // Only "complete" is a state this build can be in; "available" would need the operator's one-time setup code, which is not built here.
         var status = await Den.RequestAsync("/api/browser/v1/auth/bootstrap/status");
-        _status = status.Ok && status.String("status") == "complete" ? "complete" : "unavailable";
+        var value = status.Ok ? status.String("status") : null;
+        _status = value is "available" or "complete" ? value : "unavailable";
         StateHasChanged();
+    }
+
+    private async Task VerifyAsync()
+    {
+        _busy = true; _error = null;
+        var result = await Den.RequestAsync("/api/browser/v1/auth/bootstrap/verify", "POST", new { email = _email.Trim(), code = _code });
+        _busy = false;
+        if (result.Status == 409) { _status = "unavailable"; return; }
+        if (!result.Ok) { _error = result.Status == 429 ? "Too many setup attempts. Try again later." : result.Message(VerifyFailed); return; }
+        _grant = result.String("grant");
+        if (_grant is null) _error = "Setup could not be verified. Refresh and try again.";
+        _code = "";
+    }
+
+    private async Task CreateAsync()
+    {
+        _busy = true; _error = null;
+        var result = await Den.RequestAsync("/api/auth/sign-up/email", "POST",
+            new { email = _email.Trim(), name = string.IsNullOrWhiteSpace(_name) ? "OpenWork Administrator" : _name.Trim(), password = _password, bootstrapGrant = _grant });
+        _busy = false;
+        if (!result.Ok)
+        {
+            // A grant that no longer works (expired, or setup closed meanwhile) sends the person back to the first step.
+            if (result.String("error") == "bootstrap_verification_failed") { _grant = null; _password = ""; }
+            _error = result.Message($"Account creation failed with {result.Status}.");
+            return;
+        }
+        // With email verification on there is no session yet: the account is verified, so the person signs in next.
+        Nav.NavigateTo(result.String("token") is null ? "/?returnTo=%2Finstall" : "/install", forceLoad: true);
     }
 }

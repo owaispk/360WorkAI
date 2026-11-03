@@ -19,6 +19,15 @@ public sealed class PlatformAdminOptions
     /// environment variable (<c>PlatformAdmin__BootstrapEmails=a@x.com,b@x.com</c>) or an array in a configuration file.
     /// </summary>
     public string[] BootstrapEmails { get; set; } = [];
+
+    /// <summary>
+    /// The one-time code that opens first-administrator setup on <c>/setup</c> (the reference's DEN_INITIAL_ADMIN_BOOTSTRAP_CODE). Setup is offered
+    /// only while no account exists, and only to the <see cref="BootstrapEmails"/>. Hand it over through a secret store, never by email.
+    /// </summary>
+    public string? InitialAdminCode { get; set; }
+
+    /// <summary>Name of the workspace the first administrator gets (default "OpenWork", as the reference's single-workspace default).</summary>
+    public string? InitialWorkspaceName { get; set; }
 }
 
 /// <summary>Who is a platform admin: the admin list (a table), seeded from the configured bootstrap addresses.</summary>

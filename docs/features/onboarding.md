@@ -46,7 +46,7 @@ workspaces sees Settings on `/organization` (Profile: rename; Organizations: swi
 * **Diagnostics have no providers, connectors or installation checks** (those areas do not exist here): the sections are granted but empty, `POST .../check` just returns the current picture (202), and nothing can reach error severity.
 * **`marketplace-capabilities`** follows the grant rules of the library area (a skill is visible through its own grant, or a plugin the person made or was given); it is an approximation of the reference's query.
 * **Onboarding pages**: the models step does not call `/v1/inference` (not built); it says models are set up from the dashboard. The tools step can only add what the server can reach (presets point at public services; on a machine with no internet the server's refusal is shown).
-  `/setup` shows "complete/unavailable" only (see below). The install page is the cloud variant (the reference's enterprise step guide is not built).
+  `/setup` is first-administrator setup ([platform-admin.md](platform-admin.md#first-administrator-setup-setup)). The install page is the cloud variant (the reference's enterprise step guide is not built).
 
 ## Configuration
 
@@ -65,6 +65,5 @@ Claim tokens and codes are stored as SHA-256 only; the assertion is not stored (
 
 ## Not built
 
-* **First-administrator setup** (`/v1/auth/bootstrap/status` and `/verify` stay the existing "unavailable" stubs; the `/setup` page shows that state). It depends on the platform-admin area and a one-time operator code.
 * The JWT-bearer token exchange for the pre-claim assertion; the activation checklist and My agent (above); the egress probes; provider/connector/installation diagnostics.
 * Cloud sandbox joins (`join-sandbox`, sandbox join, Workbot hand-off), billing and the AI gateway, as instructed; den-web's `workspace-claim` desktop-app handoff button after claiming.

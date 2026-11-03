@@ -1,3 +1,4 @@
+using WorkAI360.Api.Features.PlatformAdmin;
 using System.Net.Mail;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -9,7 +10,7 @@ using WorkAI360.Api.Features.Sso;
 
 namespace WorkAI360.Api.Endpoints;
 
-public sealed record SignUpBody(string? Name, string? Email, string? Password, string? Invite);
+public sealed record SignUpBody(string? Name, string? Email, string? Password, string? Invite, string? BootstrapGrant = null);
 public sealed record SignInBody(string? Email, string? Password);
 public sealed record SetActiveBody(string? OrganizationId, string? OrganizationSlug);
 
@@ -62,7 +63,7 @@ public static class AuthEndpoints
     {
         var auth = app.MapGroup("/api/auth");
 
-        auth.MapPost("/sign-up/email", async (SignUpBody? body, HttpContext ctx, DenDbContext db, SessionService sessions, RateLimiter limiter, IOptions<AuthOptions> options, EmailVerificationService verification, SsoRouting sso, IAuditLog audit, PasswordScreening screening) =>
+        auth.MapPost("/sign-up/email", async (SignUpBody? body, HttpContext ctx, DenDbContext db, SessionService sessions, RateLimiter limiter, IOptions<AuthOptions> options, EmailVerificationService verification, SsoRouting sso, IAuditLog audit, PasswordScreening screening, InitialAdminSetup setup, PermissionService permissions) =>
         {
             if (body is null || string.IsNullOrWhiteSpace(body.Name) || !IsValidEmail(body.Email) || body.Password is null)
                 return Json(400, new { message = "Invalid name, email or password.", code = "VALIDATION_ERROR" });
@@ -74,6 +75,16 @@ public static class AuthEndpoints
             if (limiter.Hit(RateLimiter.SignUp, NormalizeEmail(body.Email!), ClientIp(ctx)) is { } wait) return TooManyRequests(ctx, wait);
 
             var email = NormalizeEmail(body.Email!);
+            // First-administrator setup: a grant from /v1/auth/bootstrap/verify must be genuine and for this address; while setup is open,
+            // nobody else may sign up first.
+            string? setupAdmin = null;
+            if (!string.IsNullOrWhiteSpace(body.BootstrapGrant))
+            {
+                setupAdmin = await setup.AuthorizeSignUpAsync(body.BootstrapGrant, email);
+                if (setupAdmin is null) return Json(403, new { error = "bootstrap_verification_failed", message = InitialAdminSetup.Rejection });
+            }
+            else if (await setup.BlocksOrdinarySignUpAsync())
+                return Json(403, new { error = "setup_required", message = InitialAdminSetup.SetupRequired });
             if (await sso.ForExistingUserAsync(email) is not null) return Json(403, new { message = SsoManaged });
             if (await db.Users.AnyAsync(u => u.Email == email))
                 return Json(422, new { message = "User already exists. Use another email.", code = "USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL" });
@@ -89,13 +100,15 @@ public static class AuthEndpoints
                 Id = Ids.New("usr"),
                 Email = email,
                 Name = body.Name!.Trim(),
-                EmailVerified = verifiedByInvite,
+                // The setup code proves the operator chose this address, as an invitation link does.
+                EmailVerified = verifiedByInvite || setupAdmin is not null,
                 PasswordHash = Passwords.Hash(body.Password),
                 CreatedAt = now,
                 UpdatedAt = now,
             };
             db.Users.Add(user);
             await db.SaveChangesAsync();
+            var setupWorkspace = setupAdmin is null ? null : await setup.CompleteAsync(user, permissions);
 
             // Verification required: no session until the emailed code is entered (the person signs in afterwards).
             if (options.Value.RequireEmailVerification)
@@ -105,7 +118,7 @@ public static class AuthEndpoints
                 return Json(200, new { token = (string?)null, user = Responses.UserJson(user) });
             }
 
-            var (token, session) = await sessions.CreateAsync(user, null, "email", ctx);
+            var (token, session) = await sessions.CreateAsync(user, setupWorkspace?.Id, "email", ctx);
             sessions.WriteCookie(ctx, token, session);
             await audit.RecordForUserAsync(user.Id, SessionEntry(AuditActions.SessionCreated, session.Id, "email"));
             return Json(200, new { token, user = Responses.UserJson(user) });
