@@ -104,6 +104,23 @@ public sealed class ActivationTests(ApiFactory factory) : IClassFixture<ApiFacto
     }
 
     [Fact]
+    public async Task A_provider_someone_added_checks_off_the_provider_step_for_them_and_their_teammates()
+    {
+        var w = await Workspace.CreateAsync(factory, "Provider Space");
+        var member = await w.AddAsync();
+        Assert.False(Done(await StateAsync(w, member), "own_provider"));
+        var created = await w.CallAsync(member, HttpMethod.Post, "/v1/llm-providers",
+            new { name = "My OpenAI", source = "models_dev", providerId = "openai", modelIds = new[] { "gpt-4o" }, apiKey = "sk-x" });
+        Assert.Equal(HttpStatusCode.Created, created.Status);
+        var mine = Step(await StateAsync(w, member), "own_provider");
+        Assert.True(mine.GetProperty("done").GetBoolean());
+        Assert.Equal("My OpenAI added", Prop(mine, "detail"));
+        var owners = Step(await StateAsync(w, w.Owner), "own_provider");
+        Assert.True(owners.GetProperty("done").GetBoolean());
+        Assert.Equal("Models from your organization", Prop(owners, "detail"));
+    }
+
+    [Fact]
     public async Task Reports_are_validated_strictly_and_need_a_signed_in_member()
     {
         var w = await Workspace.CreateAsync(factory, "Strict Space");

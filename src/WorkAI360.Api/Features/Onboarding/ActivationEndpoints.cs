@@ -5,6 +5,7 @@ using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.Domain;
 using WorkAI360.Api.Domain.Library;
+using WorkAI360.Api.Domain.LlmProviders;
 using WorkAI360.Api.Domain.Onboarding;
 using WorkAI360.Api.Features.Connections;
 using WorkAI360.Api.Features.OrgAdmin;
@@ -17,7 +18,7 @@ public sealed record ActivationFacts(
     bool Answered, int? DurationMs,
     bool CanInvite, int InvitedByMe, int Teammates, int Joined, int Pending,
     bool SkillUsed,
-    bool ProviderReportedOnDevice, bool CanConfigureProviders,
+    bool ProviderReportedOnDevice, string? AddedProviderName, bool OrgProvidesModels, bool CanConfigureProviders,
     bool CanManageGateway,
     string? ReadyConnectionName,
     string? OwnerName,
@@ -25,8 +26,7 @@ public sealed record ActivationFacts(
 
 /// <summary>
 /// The "Get set up" checklist (the reference's <c>activation.ts</c> and <c>activation-steps.ts</c>): six steps, each checked off only from what
-/// actually happened, with who can do a step the caller cannot. This build has no model providers and no AI Gateway, so "Set up a model provider"
-/// is done only by a client report (or when the person may not add providers), and "Share a provider on AI Gateway" stays open.
+/// actually happened, with who can do a step the caller cannot. This build has no AI Gateway, so "Share a provider on AI Gateway" stays open.
 /// </summary>
 public static class Activation
 {
@@ -57,8 +57,11 @@ public static class Activation
                     step["done"] = f.SkillUsed;
                     break;
                 case "own_provider":
-                    step["done"] = f.ProviderReportedOnDevice || !f.CanConfigureProviders;
+                    // Done once the person has models to use: their own key, a provider they added, one the workspace provides, or none they may add.
+                    step["done"] = f.ProviderReportedOnDevice || f.AddedProviderName is not null || f.OrgProvidesModels || !f.CanConfigureProviders;
                     if (f.ProviderReportedOnDevice) step["detail"] = "Your key, on this device";
+                    else if (f.AddedProviderName is not null) step["detail"] = $"{f.AddedProviderName} added";
+                    else if (f.OrgProvidesModels) step["detail"] = "Models from your organization";
                     else if (!f.CanConfigureProviders) step["detail"] = "Your team manages models";
                     break;
                 case "gateway_provider":
@@ -107,6 +110,9 @@ public static class Activation
         var skillUsed = reported.Any(e => e.Step == "use_skill")
             || await db.Set<LibraryUsageEvent>().AsNoTracking().AnyAsync(u => u.OrganizationId == orgId && u.MemberId == member.Id);
 
+        var addedProvider = await db.Set<LlmProvider>().AsNoTracking().Where(p => p.OrganizationId == orgId && p.CreatedByMemberId == member.Id && p.Source != "openwork")
+            .OrderBy(p => p.CreatedAt).Select(p => p.Name).FirstOrDefaultAsync();
+        var orgProvides = await db.Set<LlmProvider>().AsNoTracking().AnyAsync(p => p.OrganizationId == orgId);
         var config = await desktop.BuildAsync(c);
         var canConfigure = config.GetValueOrDefault("allowCustomProviders") is not false;
 
@@ -123,7 +129,7 @@ public static class Activation
             Answered: first is not null, DurationMs: first?.DurationMs,
             CanInvite: c.Permissions.Has("invitations.manage"), InvitedByMe: invitedByMe, Teammates: others + pending, Joined: others + 1, Pending: pending,
             SkillUsed: skillUsed,
-            ProviderReportedOnDevice: reported.Any(e => e.Step == "own_provider"), CanConfigureProviders: canConfigure,
+            ProviderReportedOnDevice: reported.Any(e => e.Step == "own_provider"), AddedProviderName: addedProvider, OrgProvidesModels: orgProvides, CanConfigureProviders: canConfigure,
             CanManageGateway: c.Permissions.Has("gateway_providers.manage"),
             ReadyConnectionName: ready, OwnerName: ownerName, Dismissed: reported.Any(e => e.Step == "dismiss"));
     }

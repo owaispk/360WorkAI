@@ -22,6 +22,8 @@ public class ApiFactory : WebApplicationFactory<Program>
     {
         builder.UseSetting("Auth:Secret", Secret);
         builder.UseSetting("Auth:WebUrl", "http://localhost");
+        // The provider catalog comes from the bundled snapshot: tests never depend on the network.
+        builder.UseSetting("LlmProviders:CatalogUrl", "");
         foreach (var (key, value) in Settings) builder.UseSetting(key, value);
         builder.UseSetting("Auth:ApiPublicUrl", "http://localhost");
         if (MySqlServer is null) builder.UseSetting("ConnectionStrings:Default", $"Data Source={_dbPath}");

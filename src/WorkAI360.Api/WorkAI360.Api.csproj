@@ -15,4 +15,8 @@
     <PackageReference Include="MySql.EntityFrameworkCore" Version="10.0.12" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Features/LlmProviders/models-catalog-snapshot.json" LogicalName="WorkAI360.Api.LlmProviders.models-catalog-snapshot.json" />
+  </ItemGroup>
+
 </Project>
