@@ -45,6 +45,25 @@ public sealed class DpopVerifierTests(OAuthExtrasFactory factory) : OAuthExtrasB
     }
 
     [Fact]
+    public void A_key_verifies_only_the_algorithms_the_caller_allows_and_never_a_foreign_family()
+    {
+        using var p384 = TestKey.Ec("ES384");
+        using var rsa = TestKey.Rsa("RS256");
+        var jwk = JsonDocument.Parse(p384.Jwk().ToJsonString()).RootElement;
+        var token = Jose.Parse(p384.Jwt(new() { ["alg"] = "ES384" }, new() { ["a"] = 1 }))!;
+        Assert.True(Jose.Verify(token, jwk, ["ES384"]));
+        Assert.False(Jose.Verify(token, jwk, ["ES256", "RS256"]));
+        // An RSA key cannot verify an EC algorithm and the reverse; the key's own alg member must agree.
+        var rsaJwk = JsonDocument.Parse(rsa.Jwk().ToJsonString()).RootElement;
+        Assert.False(Jose.Verify(token, rsaJwk, ["ES384"]));
+        var pinned = rsa.Jwk(); pinned["alg"] = "PS256";
+        Assert.False(Jose.Verify(Jose.Parse(rsa.Jwt(new() { ["alg"] = "RS256" }, new() { ["a"] = 1 }))!, JsonDocument.Parse(pinned.ToJsonString()).RootElement, ["RS256", "PS256"]));
+        // A symmetric algorithm never verifies, even if the caller lists it.
+        var hs = Jose.Parse(rsa.Jwt(new() { ["alg"] = "HS256" }, new() { ["a"] = 1 }, alg: "RS256"))!;
+        Assert.False(Jose.Verify(hs, rsaJwk, ["HS256"]));
+    }
+
+    [Fact]
     public async Task The_type_and_algorithm_are_checked()
     {
         using var key = TestKey.Ec();

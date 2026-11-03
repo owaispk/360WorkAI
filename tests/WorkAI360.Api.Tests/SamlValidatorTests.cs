@@ -372,6 +372,16 @@ public sealed class SamlValidatorTests : IDisposable
     public void An_assertion_from_another_issuer_is_refused() => Assert.Equal("saml_issuer_mismatch", Refused(new SamlOptions { Issuer = "https://other.example.test" }).Code);
 
     [Fact]
+    public void A_signed_assertion_from_another_issuer_is_refused_even_when_the_response_names_the_right_one()
+    {
+        var doc = new XmlDocument { PreserveWhitespace = true };
+        doc.LoadXml(_idp.BuildXml(Acs, Sp, new SamlOptions()));
+        AssertionOf(doc).ChildNodes.OfType<XmlElement>().First(e => e.LocalName == "Issuer").InnerText = "https://other.example.test";
+        _idp.Sign(AssertionOf(doc));
+        Assert.Equal("saml_issuer_mismatch", Refused(Encode(doc)).Code);
+    }
+
+    [Fact]
     public void A_response_issuer_that_differs_is_refused()
     {
         var doc = Signed();
