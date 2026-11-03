@@ -20,11 +20,11 @@ public sealed record DpopProof(string Jkt, string Jti, string Method, string Url
 /// <c>htm</c>, <c>htu</c>, <c>jti</c> (at most 512 characters) and <c>iat</c> are present; <c>htm</c> is the request method and <c>htu</c> the request URL (query and
 /// case of the host ignored); <c>iat</c> is no more than 5 seconds ahead and at most 5 minutes old; at a resource <c>ath</c> is the SHA-256 of the access token
 /// and the key must be the one the token is bound to. A proof works once: its (key, method, URL, jti) goes into the replay cache.
-/// Differences: no EdDSA (.NET has no Ed25519), so the allowed algorithms are ES256, ES512, PS256 and RS256; <c>exp</c> and <c>nbf</c> in a proof are honoured.
+/// The allowed algorithms are ES256, ES512, PS256, RS256 and EdDSA (Ed25519, verified with BouncyCastle); <c>exp</c> and <c>nbf</c> in a proof are honoured.
 /// </summary>
 public sealed class DpopVerifier(ReplayGuard replay, DpopNonces nonces)
 {
-    public static readonly string[] SigningAlgorithms = ["ES256", "ES512", "PS256", "RS256"];
+    public static readonly string[] SigningAlgorithms = ["ES256", "ES512", "PS256", "RS256", "EdDSA"];
     public const int MaxAgeSeconds = 300;
     public const int MaxFutureSeconds = 5;
     public const int MaxJtiLength = 512;

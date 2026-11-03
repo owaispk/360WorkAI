@@ -70,7 +70,7 @@ public sealed class DpopVerifierTests(OAuthExtrasFactory factory) : OAuthExtrasB
         Assert.Equal("DPoP proof typ must be \"dpop+jwt\"", await Refused(key.DpopProof("POST", TokenUrl, typ: "JWT")));
         Assert.Equal("DPoP proof must use an asymmetric JWS algorithm", await Refused(key.DpopProof("POST", TokenUrl, header: h => h["alg"] = "none")));
         Assert.Equal("DPoP proof must use an asymmetric JWS algorithm", await Refused(key.DpopProof("POST", TokenUrl, header: h => h["alg"] = "HS256")));
-        Assert.Equal("DPoP proof uses an unsupported JWS algorithm", await Refused(key.DpopProof("POST", TokenUrl, header: h => h["alg"] = "EdDSA")));
+        Assert.Equal("DPoP proof uses an unsupported JWS algorithm", await Refused(key.DpopProof("POST", TokenUrl, header: h => h["alg"] = "ES384")));
         using var p384 = TestKey.Ec("ES384");
         Assert.Equal("DPoP proof uses an unsupported JWS algorithm", await Refused(p384.DpopProof("POST", TokenUrl)));
         Assert.Equal("DPoP proof must be a compact JWT", await Refused("a.b"));
@@ -391,7 +391,7 @@ public sealed class DpopResourceTests(OAuthExtrasFactory factory) : OAuthExtrasB
         var bearer = await McpAsync(http, token);
         Assert.Equal(HttpStatusCode.Unauthorized, bearer.Status);
         Assert.StartsWith("DPoP error=\"invalid_token\"", Challenge(bearer.Response));
-        Assert.Contains("algs=\"ES256 ES512 PS256 RS256\"", Challenge(bearer.Response));
+        Assert.Contains("algs=\"ES256 ES512 PS256 RS256 EdDSA\"", Challenge(bearer.Response));
 
         var noProof = await McpAsync(http, token, "DPoP");
         Assert.Equal(HttpStatusCode.Unauthorized, noProof.Status);

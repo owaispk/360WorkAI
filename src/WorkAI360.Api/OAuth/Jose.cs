@@ -15,12 +15,13 @@ public sealed record ParsedJwt(JsonElement Header, JsonElement Payload, string S
 /// <summary>
 /// The small amount of JOSE the OAuth extras need: reading a compact JWT, checking its signature against a JSON Web Key, and the RFC 7638 JWK
 /// thumbprint. Only asymmetric algorithms ever verify (never "none", never HMAC, so a public key cannot be turned into a secret), RSA keys must be at
-/// least 2048 bits, and a key only verifies the algorithm family it belongs to. EdDSA is not available: .NET has no built-in Ed25519.
+/// least 2048 bits, and a key only verifies the algorithm family it belongs to. EdDSA (Ed25519, <c>kty: OKP</c>) is verified with BouncyCastle, since .NET
+/// has no built-in Ed25519.
 /// </summary>
 public static class Jose
 {
     public const int MaxTokenLength = 16 * 1024;
-    public static readonly string[] AssertionAlgorithms = ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512"];
+    public static readonly string[] AssertionAlgorithms = ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512", "EdDSA"];
 
     public static ParsedJwt? Parse(string? jwt)
     {
@@ -42,6 +43,7 @@ public static class Jose
     {
         "RSA" => ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512"],
         "EC" => Str(jwk, "crv") switch { "P-256" => ["ES256"], "P-384" => ["ES384"], "P-521" => ["ES512"], _ => [] },
+        "OKP" when Str(jwk, "crv") == "Ed25519" => ["EdDSA"],
         _ => [],
     };
 
@@ -56,6 +58,7 @@ public static class Jose
         var data = Encoding.ASCII.GetBytes(jwt.SigningInput);
         try
         {
+            if (alg == "EdDSA") return VerifyEd25519(jwk, data, jwt.Signature);
             if (alg.StartsWith("ES", StringComparison.Ordinal))
             {
                 using var ec = ImportEc(jwk);
@@ -77,6 +80,8 @@ public static class Jose
         {
             "RSA" when Str(jwk, "e") is { } e && Str(jwk, "n") is { } n => $"{{\"e\":{JsonSerializer.Serialize(e)},\"kty\":\"RSA\",\"n\":{JsonSerializer.Serialize(n)}}}",
             "EC" when Str(jwk, "crv") is { } crv && Str(jwk, "x") is { } x && Str(jwk, "y") is { } y => $"{{\"crv\":{JsonSerializer.Serialize(crv)},\"kty\":\"EC\",\"x\":{JsonSerializer.Serialize(x)},\"y\":{JsonSerializer.Serialize(y)}}}",
+            // RFC 8037 section 2: crv, kty, x.
+            "OKP" when Str(jwk, "crv") is { } okpCrv && Str(jwk, "x") is { } okpX => $"{{\"crv\":{JsonSerializer.Serialize(okpCrv)},\"kty\":\"OKP\",\"x\":{JsonSerializer.Serialize(okpX)}}}",
             _ => null,
         };
         return canonical is null ? null : SigningKeyStore.Base64Url(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
@@ -92,6 +97,7 @@ public static class Jose
         {
             "RSA" => Str(jwk, "n") is { Length: > 0 } && Str(jwk, "e") is { Length: > 0 },
             "EC" => Str(jwk, "crv") is "P-256" or "P-384" or "P-521" && Str(jwk, "x") is { Length: > 0 } && Str(jwk, "y") is { Length: > 0 },
+            "OKP" => Str(jwk, "crv") == "Ed25519" && Str(jwk, "x") is { Length: > 0 },
             _ => false,
         };
         if (!supported) return "jwks keys must be supported public JWKs with required key parameters";
@@ -100,6 +106,7 @@ public static class Jose
         try
         {
             if (kty == "EC") { using var _ = ImportEc(jwk); }
+            else if (kty == "OKP") { if (SigningKeyStore.FromBase64Url(Str(jwk, "x")!).Length != 32) return "jwks keys must be supported public JWKs with required key parameters"; }
             else { using var rsa = ImportRsa(jwk); if (rsa.KeySize < 2048) return "jwks RSA keys must be at least 2048 bits"; }
         }
         catch (Exception e) when (e is CryptographicException or FormatException or ArgumentException) { return "jwks keys must be supported public JWKs with required key parameters"; }
@@ -115,6 +122,17 @@ public static class Jose
         var rsa = RSA.Create();
         rsa.ImportParameters(new RSAParameters { Modulus = SigningKeyStore.FromBase64Url(Str(jwk, "n")!), Exponent = SigningKeyStore.FromBase64Url(Str(jwk, "e")!) });
         return rsa;
+    }
+
+    /// <summary>Ed25519 (RFC 8032) over the signing input, with a 32-byte public key and a 64-byte signature.</summary>
+    private static bool VerifyEd25519(JsonElement jwk, byte[] data, byte[] signature)
+    {
+        var x = SigningKeyStore.FromBase64Url(Str(jwk, "x")!);
+        if (x.Length != 32 || signature.Length != 64) return false;
+        var verifier = new Org.BouncyCastle.Crypto.Signers.Ed25519Signer();
+        verifier.Init(false, new Org.BouncyCastle.Crypto.Parameters.Ed25519PublicKeyParameters(x, 0));
+        verifier.BlockUpdate(data, 0, data.Length);
+        return verifier.VerifySignature(signature);
     }
 
     private static ECDsa ImportEc(JsonElement jwk)
