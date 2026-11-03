@@ -19,6 +19,14 @@ public sealed class OAuthClientExtras
     public bool DpopBoundAccessTokens { get; set; }
     /// <summary>The scopes (space separated) a <c>client_credentials</c> token may carry; set only by a platform administrator.</summary>
     public string? ClientCredentialsScope { get; set; }
+    /// <summary>
+    /// The person who registered the client while signed in (the reference's <c>userId</c> on a client). Only they may read, change, rotate or delete it
+    /// through <c>/api/auth/oauth2/*-client</c>. Null for anonymous registrations, which nobody manages.
+    /// </summary>
+    public string? OwnerUserId { get; set; }
+    /// <summary>Descriptive RFC 7591 metadata kept as given: client_uri, contacts, tos_uri, policy_uri, software_id, software_version, software_statement, application_type.</summary>
+    public string? MetadataJson { get; set; }
+    public DateTime? UpdatedAt { get; set; }
 }
 
 public sealed class OAuthClientExtrasConfiguration : IEntityTypeConfiguration<OAuthClientExtras>
@@ -28,6 +36,7 @@ public sealed class OAuthClientExtrasConfiguration : IEntityTypeConfiguration<OA
         b.HasKey(e => e.ClientId);
         b.Property(e => e.ClientId).HasMaxLength(255);
         b.Property(e => e.JwksUri).HasMaxLength(2048);
+        b.HasIndex(e => e.OwnerUserId);
     }
 }
 

@@ -337,7 +337,8 @@ public sealed class OAuthExtrasRegistrationTests(OAuthExtrasFactory factory) : O
     {
         var (browser, _, _, _) = await SignedInAsync();
         var id = await PublicClientAsync(browser);
-        Assert.Equal(0, Factory.WithDb(db => db.Set<OAuthClientExtras>().Count(e => e.ClientId == id)));
+        // A signed-in registration records its owner, but no grant list: the defaults (code and refresh) apply.
+        Assert.Null(Factory.WithDb(db => db.Set<OAuthClientExtras>().Single(e => e.ClientId == id).GrantTypesJson));
         var machine = await TokenAsync(Factory.Plain(), new() { ["grant_type"] = "client_credentials", ["client_id"] = id });
         Assert.Equal("unauthorized_client", Err(machine.Body));
         Assert.Equal("client is not authorized to use grant type client_credentials", Desc(machine.Body));
