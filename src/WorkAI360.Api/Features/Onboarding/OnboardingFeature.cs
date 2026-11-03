@@ -26,6 +26,7 @@ public sealed class OnboardingFeature : IFeature
         app.MapBootstrapEndpoints();
         app.MapDiagnosticsEndpoints();
         app.MapResourceEndpoints();
+        app.MapActivationEndpoints();
     }
 }
 
