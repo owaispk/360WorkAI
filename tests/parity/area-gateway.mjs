@@ -12,11 +12,14 @@ const [SMALL, LARGE] = (process.env.MODELS ?? "fake-small,fake-large").split(","
 const s = suite("gateway");
 
 /** One chat completion straight at LiteLLM with a key Den issued; returns the HTTP status. */
+// Every key used here is one Den issued, so each successful call must show up in Den's usage report.
+let answered = 0, answeredTokens = 0;
 async function complete(key, model) {
   const r = await fetch(`${LITELLM}/v1/chat/completions`, {
     method: "POST", headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
     body: JSON.stringify({ model, messages: [{ role: "user", content: "ping" }], max_tokens: 5 }), signal: AbortSignal.timeout(60000),
   });
+  if (r.status === 200) { answered++; answeredTokens += (await r.json()).usage?.total_tokens ?? 0; }
   return r.status;
 }
 
@@ -88,6 +91,24 @@ await s.t("usage answers in the reference's shape (LiteLLM writes its logs in ba
   if (r.status !== 200) return `${r.status} ${r.text}`;
   const u = r.json.usage;
   return ["requestCount", "totalTokens", "totalCostMicroUsd", "unpricedRequests", "series", "daily", "filterOptions"].every((k) => k in u) && u.daily.length === 1;
+});
+
+await s.t("usage counts exactly the calls made with Den-issued keys (polls while LiteLLM flushes its log batch)", async () => {
+  const read = async () => (await ws.api(ws.owner, "GET", "/v1/inference-providers/usage?groupBy=person&days=1")).json?.usage;
+  const c = await ws.api(member, "GET", `/v1/inference-providers/${providerId}/connect`);
+  const k = c.json?.inferenceProvider?.apiKey;
+  if (!k) return `connect ${c.status}`;
+  for (let i = 0; i < 3; i++) if ((await complete(k, SMALL)) !== 200) return "a completion failed";
+  // LiteLLM flushes successful requests to its database in batches (about once a minute).
+  const deadline = Date.now() + 150_000;
+  let u;
+  while (Date.now() < deadline) {
+    u = await read();
+    if (u && u.requestCount >= answered) break;
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+  return (u.requestCount === answered && u.totalTokens === answeredTokens && u.unpricedRequests === answered)
+    || `Den reports ${u.requestCount} requests / ${u.totalTokens} tokens / ${u.unpricedRequests} unpriced; LiteLLM answered ${answered} calls / ${answeredTokens} tokens`;
 });
 
 await s.t("delete removes the provider, its team and every key at LiteLLM", async () => {

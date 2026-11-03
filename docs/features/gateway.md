@@ -70,17 +70,19 @@ A workspace's own proxy goes through the connections outbound guard: HTTPS and a
 * Not built either: `/v1/inference/*` (the free hosted tier), the Auto Router (cloud only), provider inventory events, `enable-models`/`available-models`
   (the catalog is whatever the proxy serves), `migrate-from-llm-provider`, pinned models, the provider audit trail.
 * **LiteLLM writes request logs in batches**, so usage lags a little; and a key deleted within a batch interval of its last calls may lose those calls'
-  logs. In this sandbox's LiteLLM 1.106.6 install, successful requests were not written at all (its Prisma write client failed to start), so live usage
-  could only be checked for shape; the attribution itself is tested against the fake.
+  logs. Live, Den's usage matches what LiteLLM answered exactly (requests, tokens, unpriced) once the batch is written.
 
 ## Testing against a real LiteLLM
 
 The live scripts need a LiteLLM proxy with a database (virtual keys need one) and two chat models. What was used here: `pip install
-'litellm[proxy,extra_proxy]'`, `prisma generate` against LiteLLM's `schema.prisma`, Postgres 16, a fake OpenAI-compatible upstream serving `fake-small`
+'litellm[proxy,extra_proxy]' 'prisma==0.11.0'` (LiteLLM 1.106 expects Prisma Client Python 0.11, as its own image pins; with 0.15 the proxy starts but
+silently stops writing request logs), `prisma generate` against LiteLLM's `schema.prisma`, Postgres 16, a fake OpenAI-compatible upstream serving `fake-small`
 and `fake-large`, and `litellm --config config.yaml --port 4000` with `DATABASE_URL`, `STORE_MODEL_IN_DB=True` and a `master_key`. Then start the rewrite
 with `Gateway__Enabled=true Gateway__LiteLlm__BaseUrl=http://127.0.0.1:4000 Gateway__LiteLlm__MasterKey=…` and run `area-gateway.mjs` and `ui-gateway.js`.
-Results: 10/10 and 8/8: keys Den issued answered at LiteLLM, lost a model when their group was narrowed, and were refused (401) at LiteLLM after the
-grant was removed, the person left, or the provider was deleted.
+The fake upstream must give every response its own `id`: LiteLLM keys its request log on it and drops repeats.
+Results: 11/11 and 8/8: keys Den issued answered at LiteLLM, lost a model when their group was narrowed, and were refused (401) at LiteLLM after the
+grant was removed, the person left, or the provider was deleted; and Den's usage report counted exactly the calls LiteLLM answered with those keys
+(requests and tokens, all unpriced since the fake models have no price).
 
 ## Checks
 
