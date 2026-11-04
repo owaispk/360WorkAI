@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.Domain;
@@ -9,20 +8,16 @@ namespace WorkAI360.Api.Auth;
 /// <summary>A valid, unexpired, enabled organization API key and the person it acts as.</summary>
 public sealed record ApiKeyPrincipal(ApiKey Key, User User);
 
-/// <summary>Per-key request limit (fixed window, in memory, per instance). The reference gives each key 600 requests per minute.</summary>
-public sealed class ApiKeyLimiter
+/// <summary>Per-key request limit (fixed window, in the <see cref="ISharedStore"/>). The reference gives each key 600 requests per minute.</summary>
+public sealed class ApiKeyLimiter(ISharedStore store)
 {
-    private readonly ConcurrentDictionary<string, (int Count, DateTime Start)> _windows = new();
-
     /// <summary>Counts one request. Returns how long to wait when the key is over its limit, otherwise null.</summary>
     public TimeSpan? Hit(ApiKey key)
     {
         if (!key.RateLimitEnabled || key.RateLimitMax <= 0) return null;
         var window = TimeSpan.FromMilliseconds(Math.Max(1, key.RateLimitTimeWindow));
-        var now = DateTime.UtcNow;
-        var state = _windows.AddOrUpdate(key.Id, _ => (1, now), (_, s) => now - s.Start >= window ? (1, now) : (s.Count + 1, s.Start));
-        if (_windows.Count > 5000) foreach (var (id, s) in _windows) if (now - s.Start > TimeSpan.FromHours(1)) _windows.TryRemove(id, out _);
-        return state.Count > key.RateLimitMax ? state.Start + window - now : null;
+        var (count, remaining) = store.Increment("api-key:" + key.Id, window);
+        return count > key.RateLimitMax ? remaining : null;
     }
 }
 

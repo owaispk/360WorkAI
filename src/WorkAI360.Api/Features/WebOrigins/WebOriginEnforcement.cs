@@ -18,11 +18,11 @@ public sealed class CorsOptions
 }
 
 /// <summary>
-/// Whether an exact https origin was approved by any workspace (Org settings → approved web origins). Answers are cached per process for 30
-/// seconds, both ways, so a busy API does not query for every request; changes are dropped from the cache at once on this instance and reach
-/// other instances within the 30 seconds. A lookup that fails is a refusal: nobody gains access because the database hiccuped.
+/// Whether an exact https origin was approved by any workspace (Org settings → approved web origins). Answers are cached for 30 seconds, both
+/// ways, so a busy API does not query for every request: per process by default, where changes are dropped from the cache at once on this
+/// instance and reach other instances within the 30 seconds; in Redis with <c>Cache:Redis:ConnectionString</c>, where a change reaches all at once. A lookup that fails is a refusal: nobody gains access because the database hiccuped.
 /// </summary>
-public sealed class WebOriginApprovals(IServiceScopeFactory scopes, ILogger<WebOriginApprovals> logger)
+public sealed class WebOriginApprovals(IServiceScopeFactory scopes, ILogger<WebOriginApprovals> logger, WorkAI360.Api.Auth.ISharedStore store)
 {
     private static readonly TimeSpan Ttl = TimeSpan.FromSeconds(30);
     private const int MaxEntries = 2000;
@@ -33,14 +33,20 @@ public sealed class WebOriginApprovals(IServiceScopeFactory scopes, ILogger<WebO
     {
         // Only a canonical exact https origin can ever be approved, so anything else is refused without a lookup.
         if (WebOriginEndpoints.Normalize(origin) != origin) return false;
-        if (_cache.TryGetValue(origin, out var hit) && hit.Expires > DateTime.UtcNow) return hit.Approved;
+        // With a shared store (Redis) the cache is shared too, so a change made on any instance takes effect on all of them at once.
+        if (store.IsShared && store.Get(SharedKey(origin)) is { } shared) return shared == "1";
+        if (!store.IsShared && _cache.TryGetValue(origin, out var hit) && hit.Expires > DateTime.UtcNow) return hit.Approved;
         try
         {
             using var scope = scopes.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DenDbContext>();
             var approved = await db.Set<OrganizationWebOrigin>().AsNoTracking().AnyAsync(o => o.Origin == origin);
-            if (_cache.Count >= MaxEntries) _cache.Clear();
-            _cache[origin] = (approved, DateTime.UtcNow + Ttl);
+            if (store.IsShared) store.Set(SharedKey(origin), approved ? "1" : "0", Ttl);
+            else
+            {
+                if (_cache.Count >= MaxEntries) _cache.Clear();
+                _cache[origin] = (approved, DateTime.UtcNow + Ttl);
+            }
             return approved;
         }
         catch (Exception e) when (e is not OperationCanceledException)
@@ -51,9 +57,20 @@ public sealed class WebOriginApprovals(IServiceScopeFactory scopes, ILogger<WebO
         }
     }
 
-    /// <summary>Forgets one origin (or all) so a change takes effect on this instance immediately.</summary>
+    /// <summary>
+    /// The shared cache key. Forgetting everything bumps a generation number in the key rather than scanning Redis.
+    /// </summary>
+    private string SharedKey(string origin) => $"web-origin:{store.Get("web-origin:generation") ?? "0"}:{origin}";
+
+    /// <summary>Forgets one origin (or all) so a change takes effect immediately: on this instance, or on every instance with a shared store.</summary>
     public void Invalidate(string? origin = null)
     {
+        if (store.IsShared)
+        {
+            if (origin is null) store.Set("web-origin:generation", Guid.NewGuid().ToString("N"), TimeSpan.FromDays(30));
+            else store.Delete(SharedKey(origin));
+            return;
+        }
         if (origin is null) _cache.Clear(); else _cache.TryRemove(origin, out _);
     }
 }

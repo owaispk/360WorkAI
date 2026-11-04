@@ -21,6 +21,21 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection(AuthOptions.Section));
 builder.Services.AddDbContext<DenDbContext>(o => DatabaseProvider.Configure(o, builder.Configuration));
 builder.Services.AddScoped<SessionService>();
+// State every instance must agree on (rate limits, lockouts, the approved-origin cache): Redis when configured, else this process's memory.
+builder.Services.Configure<CacheOptions>(builder.Configuration.GetSection(CacheOptions.Section));
+var redisConnection = builder.Configuration[$"{CacheOptions.Section}:Redis:ConnectionString"];
+if (string.IsNullOrWhiteSpace(redisConnection)) builder.Services.AddSingleton<ISharedStore, MemoryStore>();
+else
+{
+    builder.Services.AddSingleton<StackExchange.Redis.IConnectionMultiplexer>(_ =>
+    {
+        var config = StackExchange.Redis.ConfigurationOptions.Parse(redisConnection);
+        config.AbortOnConnectFail = false; // start even if Redis is briefly away; the store fails open meanwhile
+        return StackExchange.Redis.ConnectionMultiplexer.Connect(config);
+    });
+    builder.Services.AddSingleton<ISharedStore>(sp => new RedisStore(sp.GetRequiredService<StackExchange.Redis.IConnectionMultiplexer>(),
+        sp.GetRequiredService<IOptions<CacheOptions>>().Value.Redis.KeyPrefix, sp.GetRequiredService<ILogger<RedisStore>>()));
+}
 builder.Services.AddSingleton<LoginThrottle>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection(EmailOptions.Section));

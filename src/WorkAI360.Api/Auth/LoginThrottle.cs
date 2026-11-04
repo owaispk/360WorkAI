@@ -1,24 +1,19 @@
-using System.Collections.Concurrent;
-
 namespace WorkAI360.Api.Auth;
 
-/// <summary>Locks email/password sign-in for an address after repeated failures (in memory; per instance).</summary>
-public sealed class LoginThrottle
+/// <summary>
+/// Locks email/password sign-in for an address after repeated failures: 5 in 15 minutes. Kept in the <see cref="ISharedStore"/> (Redis when configured,
+/// so a lockout holds on every instance).
+/// </summary>
+public sealed class LoginThrottle(ISharedStore store)
 {
     private const int MaxFailures = 5;
     private static readonly TimeSpan Window = TimeSpan.FromMinutes(15);
-    private readonly ConcurrentDictionary<string, (int Failures, DateTime FirstAt)> _state = new();
 
-    public TimeSpan? LockedFor(string email)
-    {
-        if (!_state.TryGetValue(email, out var s)) return null;
-        var remaining = s.FirstAt + Window - DateTime.UtcNow;
-        if (remaining <= TimeSpan.Zero) { _state.TryRemove(email, out _); return null; }
-        return s.Failures >= MaxFailures ? remaining : null;
-    }
+    private static string Key(string email) => "login-failures:" + email;
 
-    public void RecordFailure(string email) =>
-        _state.AddOrUpdate(email, _ => (1, DateTime.UtcNow), (_, s) => s.FirstAt + Window < DateTime.UtcNow ? (1, DateTime.UtcNow) : (s.Failures + 1, s.FirstAt));
+    public TimeSpan? LockedFor(string email) => store.Peek(Key(email)) is { } open && open.Count >= MaxFailures ? open.Remaining : null;
 
-    public void Reset(string email) => _state.TryRemove(email, out _);
+    public void RecordFailure(string email) => store.Increment(Key(email), Window);
+
+    public void Reset(string email) => store.Delete(Key(email));
 }

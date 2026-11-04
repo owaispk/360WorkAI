@@ -21,6 +21,7 @@ hosted model gateways, cloud sandboxes, Google/Microsoft integrations). Each are
 | `tests/WorkAI360.Api.Tests` | xUnit tests, in-process (`WebApplicationFactory`) |
 | `tests/parity` | Contract tests that run unchanged against the **reference** Den and this rewrite |
 | `scripts/dev.sh` | Start / stop the API (`:5080`) and web (`:5081`) |
+| `docs/operations.md` | Running several instances: the shared store (Redis), migrations, background jobs |
 | `docs/` | `AREA_GUIDE.md` (how to build an area), `database.md`, and `features/*.md` (what each area implements and how it differs from the reference) |
 | `deploy/` | Dockerfiles and a compose stack (MySQL + migrate + API + web); CI is `.github/workflows/ci.yml` |
 
@@ -127,6 +128,8 @@ Set with environment variables (`Auth__Secret`) or `appsettings`.
 | `LlmProviders__CatalogUrl`, `__CatalogFile`, `__CatalogCacheMinutes`, `__CatalogFallbackToSnapshot` | Where the model provider catalog comes from (empty URL: the bundled snapshot) ([docs](docs/features/llm-providers.md#the-catalog)). |
 | `Gateway__Enabled`, `Gateway__LiteLlm__BaseUrl`, `__MasterKey`, `__PublicUrl`, `__TimeoutSeconds` | The AI Gateway and the deployment's LiteLLM proxy ([docs](docs/features/gateway.md)). The compose stack runs one |
 | `PlatformAdmin__InitialAdminCode`, `PlatformAdmin__InitialWorkspaceName` | First-administrator setup on `/setup` for the `PlatformAdmin__BootstrapEmails` addresses while no account exists ([docs](docs/features/platform-admin.md#first-administrator-setup-setup)). |
+| `Cache__Redis__ConnectionString`, `Cache__Redis__KeyPrefix` | Share rate limits, sign-in lockouts and the approved-origin cache between instances through Redis ([docs](docs/operations.md)). Unset: per instance, in memory. |
+| `OrgAdmin__Audit__RetentionDays`, `Housekeeping__*` | Opt-in audit retention (default: keep everything) and the housekeeping job that deletes expired sessions, codes and tokens ([docs](docs/features/org-admin.md#retention-and-housekeeping)). |
 | `Auth__PasswordBreachScreening`, `Auth__PwnedPasswordsUrl` | Refuse passwords found in public breaches. Default: on everywhere except Development. |
 | `Cors__Origins__0`, `__1`… | Extra exact origins allowed to call the API from a browser, besides this deployment's own and the ones workspaces approved ([docs](docs/features/web-origins.md)). |
 | `SocialProviders__Google__ClientId`, `__ClientSecret`, `SocialProviders__GitHub__ClientId`, `__ClientSecret` | Turn on Google / GitHub sign-in (the button appears when the pair is set). |
@@ -183,7 +186,7 @@ The reference has about 400 distinct `/v1` paths and 129 web pages; this covers 
 - The rest of platform admin (per-user inference usage, opportunities, which rank workspaces by desktop telemetry this build does not have, sandbox organization actions), "my agent", and real egress probes (see [docs/features/platform-admin.md](docs/features/platform-admin.md) and [onboarding.md](docs/features/onboarding.md)).
 - Declarative team keys.
 - **OAuth**: EdDSA-signed tokens (EdDSA is accepted from clients; tokens stay ES256). **SAML**: ECDSA service provider keys, group mapping. **OAuth-provider browser sign-in** connect (start and callback) and GitHub import bindings; and from the workspace area ([docs](docs/features/workspace.md)): direct uploads (they need Google or Microsoft), the app builder and each App's own MCP server.
-- **Operations**: Helm packaging; a shared store for rate limits and caches (they are per instance). CI (`.github/workflows/ci.yml`) runs the tests on SQLite and MySQL, the migration check and the image build on every pull request.
+- **Operations**: Helm packaging. Rate limits, lockouts and the origin cache are shared through Redis when `Cache__Redis__ConnectionString` is set ([docs/operations.md](docs/operations.md)). CI (`.github/workflows/ci.yml`) runs the tests on SQLite and MySQL, the migration check and the image build on every pull request.
 
 Each area's page in [docs/features](docs/features) lists its own gaps and its differences from the reference.
 
