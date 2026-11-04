@@ -143,9 +143,10 @@ Nothing is stored or forwarded.
 ## Not built
 
 Direct uploads (needs Google/Microsoft); the app builder, each App's own MCP server and app authoring tools; GitHub App installation and sync (so no webhook is
-ever accepted) and billing behind the Stripe webhook; the runner events stream; Automation `saved_script` execution; a shared store for retained authoring source
-(it is per process); pages for apps and the Apps catalog (den-web has none for them under the routes built here); the analytics pages for Workflow runs (den-web's
-`/dashboard/analytics/workflow-runs` and `/dashboard/script-runs`).
+ever accepted) and billing behind the Stripe webhook; a shared store for retained authoring source (it is per process); pages for apps and the Apps catalog
+(den-web has none for them under the routes built here). The runner events stream and Automation `saved_script` execution are built in the Automations area
+([automations.md](automations.md)); the Workflow runs page answers at den-web's `/dashboard/analytics/workflow-runs` and its old addresses
+`/dashboard/workflow-runs` and `/dashboard/script-runs`, with a refresh button, linked from Analytics.
 
 ## Switches
 

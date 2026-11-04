@@ -30,7 +30,8 @@ public sealed class WorkspaceOptions
 public sealed record RunRecord(
     string OrganizationId, string? MemberId, string? PluginId, string? ConfigObjectId, string? ConfigObjectVersionId, string Source, string Code, string Status,
     string? ErrorKind, string? ErrorMessage, IReadOnlyList<string> ToolCalls, int DurationMs, DateTime StartedAt, DateTime FinishedAt,
-    string? ScriptInputDigest, string? InputSchemaDigest, string? OutputSchemaDigest, JsonNode? ValidatedResult = null, string? ResultMarkdown = null, string? ResultDigest = null, string? RendererVersion = null);
+    string? ScriptInputDigest, string? InputSchemaDigest, string? OutputSchemaDigest, JsonNode? ValidatedResult = null, string? ResultMarkdown = null, string? ResultDigest = null, string? RendererVersion = null,
+    string? AutomationRunId = null);
 
 /// <summary>What running a Workflow gave: a result, or one of the reference's named refusals and failures.</summary>
 public abstract record WorkflowExecution
@@ -451,7 +452,7 @@ public sealed class WorkflowService(DenDbContext db, LibraryAccess lib, LibraryU
                 StartedAt = r.StartedAt, FinishedAt = r.FinishedAt, ScriptInputDigest = r.ScriptInputDigest, InputSchemaDigest = r.InputSchemaDigest,
                 ValidatedResultCipher = r.ValidatedResult is null && r.ResultMarkdown is null ? null : box.Encrypt(r.ValidatedResult?.ToJsonString() ?? "null"),
                 ResultMarkdownCipher = r.ResultMarkdown is null ? null : box.Encrypt(r.ResultMarkdown), ResultDigest = r.ResultDigest, OutputSchemaDigest = r.OutputSchemaDigest,
-                RendererVersion = r.RendererVersion, CreatedAt = Now(),
+                RendererVersion = r.RendererVersion, AutomationRunId = r.AutomationRunId, CreatedAt = Now(),
             });
             await db.SaveChangesAsync();
             return id;
@@ -466,7 +467,7 @@ public sealed class WorkflowService(DenDbContext db, LibraryAccess lib, LibraryU
     }
 
     public sealed record RunRequest(string OrganizationId, string UserId, string MemberId, string PluginId, string ConfigObjectId, string? ConfigObjectVersionId, string PayloadJson, string Code,
-        string? ReceiptSource, JsonNode? Input, bool ReadOnly, bool ValidateOutput, Func<Task<BuiltTools>> BuildTools);
+        string? ReceiptSource, JsonNode? Input, bool ReadOnly, bool ValidateOutput, Func<Task<BuiltTools>> BuildTools, string? AutomationRunId = null);
 
     /// <summary>Runs a script under a Workflow's declared contract: input checked against its schema, only the capabilities it declared, output checked, a receipt kept.</summary>
     public async Task<WorkflowExecution> ExecuteAsync(RunRequest request, CancellationToken ct)
@@ -481,7 +482,7 @@ public sealed class WorkflowService(DenDbContext db, LibraryAccess lib, LibraryU
 
         RunRecord Record(string status, string? kind, string? error, IReadOnlyList<string> calls, int duration, DateTime started, DateTime finished, JsonNode? result = null, string? markdown = null, string? resultDigest = null, string? renderer = null) =>
             new(request.OrganizationId, request.MemberId, request.PluginId, request.ConfigObjectId, request.ConfigObjectVersionId, source, request.Code, status, kind, error, calls, duration, started, finished,
-                inputDigest, inputSchemaDigest, outputSchemaDigest, result, markdown, resultDigest, renderer);
+                inputDigest, inputSchemaDigest, outputSchemaDigest, result, markdown, resultDigest, renderer, request.AutomationRunId);
         Task<string?> Preflight(string kind, string text) { var now = Now(); return RecordAsync(Record("failed", kind, text, [], 0, now, now)); }
 
         if (payload.InputSchema is not null)
@@ -792,12 +793,12 @@ public sealed class WorkflowService(DenDbContext db, LibraryAccess lib, LibraryU
     public Task<WorkflowExecution?> RunSavedAsync(Actor a, (Plugin Plugin, ConfigObject Object, ConfigObjectVersion Version) found, JsonNode? input, bool live, string? timeZone, CancellationToken ct) =>
         RunSavedAsync(Who.Of(a), found, input, live, timeZone, validateOutput: true, ct);
 
-    public async Task<WorkflowExecution?> RunSavedAsync(Who a, (Plugin Plugin, ConfigObject Object, ConfigObjectVersion Version) found, JsonNode? input, bool live, string? timeZone, bool validateOutput, CancellationToken ct)
+    public async Task<WorkflowExecution?> RunSavedAsync(Who a, (Plugin Plugin, ConfigObject Object, ConfigObjectVersion Version) found, JsonNode? input, bool live, string? timeZone, bool validateOutput, CancellationToken ct, string? automationRunId = null)
     {
         JsonNode? scriptInput = input;
         if (live) scriptInput = new JsonObject { ["runtime"] = ArtifactRuntime.Build(timeZone) };
         return await ExecuteAsync(new RunRequest(a.OrgId, a.UserId, a.MemberId, found.Plugin.Id, found.Object.Id, found.Version.Id, found.Version.NormalizedPayloadJson ?? "null", found.Version.RawSourceText ?? "",
-            null, scriptInput, live, validateOutput, () => toolFactory.BuildAsync(a.UserId, a.OrgId, live, CancellationToken.None)), ct);
+            null, scriptInput, live, validateOutput, () => toolFactory.BuildAsync(a.UserId, a.OrgId, live, CancellationToken.None), automationRunId), ct);
     }
 
     /// <summary>The reference's words for a Workflow whose version content is missing.</summary>

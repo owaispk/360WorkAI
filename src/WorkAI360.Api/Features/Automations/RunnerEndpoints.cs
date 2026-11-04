@@ -77,6 +77,34 @@ public static class RunnerEndpoints
                 return Json(new { items, enginePolicy = new { upgrade = true } });
             }));
 
+        // The stream the token response names. A desktop runner hears when work or a cancellation is waiting (it then polls `work` or its heartbeat);
+        // idle streams send keepalives and never write presence. The cursor (Last-Event-ID) is the database id of the last hint, so a reconnect to any
+        // instance resumes in order.
+        app.MapGet("/v1/automation-runners/events", async (HttpContext ctx, RunnerAuth auth, RunnerRegistry registry, AutomationService service, IOptions<AutomationOptions> options) =>
+        {
+            var who = await auth.AuthenticateAsync(ctx);
+            if (who is null) return Json(new { error = "runner_unauthorized" }, 401);
+            // Remote sessions are not part of this build, so a desktop asking for their pushes learns at once that the feature is off and keeps polling.
+            if (ctx.Request.Headers["x-openwork-remote-session-push"].ToString() == "1" && who.Capabilities.Contains("remote_session_v1"))
+                return Json(new { error = "feature_disabled", message = "Remote-session push is not enabled for this organization." }, 404);
+            var requested = ctx.Request.Headers["Last-Event-ID"].ToString();
+            var cursor = long.TryParse(requested, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var c) && c >= 0 ? c : 0;
+            var sessionOnly = await registry.SessionOnlyAsync(who);
+            await StreamAsync(ctx, who, cursor, sessionOnly, registry, service, options.Value);
+            return Results.Empty;
+        });
+
+        app.MapPut("/v1/automation-runner/inventory", (HttpContext ctx, RunnerAuth auth, RunnerRegistry registry) =>
+            RunAsync(ctx, auth, async who =>
+            {
+                var body = await LibraryZod.BodyAsync(ctx);
+                ValidateInventory(body);
+                var now = AutomationService.Now();
+                if (!await registry.SaveInventoryAsync(who, body.GetRawText(), now)) return Json(new { error = "runner_not_registered" }, 404);
+                ctx.Response.Headers.CacheControl = "no-store";
+                return Json(new { ok = true, updatedAt = now, enginePolicy = new { upgrade = true } });
+            }));
+
         app.MapPost("/v1/automation-runs/{id}/claim", (string id, HttpContext ctx, RunnerAuth auth, RunnerRegistry registry, RunnerService runners) =>
             RunAsync(ctx, auth, async who =>
             {
@@ -114,6 +142,112 @@ public static class RunnerEndpoints
                 var result = ParseResult(await LibraryZod.BodyAsync(ctx));
                 return Json(new { run = AutomationWire.Of(await runners.CompleteAsync(who, id, result)) });
             }));
+    }
+
+    /// <summary>The event loop of one runner stream (the reference's timings: poll 1 s doubling to 15 s while idle, keepalive every 15 s).</summary>
+    private static async Task StreamAsync(HttpContext ctx, RunnerIdentity who, long cursor, bool sessionOnly, RunnerRegistry registry, AutomationService service, AutomationOptions options)
+    {
+        var response = ctx.Response;
+        response.StatusCode = 200;
+        response.ContentType = "text/event-stream";
+        response.Headers.CacheControl = "no-cache";
+        response.Headers["X-Accel-Buffering"] = "no";
+        var aborted = ctx.RequestAborted;
+        long lastKeepalive = 0;
+        var lastOwnerCheck = Environment.TickCount64;
+        var delay = options.StreamPollMinMs;
+        try
+        {
+            await response.Body.FlushAsync(aborted);
+            while (!aborted.IsCancellationRequested)
+            {
+                if (AutomationService.Now() >= who.ExpiresAt) break;
+                if (Environment.TickCount64 - lastOwnerCheck >= options.StreamOwnerCheckMs)
+                {
+                    // A runner forgotten, or an owner who left, ends the stream; the desktop reconnects and is refused.
+                    if (!await registry.RegisteredAsync(who) || !await service.OwnerActiveAsync(who.OrganizationId, who.OwnerMemberId)) break;
+                    lastOwnerCheck = Environment.TickCount64;
+                }
+                var notifications = sessionOnly ? [] : await registry.NotificationsAsync(who, cursor);
+                foreach (var n in notifications)
+                {
+                    cursor = n.Id;
+                    var type = n.EventType == "work_available" ? "automation_work_available" : "automation_cancellation_available";
+                    var id = n.Id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    await WriteEventAsync(response, id, type, JsonSerializer.Serialize(new { type, cursor = id }), aborted);
+                }
+                if (notifications.Count == 0 && Environment.TickCount64 - lastKeepalive >= options.StreamKeepaliveMs)
+                {
+                    await WriteEventAsync(response, null, "keepalive", "{}", aborted);
+                    lastKeepalive = Environment.TickCount64;
+                }
+                delay = notifications.Count > 0 ? options.StreamPollMinMs : Math.Min(options.StreamPollMaxMs, Math.Max(options.StreamPollMinMs, delay) * 2);
+                var untilKeepalive = options.StreamKeepaliveMs - (Environment.TickCount64 - lastKeepalive);
+                var wait = (int)Math.Min(delay, Math.Max(options.StreamPollMinMs, untilKeepalive));
+                await Task.Delay(wait, aborted);
+            }
+        }
+        catch (OperationCanceledException) { /* the desktop went away */ }
+        catch (IOException) { /* the connection broke while writing */ }
+    }
+
+    private static async Task WriteEventAsync(HttpResponse response, string? id, string type, string data, CancellationToken ct)
+    {
+        var text = (id is null ? "" : $"id: {id}\n") + $"event: {type}\ndata: {data}\n\n";
+        await response.WriteAsync(text, ct);
+        await response.Body.FlushAsync(ct);
+    }
+
+    private static readonly string[] Platforms = ["darwin", "win32", "linux"];
+
+    /// <summary>The reference's inventory schema: a computer and up to 50 workspaces with up to 200 models each. Objects are not strict, so either side can add fields.</summary>
+    private static void ValidateInventory(JsonElement body)
+    {
+        if (!body.TryGetProperty("computer", out var computer)) throw new Invalid("computer", "Invalid input: expected object, received undefined");
+        if (computer.ValueKind != JsonValueKind.Object) throw new Invalid("computer", $"Invalid input: expected object, received {Reader.Kind(computer)}");
+        Reader.Str(computer, "label", ["computer"], 1, 120);
+        var platform = Reader.Str(computer, "platform", ["computer"], 1, 16, trim: false);
+        if (!Platforms.Contains(platform)) throw new Invalid("computer.platform", "Invalid option: expected one of \"darwin\"|\"win32\"|\"linux\"", "invalid_value");
+        Reader.Str(computer, "appVersion", ["computer"], 1, 80);
+        if (!body.TryGetProperty("workspaces", out var workspaces)) throw new Invalid("workspaces", "Invalid input: expected array, received undefined");
+        if (workspaces.ValueKind != JsonValueKind.Array) throw new Invalid("workspaces", $"Invalid input: expected array, received {Reader.Kind(workspaces)}");
+        if (workspaces.GetArrayLength() > 50) throw new Invalid([(["workspaces"], "too_big", "Too big: expected array to have <=50 items")]);
+        var i = 0;
+        foreach (var w in workspaces.EnumerateArray())
+        {
+            string[] at = ["workspaces", i.ToString(System.Globalization.CultureInfo.InvariantCulture)];
+            var path = string.Join('.', at);
+            if (w.ValueKind != JsonValueKind.Object) throw new Invalid(path, $"Invalid input: expected object, received {Reader.Kind(w)}");
+            Reader.Str(w, "workspaceId", at, 1, 240);
+            Reader.Str(w, "name", at, 1, 120);
+            if (!w.TryGetProperty("active", out var active) || active.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                throw new Invalid($"{path}.active", $"Invalid input: expected boolean, received {(w.TryGetProperty("active", out var a) ? Reader.Kind(a) : "undefined")}");
+            var engine = Reader.Str(w, "engine", at, 1, 8, trim: false);
+            if (engine is not ("v1" or "v2")) throw new Invalid($"{path}.engine", "Invalid option: expected one of \"v1\"|\"v2\"", "invalid_value");
+            if (!w.TryGetProperty("defaultModel", out var dm)) throw new Invalid($"{path}.defaultModel", "Invalid input: expected object, received undefined");
+            if (dm.ValueKind != JsonValueKind.Null)
+            {
+                if (dm.ValueKind != JsonValueKind.Object) throw new Invalid($"{path}.defaultModel", $"Invalid input: expected object, received {Reader.Kind(dm)}");
+                string[] dmAt = [.. at, "defaultModel"];
+                Reader.Str(dm, "providerId", dmAt, 1, 160);
+                Reader.Str(dm, "modelId", dmAt, 1, 160);
+                if (Reader.HasValue(dm, "variant")) Reader.Str(dm, "variant", dmAt, 1, 60);
+            }
+            if (!w.TryGetProperty("models", out var models)) throw new Invalid($"{path}.models", "Invalid input: expected array, received undefined");
+            if (models.ValueKind != JsonValueKind.Array) throw new Invalid($"{path}.models", $"Invalid input: expected array, received {Reader.Kind(models)}");
+            if (models.GetArrayLength() > 200) throw new Invalid([([.. at, "models"], "too_big", "Too big: expected array to have <=200 items")]);
+            var j = 0;
+            foreach (var m in models.EnumerateArray())
+            {
+                string[] mAt = [.. at, "models", j.ToString(System.Globalization.CultureInfo.InvariantCulture)];
+                if (m.ValueKind != JsonValueKind.Object) throw new Invalid(string.Join('.', mAt), $"Invalid input: expected object, received {Reader.Kind(m)}");
+                Reader.Str(m, "providerId", mAt, 1, 160);
+                Reader.Str(m, "modelId", mAt, 1, 160);
+                Reader.Str(m, "name", mAt, 1, 200);
+                j++;
+            }
+            i++;
+        }
     }
 
     private static RunnerRegistration ParseRegistration(JsonElement body)

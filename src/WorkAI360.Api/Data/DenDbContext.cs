@@ -81,6 +81,9 @@ public sealed class DenDbContext(DbContextOptions<DenDbContext> options) : DbCon
         // SQLite needs the collation named; MySQL's default utf8mb4 collation is already case-insensitive.
         if (this.IsSqlite()) b.Entity<Team>().Property(t => t.Name).UseCollation("NOCASE");
         b.Entity<Team>().HasIndex(t => new { t.OrganizationId, t.Name }).IsUnique();
+        // Unset keys are NULL, and both databases let NULLs repeat in a unique index, so only real keys are unique.
+        b.Entity<Team>().HasIndex(t => new { t.OrganizationId, t.ExternalKey }).IsUnique();
+        b.Entity<Team>().Property(t => t.ExternalKey).HasMaxLength(128);
         b.Entity<TeamMember>().HasIndex(t => new { t.TeamId, t.MemberId }).IsUnique();
         b.Entity<TeamMember>().HasIndex(t => t.MemberId);
         b.Entity<PermissionSet>().HasIndex(p => p.OrganizationId);

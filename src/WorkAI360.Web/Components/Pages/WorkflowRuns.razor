@@ -1,4 +1,6 @@
+@page "/dashboard/analytics/workflow-runs"
 @page "/dashboard/workflow-runs"
+@page "/dashboard/script-runs"
 @inherits LibraryPage
 @using System.Text.Json
 
@@ -14,6 +16,7 @@
     else
     {
         <h1>Workflow runs</h1>
+        <button type="button" class="den-button den-secondary" disabled="@Busy" @onclick="RefreshAsync" data-testid="runs-refresh">Refresh runs</button>
         <p class="den-muted">@OrgName · what your Workflows and scripts ran, newest first. Only your own runs are listed; they keep the names of the tools called, never the values.</p>
         @if (Error is not null) { <p class="den-error" role="alert" data-testid="error">@Error</p> }
         @if (_runs.Count == 0)
@@ -58,7 +61,7 @@
 @code {
     private sealed record Run(string Status, string FinishedAt, string Source, string? WorkflowId, string? Title, string? Error, List<string> Tools, int DurationMs)
     {
-        public string Kind => Source.StartsWith("workflow-test:", StringComparison.Ordinal) ? "Draft test" : Source == "adhoc" ? "Script run by an agent" : Source.StartsWith("authoring:", StringComparison.Ordinal) ? "Live script run" : "Workflow";
+        public string Kind => Source.StartsWith("workflow-test:", StringComparison.Ordinal) ? "Draft test" : Source == "adhoc" ? "One-off task" : Source.StartsWith("authoring:", StringComparison.Ordinal) ? "Live script run" : "Workflow run";
     }
 
     private readonly List<Run> _runs = [];
@@ -84,6 +87,17 @@
                 wf.ValueKind == JsonValueKind.Object ? Str(wf, "title") : null, Str(x, "errorMessage"), x.GetProperty("toolCalls").EnumerateArray().Select(c => Str(c, "name") ?? "").ToList(), Int(x, "durationMs")));
         }
         _next = body.GetProperty("nextCursor").ValueKind == JsonValueKind.String ? body.GetProperty("nextCursor").GetString() : null;
+    }
+
+    /// <summary>Reads the newest runs again (the reference refreshes every 30 seconds; here it is on request).</summary>
+    private async Task RefreshAsync()
+    {
+        Busy = true;
+        Error = null;
+        _runs.Clear();
+        _next = null;
+        await LoadAsync(null);
+        Busy = false;
     }
 
     private async Task MoreAsync()

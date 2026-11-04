@@ -19,6 +19,7 @@ public static class AutomationEndpoints
     {
         var (context, failure) = await access.ResolveAsync(ctx);
         if (failure is not null) return failure;
+        ctx.Items[ContextKey] = context;
         try { return await handler(ScopeOf(ctx, context!, configuration)); }
         catch (Invalid invalid) { return invalid.ToResult(); }
         catch (AutomationFailure failed) { return failed.ToResult(); }
@@ -34,6 +35,17 @@ public static class AutomationEndpoints
             : AutomationSchedule.LegacyKinds.Concat(header.Split(',').Select(k => k.Trim()).Where(AutomationSchedule.Kinds.Contains)).ToHashSet();
         return new Scope(context.Organization.Id, context.Member.Id, attention, readable,
             FeatureState.Resolve(configuration, "automationIntervalSchedules"), FeatureState.Resolve(configuration, "automationCalendarTriggers"));
+    }
+
+    private const string ContextKey = "automation.org-context";
+
+    /// <summary>Records a successful change of the caller's Automation (the reference's route event names).</summary>
+    private static async Task<IResult> AuditedAsync(HttpContext ctx, string action, Item? item, int status = 200)
+    {
+        if (item is null) return NotFound("automation_not_found");
+        if (ctx.Items[ContextKey] is OrgContext context)
+            await ctx.RequestServices.GetRequiredService<AutomationAudit>().ChangedAsync(context, action, item.Automation.Id);
+        return Json(AutomationWire.Of(item), status);
     }
 
     private static IResult Json(object body, int status = 200) => Results.Json(body, statusCode: status);
@@ -62,14 +74,14 @@ public static class AutomationEndpoints
             RunAsync(ctx, access, cfg, async scope =>
             {
                 var definition = AutomationInput.ParseCreate(await LibraryZod.BodyAsync(ctx));
-                return Json(AutomationWire.Of(await service.CreateAsync(scope, definition)), 201);
+                return await AuditedAsync(ctx, "automation.create", await service.CreateAsync(scope, definition), 201);
             }));
 
         app.MapPost("/v1/cloud-automations", (HttpContext ctx, OrgAccess access, IConfiguration cfg, AutomationService service) =>
             RunAsync(ctx, access, cfg, async scope =>
             {
                 var definition = AutomationInput.ParseCreateCloud(await LibraryZod.BodyAsync(ctx));
-                return Json(AutomationWire.Of(await service.CreateAsync(scope, definition)), 201);
+                return await AuditedAsync(ctx, "automation.cloud.create", await service.CreateAsync(scope, definition), 201);
             }));
 
         app.MapGet("/v1/automations/{id}", (string id, HttpContext ctx, OrgAccess access, IConfiguration cfg, AutomationService service) =>
@@ -79,17 +91,17 @@ public static class AutomationEndpoints
             RunAsync(ctx, access, cfg, async scope =>
             {
                 var changes = AutomationInput.ParseUpdate(await LibraryZod.BodyAsync(ctx));
-                return await service.UpdateAsync(scope, id, changes) is { } item ? Json(AutomationWire.Of(item)) : NotFound("automation_not_found");
+                return await AuditedAsync(ctx, "automation.update", await service.UpdateAsync(scope, id, changes));
             }));
 
         app.MapPost("/v1/automations/{id}/activate", (string id, HttpContext ctx, OrgAccess access, IConfiguration cfg, AutomationService service) =>
-            RunAsync(ctx, access, cfg, async scope => await service.ActivateAsync(scope, id) is { } item ? Json(AutomationWire.Of(item)) : NotFound("automation_not_found")));
+            RunAsync(ctx, access, cfg, async scope => await AuditedAsync(ctx, "automation.activate", await service.ActivateAsync(scope, id))));
 
         app.MapPost("/v1/automations/{id}/deactivate", (string id, HttpContext ctx, OrgAccess access, IConfiguration cfg, AutomationService service) =>
-            RunAsync(ctx, access, cfg, async scope => await service.DeactivateAsync(scope, id) is { } item ? Json(AutomationWire.Of(item)) : NotFound("automation_not_found")));
+            RunAsync(ctx, access, cfg, async scope => await AuditedAsync(ctx, "automation.deactivate", await service.DeactivateAsync(scope, id))));
 
         app.MapDelete("/v1/automations/{id}", (string id, HttpContext ctx, OrgAccess access, IConfiguration cfg, AutomationService service) =>
-            RunAsync(ctx, access, cfg, async scope => await service.ArchiveAsync(scope, id) is { } item ? Json(AutomationWire.Of(item)) : NotFound("automation_not_found")));
+            RunAsync(ctx, access, cfg, async scope => await AuditedAsync(ctx, "automation.archive", await service.ArchiveAsync(scope, id))));
 
         app.MapPost("/v1/automations/{id}/run", (string id, HttpContext ctx, OrgAccess access, IConfiguration cfg, AutomationService service) =>
             RunAsync(ctx, access, cfg, async scope =>
@@ -111,7 +123,12 @@ public static class AutomationEndpoints
                     }
                 }
                 var run = await service.RunNowAsync(scope, id, target);
-                return run is null ? NotFound("automation_not_found") : Json(new { run = AutomationWire.Of(run) }, 202);
+                if (run is null) return NotFound("automation_not_found");
+                var runAudit = ctx.RequestServices.GetRequiredService<AutomationAudit>();
+                await runAudit.ChangedAsync((OrgContext)ctx.Items[ContextKey]!, "automation.run.start", run.AutomationId, run.Id);
+                // A run refused on the spot (policy, a lost model) has already ended.
+                await runAudit.CompletedAsync(run.Id, await runAudit.OwnerActorAsync(scope.OrganizationId, scope.MemberId));
+                return Json(new { run = AutomationWire.Of(run) }, 202);
             }));
 
         app.MapGet("/v1/automations/{id}/runs", (string id, HttpContext ctx, OrgAccess access, IConfiguration cfg, AutomationService service) =>
@@ -148,7 +165,15 @@ public static class AutomationEndpoints
             }));
 
         app.MapPost("/v1/automation-runs/{id}/cancel", (string id, HttpContext ctx, OrgAccess access, IConfiguration cfg, AutomationService service) =>
-            RunAsync(ctx, access, cfg, async scope => await service.CancelRunAsync(scope, id) is { } run ? Json(new { run = AutomationWire.Of(run) }) : NotFound("automation_run_not_found")));
+            RunAsync(ctx, access, cfg, async scope =>
+            {
+                if (await service.CancelRunAsync(scope, id) is not { } run) return NotFound("automation_run_not_found");
+                var runAudit = ctx.RequestServices.GetRequiredService<AutomationAudit>();
+                await runAudit.ChangedAsync((OrgContext)ctx.Items[ContextKey]!, "automation_run.cancel", run.AutomationId, run.Id);
+                // A queued run is cancelled on the spot; one a runner holds ends when the runner reports it.
+                if (run.Status == "cancelled" && run.FinishedAt == run.CancelRequestedAt) await runAudit.CompletedAsync(run.Id, await runAudit.OwnerActorAsync(scope.OrganizationId, scope.MemberId));
+                return Json(new { run = AutomationWire.Of(run) });
+            }));
     }
 
     /// <summary>A required query number (zod <c>coerce.number().int()</c>): <paramref name="min"/> 0 allows zero, 1 does not.</summary>
