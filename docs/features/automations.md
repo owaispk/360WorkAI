@@ -82,7 +82,7 @@ Analytics compute members, pending invitations, active people, sessions and task
 * **Cloud Automations** are stored and answer as the reference does when the runner side is missing: `403 automation_cloud_disabled` unless the deployment has a
   headless runner configured (Policy `HeadlessRunnerConfigured`) and the organization allows it, then `409 automation_cloud_worker_required` unless an
   `ICloudAutomationRuntime` says an agent can run. Nothing executes a cloud run (no cloud sandboxes); with a runtime present a cloud run stays queued for it, without one
-  the scheduler records it as skipped. Workflows (`saved_script` actions) answer `400 automation_saved_script_version_not_found` (workflows are not built).
+  the scheduler records it as skipped. Workflows (`saved_script` actions) are different: they run here, in Den (below), so they need only cloud Automations to be on.
 * **No model catalog**: the reference checks models against its provider tables. Here: `openwork-cloud/default` is cloud-only, `opencode` (retired free model) is accepted
   from released desktops and refused for clients that send `x-openwork-automation-model-attention`, `openwork` and `lpr_...` providers are unavailable, anything else is a
   provider only the desktop has (desktop only). The reference's `openwork` model message is kept; its `lpr_` and cloud-default messages are identical.
@@ -95,15 +95,52 @@ Analytics compute members, pending invitations, active people, sessions and task
 * Analytics are computed in memory from the last 12 weeks of events (the reference aggregates in SQL with index hints); fine for local data, a database aggregate is the way to
   scale it. `analyticsDailyTrends` was reported off by `GET /v1/org` until this area existed; it now follows its default (on).
 
+## Runner events stream and inventory
+
+* `GET /v1/automation-runners/events` (the path the token response names): server-sent events telling a desktop that work (`automation_work_available`) or a
+  cancellation (`automation_cancellation_available`) is waiting, each `{type, cursor}` with `id: <cursor>`; idle streams send `keepalive` and write no presence.
+  Hints live in `AutomationRunnerNotification` (a growing id is the cursor), written in the run's own transaction when a desktop run is queued, and when a desktop
+  holding a run is asked to stop. `Last-Event-ID` resumes after a cursor, so a reconnect to any instance continues in order (nothing is fanned out in memory).
+  The reference's timings: poll 1 s doubling to 15 s while idle, keepalive every 15 s, an owner check every 15 s (a forgotten runner or an owner who left ends the
+  stream), and the end at token expiry. Session-only runners keep a stream but hear nothing about Automations. A desktop asking for remote-session pushes
+  (`x-openwork-remote-session-push: 1` with `remote_session_v1`) gets `404 feature_disabled`: remote sessions are not part of this build. Hints are kept a week.
+  Settings `Automations__StreamPollMinMs`, `__StreamPollMaxMs`, `__StreamKeepaliveMs`, `__StreamOwnerCheckMs`.
+* `PUT /v1/automation-runner/inventory`: the desktop's computer, workspaces (at most 50) and models (at most 200 each) in the reference's schema (objects not strict),
+  kept as the runner's latest report with its time; `{ok: true, updatedAt, enginePolicy}`; `404 runner_not_registered` when the runner must register again.
+
+## Workflows as Automation actions
+
+An action `{kind: "saved_script", script: {pluginId, configObjectId, configObjectVersionId}, input}` runs a saved Workflow version. Checked as the reference's
+`validateWorkflowAutomationAction` on create, update and again at run time: the owner is a member (`409 automation_owner_inactive`); holds `sharing.manage_all`,
+or an editor or manager grant on the Workflow or its plugin (to them, a team or everyone), or made either one (the reference gives creators a manager grant; this
+build records the creator instead) (`403 automation_saved_script_forbidden`); the version exists in this workspace under that plugin
+(`400 automation_saved_script_version_not_found` / `_invalid`); the stored input fits the version's input schema (`400 automation_saved_script_input_invalid`).
+A Workflow never runs on a desktop (`400 automation_action_target_mismatch`). It runs **in Den**, on the cloud target, through the same code-mode runner as for agents,
+under the owner's access: the scheduler starts due occurrences and then runs queued Workflow runs (scheduled or "run now"), each taken by one conditional update so
+no two instances run it twice, with a lease that covers the longest Workflow (a crash is recovered like any lost lease). The receipt (`WorkflowRun`) names the
+Automation run and is read under the Workflow's standing source like a manual run. A succeeded run's summary is the canonical result; a failure is `execution_failed`
+with the Workflow's message. Difference: the reference starts a cloud run at once; here "run now" runs at the next scheduler cycle (`Automations__PollIntervalMs`,
+15 s).
+
+## Audit events
+
+`automation.create`, `automation.cloud.create`, `automation.update`, `automation.activate`, `automation.deactivate`, `automation.archive`, `automation.run.start`
+and `automation_run.cancel` (the caller's changes), and per run one job operation: `automation_run.started` when the scheduler starts an occurrence and one
+`automation_run.completed` for its end, whoever ended it (the in-Den executor, the owner's desktop, the scheduler's recovery or expiry, a skip, an immediate cancel).
+Outcome `succeeded` or `failed`; the reason is the status or error code (`skipped.runner_unavailable`), never a message, prompt, result, summary or usage.
+A runner reporting the same end again records nothing.
+
 ## Not built
 
-Cloud execution (cloud sandboxes, the headless runner and agent engines), workflows as Automation actions, Google Calendar triggers (calendar schedules are stored but
-nothing reads a calendar), the runner notification stream `GET /v1/automation-runners/events` (desktops fall back to polling `work`), runner inventory
-(`PUT /v1/automation-runner/inventory`), remote sessions (`/v1/session-runners/*`, `/v1/remote-session-*`), audit events for runs, model-attention feature usage marks,
-the models analytics and Langfuse export, the admin Control Center rollups, `POST /v1/telemetry/ingest`'s Workbot/activation writers, and the den-web pages for workflow
-runs and script runs.
+Cloud execution of agents (cloud sandboxes, the headless runner and agent engines), Google Calendar triggers (calendar schedules are stored but nothing reads a
+calendar), remote sessions (`/v1/session-runners/*`, `/v1/remote-session-*`) and their push announcements, model-attention feature usage marks, the models analytics
+and Langfuse export, and `POST /v1/telemetry/ingest`'s Workbot/activation writers.
 
 ## Checks
+
+Stream, inventory, Workflow actions and audit (`RunnerStreamTests` 6, `WorkflowAutomationTests` 7): 13 of 17 mutations killed; the 4 survivors are equivalent
+(the inventory's owner filter repeats the row id, which hashes workspace, person and install; the version query's workspace filter repeats the config object's;
+the desktop-target refusal on update is repeated by the target-move check; one mutation was a no-op and was replaced).
 
 Mutation checks (one rule removed at a time, 19 tried, 18 caught by a failing test): claim ignores that the run is still queued, the claim window, or whose run it is;
 heartbeat revives an expired lease or ignores the lease holder; complete ignores the attempt or an expired lease; a different result after the end is accepted; events skip
