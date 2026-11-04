@@ -26,6 +26,7 @@ public class ApiFactory : WebApplicationFactory<Program>
         builder.UseSetting("LlmProviders:CatalogUrl", "");
         // The Control Center's background refresh stays off in tests; they refresh explicitly.
         builder.UseSetting("PlatformAdmin:Metrics:RefreshEnabled", "false");
+        builder.UseSetting("Housekeeping:Enabled", "false");
         foreach (var (key, value) in Settings) builder.UseSetting(key, value);
         builder.UseSetting("Auth:ApiPublicUrl", "http://localhost");
         if (MySqlServer is null) builder.UseSetting("ConnectionStrings:Default", $"Data Source={_dbPath}");

@@ -22,6 +22,12 @@ public sealed class OrgAdminOptions
 
         /// <summary>Exports leave out the newest seconds so an event still being written cannot land behind a page already read (the reference uses 5).</summary>
         public int ExportSettleSeconds { get; set; } = 5;
+
+        /// <summary>
+        /// Days of audit history to keep; older operations, events and their resource rows are deleted by the housekeeping job. Unset (the default)
+        /// keeps everything, as the reference does (its retention is preview-only, with no deletion).
+        /// </summary>
+        public int? RetentionDays { get; set; }
     }
 }
 

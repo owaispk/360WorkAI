@@ -16,6 +16,9 @@ public sealed class OrgAdminFeature : IFeature
         services.AddScoped<AuditPolicies>();
         services.AddScoped<IAuditLog, AuditLog>();
         services.AddScoped<OrgEnvelope>();
+        services.Configure<HousekeepingOptions>(configuration.GetSection(HousekeepingOptions.Section));
+        services.AddSingleton<Housekeeping>();
+        services.AddHostedService(sp => sp.GetRequiredService<Housekeeping>());
     }
 
     public void MapEndpoints(WebApplication app)

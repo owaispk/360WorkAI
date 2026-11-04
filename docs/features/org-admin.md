@@ -90,6 +90,21 @@ A change that changes nothing records nothing.
 Tests: `tests/WorkAI360.Api.Tests/AuditCoverageTests.cs` (19). Mutation checks (7 of 7 killed): request events on top of change events, refusals outside
 `security`, the target id dropped, the workspace not remembered, SCIM attribution ignored, a re-registration without its marker, an unchanged mapping recorded.
 
+## Retention and housekeeping
+
+`Features/OrgAdmin/Housekeeping.cs`, a hosted job (`Housekeeping__Enabled`, default on; every `Housekeeping__IntervalMinutes`, default 60):
+
+* Deletes rows that can no longer do anything, `Housekeeping__GraceHours` (default 24) after they expired, so a code used just too late still answers
+  "expired": sessions, desktop handoff grants, device codes, OAuth authorization codes, refresh tokens, agent (MCP) tokens, email codes, password reset
+  tokens, DPoP bindings, workspace claim codes, and rate-limit windows older than two days. One set-based delete per kind; two instances running it at
+  once do no harm. Invitations are kept (an expired one still shows as expired, as in the reference); SSO, social and SAML states, connection OAuth
+  transactions, replay reservations and the request log already clean up after themselves.
+* **Audit retention** is opt-in: `OrgAdmin__Audit__RetentionDays` deletes audit history whose operation began before the cutoff, as whole operations
+  (operation, its events and their resource rows), in every workspace. Unset, nothing is deleted, as in the reference (whose retention is preview-only).
+
+Tests: `tests/WorkAI360.Api.Tests/HousekeepingTests.cs` (3). Mutation checks (6 of 6 killed): no grace period, retention ignoring its window, deleting with
+no retention set, resource rows left behind, events deleted by their own date instead of their operation's, live rows deleted.
+
 ## Not built
 
 * `GET /v1/org/resources`, `/v1/resources/marketplace-capabilities` (they list library resources: plugins, marketplaces, connections; those areas are separate).
