@@ -20,6 +20,13 @@ public sealed class AutomationOptions
     public int LeaseMs { get; set; } = 60_000;
     /// <summary>How long a scheduled desktop occurrence stays claimable. A laptop sleeps and reconnects, so this is a recovery window, not a liveness check.</summary>
     public int RunnerClaimDeadlineMs { get; set; } = 900_000;
+    /// <summary>The runner stream checks for new hints after this long when it just found some, doubling to <see cref="StreamPollMaxMs"/> while idle.</summary>
+    public int StreamPollMinMs { get; set; } = 1_000;
+    public int StreamPollMaxMs { get; set; } = 15_000;
+    /// <summary>An idle stream sends a keepalive event this often.</summary>
+    public int StreamKeepaliveMs { get; set; } = 15_000;
+    /// <summary>How often a stream re-checks that its runner is still registered and its owner still a member.</summary>
+    public int StreamOwnerCheckMs { get; set; } = 15_000;
 }
 
 /// <summary>Where cloud Automations run. Nothing here provides one, so the default says no; a deployment that does registers its own.</summary>
@@ -55,7 +62,7 @@ public sealed record Failed(string Code, string Message);
 /// Creating, changing, activating and running Automations for their owner (ported from the reference's service): placement rules, schedule features,
 /// model access, revisions, and the manual run. Members own their own Automations; nobody sees another person's.
 /// </summary>
-public sealed class AutomationService(DenDbContext db, PolicyStore policy, IOptions<PolicyOptions> policyOptions, IOptions<AutomationOptions> options, ICloudAutomationRuntime cloud, RunQueue queue)
+public sealed class AutomationService(DenDbContext db, PolicyStore policy, IOptions<PolicyOptions> policyOptions, IOptions<AutomationOptions> options, ICloudAutomationRuntime cloud, RunQueue queue, WorkflowActions workflows)
 {
     public const int DefaultMaximumRuntimeMs = 15 * 60_000;
     public static long Now() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -105,8 +112,6 @@ public sealed class AutomationService(DenDbContext db, PolicyStore policy, IOpti
     }
 
     public async Task<bool> CloudAgentAvailableAsync(string organizationId, string memberId) => await cloud.AgentAvailableAsync(organizationId, memberId);
-
-    private static AutomationFailure WorkflowUnavailable() => new(400, "automation_saved_script_version_not_found", "The selected Workflow version is unavailable.");
 
     public async Task<bool> OwnerActiveAsync(string organizationId, string memberId) =>
         await db.Members.AsNoTracking().AnyAsync(m => m.Id == memberId && m.OrganizationId == organizationId);
@@ -224,7 +229,7 @@ public sealed class AutomationService(DenDbContext db, PolicyStore policy, IOpti
             else
             {
                 if (!await OwnerActiveAsync(scope.OrganizationId, scope.MemberId)) throw new AutomationFailure(409, "automation_owner_inactive", "The Automation owner is no longer an active organization member.");
-                throw WorkflowUnavailable();
+                await workflows.ValidateAsync(scope.OrganizationId, scope.MemberId, definition.Action);
             }
         }
         else await RequireNewModelAsync(scope, definition.Action.Model!, "desktop");
@@ -268,11 +273,14 @@ public sealed class AutomationService(DenDbContext db, PolicyStore policy, IOpti
         var nextAction = changes.Action ?? currentAction;
         if (nextTarget == "desktop" && nextAction.Kind == "saved_script") throw new AutomationFailure(400, "automation_action_target_mismatch", "This Automation runs only in OpenWork Cloud.");
         if (moved) await RequireTargetMoveAsync(scope, nextAction, nextTarget);
-        if (nextAction.Kind == "saved_script") throw WorkflowUnavailable();
-        var requested = changes.Action is { Kind: "agent" } ? changes.Action.Model! : changes.Model ?? currentAction.Model!;
-        if (!moved && nextTarget == "cloud") await RequireCloudAgentAsync(scope);
-        if (moved || !requested.Same(ModelOf(current.Revision)))
-            await RequireNewModelAsync(nextTarget == "cloud" ? scope with { ModelAttention = true } : scope, requested, nextTarget);
+        if (nextAction.Kind == "saved_script") await workflows.ValidateAsync(scope.OrganizationId, scope.MemberId, nextAction);
+        else
+        {
+            var requested = changes.Action is { Kind: "agent" } ? changes.Action.Model! : changes.Model ?? currentAction.Model!;
+            if (!moved && nextTarget == "cloud") await RequireCloudAgentAsync(scope);
+            if (moved || !requested.Same(ModelOf(current.Revision)))
+                await RequireNewModelAsync(nextTarget == "cloud" ? scope with { ModelAttention = true } : scope, requested, nextTarget);
+        }
 
         var now = Now();
         await using var tx = await db.Database.BeginTransactionAsync();

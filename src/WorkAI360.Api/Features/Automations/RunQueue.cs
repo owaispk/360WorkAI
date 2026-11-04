@@ -94,6 +94,9 @@ public sealed class RunQueue(DenDbContext db, IOptions<AutomationOptions> option
             UsageJson = AutomationWire.EmptyUsage, CreatedAt = request.Now, UpdatedAt = request.Now,
         };
         db.Set<AutomationRun>().Add(run);
+        // The owner's desktops hear about a queued desktop run at once (in the same transaction, so the hint never points at a run that does not exist).
+        if (!overlap && request.Target == "desktop")
+            db.Set<AutomationRunnerNotification>().Add(new AutomationRunnerNotification { OrganizationId = request.Automation.OrganizationId, OwnerMemberId = request.Automation.OwnerMemberId, EventType = "work_available", RunId = run.Id, CreatedAt = request.Now });
         await db.SaveChangesAsync();
         await db.Set<Automation>().Where(a => a.Id == automationId).ExecuteUpdateAsync(s => s.SetProperty(a => a.NextDueAt, nextDueAt).SetProperty(a => a.LatestRunAt, (long?)request.Now).SetProperty(a => a.UpdatedAt, request.Now));
         await tx.CommitAsync();
@@ -229,8 +232,24 @@ public sealed class RunQueue(DenDbContext db, IOptions<AutomationOptions> option
         var immediate = await db.Set<AutomationRun>().Where(r => r.Id == runId && r.Status == "queued")
             .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, "cancelled").SetProperty(r => r.CancelRequestedAt, (long?)now).SetProperty(r => r.FinishedAt, (long?)now).SetProperty(r => r.UpdatedAt, now));
         if (immediate == 0)
-            await db.Set<AutomationRun>().Where(r => r.Id == runId && r.CancelRequestedAt == null && !Terminal.Contains(r.Status))
+        {
+            var marked = await db.Set<AutomationRun>().Where(r => r.Id == runId && r.CancelRequestedAt == null && !Terminal.Contains(r.Status))
                 .ExecuteUpdateAsync(s => s.SetProperty(r => r.CancelRequestedAt, (long?)now).SetProperty(r => r.UpdatedAt, now));
+            // A desktop holding the run is told on its stream, so it need not wait for its next heartbeat.
+            if (marked > 0)
+            {
+                var held = await (from r in db.Set<AutomationRun>().AsNoTracking()
+                                  join a in db.Set<Automation>().AsNoTracking() on r.AutomationId equals a.Id
+                                  where r.Id == runId && r.ExecutionTarget == "desktop" && (r.Status == "claimed" || r.Status == "running")
+                                  select new { a.OrganizationId, a.OwnerMemberId }).FirstOrDefaultAsync();
+                if (held is not null)
+                {
+                    db.Set<AutomationRunnerNotification>().Add(new AutomationRunnerNotification { OrganizationId = held.OrganizationId, OwnerMemberId = held.OwnerMemberId, EventType = "cancellation", RunId = runId, CreatedAt = now });
+                    await db.SaveChangesAsync();
+                    db.ChangeTracker.Clear();
+                }
+            }
+        }
         return await db.Set<AutomationRun>().AsNoTracking().FirstOrDefaultAsync(r => r.Id == runId);
     }
 

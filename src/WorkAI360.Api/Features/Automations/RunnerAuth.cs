@@ -103,6 +103,25 @@ public sealed class RunnerRegistry(DenDbContext db)
     /// <summary>Forgets desktops that stopped checking in a month ago; signing in again registers them anew.</summary>
     public Task<int> PruneAsync(long now) =>
         db.Set<AutomationRunner>().Where(r => r.LastSeenAt < now - 30L * 24 * 60 * 60_000).ExecuteDeleteAsync();
+
+    /// <summary>Wake-up hints are kept a week, as in the reference; a desktop away longer finds its work by polling.</summary>
+    public Task<int> PruneNotificationsAsync(long now) =>
+        db.Set<AutomationRunnerNotification>().Where(n => n.CreatedAt < now - 7L * 24 * 60 * 60_000).ExecuteDeleteAsync();
+
+    /// <summary>The hints for this person's desktops after <paramref name="after"/>, oldest first (at most 100 at a time, as the reference).</summary>
+    public Task<List<AutomationRunnerNotification>> NotificationsAsync(RunnerIdentity who, long after) =>
+        db.Set<AutomationRunnerNotification>().AsNoTracking()
+            .Where(n => n.OrganizationId == who.OrganizationId && n.OwnerMemberId == who.OwnerMemberId && n.Id > after)
+            .OrderBy(n => n.Id).Take(100).ToListAsync();
+
+    /// <summary>Whether this runner is still registered to this person (a stream ends when it is not).</summary>
+    public Task<bool> RegisteredAsync(RunnerIdentity who) =>
+        db.Set<AutomationRunner>().AsNoTracking().AnyAsync(r => r.Id == RunnerAuth.RowId(who.OrganizationId, who.OwnerMemberId, who.RunnerId) && r.OrganizationId == who.OrganizationId && r.OwnerMemberId == who.OwnerMemberId);
+
+    /// <summary>Stores the runner's latest inventory; false when it has no registration (it must register again first).</summary>
+    public async Task<bool> SaveInventoryAsync(RunnerIdentity who, string inventoryJson, long now) =>
+        await db.Set<AutomationRunner>().Where(r => r.Id == RunnerAuth.RowId(who.OrganizationId, who.OwnerMemberId, who.RunnerId) && r.OrganizationId == who.OrganizationId && r.OwnerMemberId == who.OwnerMemberId)
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.InventoryJson, inventoryJson).SetProperty(r => r.InventoryUpdatedAt, (long?)now).SetProperty(r => r.LastSeenAt, now).SetProperty(r => r.UpdatedAt, now)) > 0;
 }
 
 public sealed record RunnerRegistration(string RunnerId, int ProtocolVersion, IReadOnlyList<string> Capabilities, string AppVersion, string Platform, int Concurrency);
