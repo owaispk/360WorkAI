@@ -1,0 +1,8 @@
+360WorkAI is installed as {{ include "workai360.fullname" . }}.
+  Web: {{ .Values.webUrl }}    API: {{ .Values.apiPublicUrl }}
+{{- if gt (int .Values.web.replicas) 1 }}
+  web.replicas > 1: turn on sticky sessions at your ingress (Blazor Server keeps each circuit in one pod).
+{{- end }}
+{{- if and (gt (int .Values.api.replicas) 1) (not .Values.redis.enabled) }}
+  WARNING: api.replicas > 1 without redis.enabled: rate limits and caches are per pod (docs/operations.md).
+{{- end }}

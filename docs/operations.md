@@ -42,3 +42,30 @@ write buffer (flushed every two seconds), and the Control Center's lease rows, w
 `tests/WorkAI360.Api.Tests/SharedStoreTests.cs` runs one contract (windows, limits, concurrency, values) against the memory store, and against Redis when
 `WORKAI_TEST_REDIS` is set (e.g. `WORKAI_TEST_REDIS=localhost:6379 dotnet test`), plus a test with two API instances sharing one Redis: failures counted
 on both lock the address out on both. CI runs them with a Redis service.
+
+## Kubernetes (Helm)
+
+`deploy/helm/workai360` installs the API, the web host and a migration job. It brings no database: point it at a MySQL 8 you run
+(created as in [database.md](database.md)). Images come from `deploy/Dockerfile.api` and `deploy/Dockerfile.web`.
+
+```bash
+helm install openwork deploy/helm/workai360 \
+  --set image.api.repository=registry.example.com/workai360-api --set image.api.tag=1.0.0 \
+  --set image.web.repository=registry.example.com/workai360-web --set image.web.tag=1.0.0 \
+  --set webUrl=https://openwork.example.com --set apiPublicUrl=https://api.openwork.example.com \
+  --set existingSecret=openwork-secrets --set ingress.enabled=true
+```
+
+* **Secrets.** Name an `existingSecret` with the keys `auth-secret` (32+ characters), `database-connection-string`, and when used `smtp-password`,
+  `redis-connection-string`, `litellm-master-key`; or set `secrets.*` and the chart creates it. Installing without either is refused.
+* **Migrations.** A `pre-install,pre-upgrade` hook job runs the API image with `--migrate`; the API pods start with `Database__AutoMigrate=false`,
+  so an upgrade never runs new code against an old schema.
+* **Forwarded headers.** The API believes `X-Forwarded-*` only from `trustedProxies`, which may list networks (CIDR) because pods and the ingress
+  controller have no fixed address (`Auth__TrustedProxies__0=10.42.0.0/16`). The chart's NetworkPolicy then lets only the web pods and the ingress
+  controller's namespace (`networkPolicy.ingressNamespaceLabels`) reach the API, so nothing else in the cluster can claim to be a proxy.
+* **Replicas.** `api.replicas` defaults to 2: turn on `redis.enabled` so rate limits and caches are shared (the install notes warn otherwise). The web
+  host defaults to 1: Blazor Server keeps each person's circuit in one process, so more web replicas need sticky sessions at the ingress.
+* **Pods** run as the image's unprivileged user (UID 1654) with a read-only root filesystem (writable `/tmp` and home), no privilege escalation,
+  all capabilities dropped and no service account token.
+* **Optional pieces:** `redis.enabled` (shared store), `gateway.enabled` with `gateway.litellm.baseUrl` (AI Gateway over a LiteLLM you run),
+  `extraEnv` for any other setting in the README.

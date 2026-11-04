@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "workai360.fullname" . }}-web
+  labels: {{- include "workai360.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  replicas: {{ .Values.web.replicas }}
+  selector:
+    matchLabels: { app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: web }
+  template:
+    metadata:
+      labels: {{- include "workai360.labels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      containers:
+        - name: web
+          image: {{ include "workai360.image" (merge (dict "appVersion" .Chart.AppVersion) .Values.image.web) }}
+          imagePullPolicy: {{ .Values.image.web.pullPolicy }}
+          {{- include "workai360.securityContext" . | nindent 10 }}
+          ports: [{ name: http, containerPort: 8080 }]
+          env:
+            - { name: ASPNETCORE_URLS, value: "http://+:8080" }
+            - { name: Den__ApiBaseUrl, value: "http://{{ include "workai360.fullname" . }}-api:8080" }
+          readinessProbe: { httpGet: { path: /api/health, port: http }, periodSeconds: 10 }
+          livenessProbe: { httpGet: { path: /api/health, port: http }, periodSeconds: 20, initialDelaySeconds: 20 }
+          resources: {{- toYaml .Values.web.resources | nindent 12 }}
+          volumeMounts: [{ name: tmp, mountPath: /tmp }, { name: home, mountPath: /home/app }]
+      volumes: [{ name: tmp, emptyDir: {} }, { name: home, emptyDir: {} }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "workai360.fullname" . }}-web
+  labels: {{- include "workai360.labels" . | nindent 4 }}
+spec:
+  selector: { app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: web }
+  ports: [{ name: http, port: 8080, targetPort: http }]

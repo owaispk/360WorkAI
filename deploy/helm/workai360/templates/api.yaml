@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "workai360.fullname" . }}-api
+  labels: {{- include "workai360.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicas }}
+  selector:
+    matchLabels: { app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: api }
+  template:
+    metadata:
+      labels: {{- include "workai360.labels" . | nindent 8 }}
+        app.kubernetes.io/component: api
+      annotations:
+        checksum/settings: {{ toJson .Values | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      containers:
+        - name: api
+          image: {{ include "workai360.image" (merge (dict "appVersion" .Chart.AppVersion) .Values.image.api) }}
+          imagePullPolicy: {{ .Values.image.api.pullPolicy }}
+          {{- include "workai360.securityContext" . | nindent 10 }}
+          ports: [{ name: http, containerPort: 8080 }]
+          env: {{- include "workai360.apiEnv" . | nindent 12 }}
+          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 10 }
+          livenessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 20, initialDelaySeconds: 20 }
+          resources: {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts: [{ name: tmp, mountPath: /tmp }, { name: home, mountPath: /home/app }]
+      volumes: [{ name: tmp, emptyDir: {} }, { name: home, emptyDir: {} }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "workai360.fullname" . }}-api
+  labels: {{- include "workai360.labels" . | nindent 4 }}
+spec:
+  selector: { app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: api }
+  ports: [{ name: http, port: 8080, targetPort: http }]

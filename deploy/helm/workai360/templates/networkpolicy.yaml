@@ -1,0 +1,19 @@
+{{- if .Values.networkPolicy.enabled }}
+# The API believes X-Forwarded-* from trustedProxies networks, so only the web pods and the ingress controller may reach it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "workai360.fullname" . }}-api
+  labels: {{- include "workai360.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: api }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/instance: {{ .Release.Name }}, app.kubernetes.io/component: web }
+        - namespaceSelector:
+            matchLabels: {{- toYaml .Values.networkPolicy.ingressNamespaceLabels | nindent 14 }}
+      ports: [{ port: 8080 }]
+{{- end }}

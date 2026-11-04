@@ -1,0 +1,65 @@
+# Images built from deploy/Dockerfile.api and deploy/Dockerfile.web.
+image:
+  api: { repository: workai360-api, tag: "", pullPolicy: IfNotPresent }
+  web: { repository: workai360-web, tag: "", pullPolicy: IfNotPresent }
+imagePullSecrets: []
+
+# Public addresses. webUrl is what people open; apiPublicUrl is what desktops, CLIs and MCP clients call.
+webUrl: https://openwork.example.com
+apiPublicUrl: https://api.openwork.example.com
+
+# Secrets. Either name an existing Secret holding these keys, or let the chart create one from the values below.
+#   auth-secret (32+ characters), database-connection-string, and when used: smtp-password, redis-connection-string, litellm-master-key
+existingSecret: ""
+secrets:
+  authSecret: ""
+  databaseConnectionString: ""   # MySQL 8, e.g. Server=mysql;Database=workai360;User=workai360;Password=...
+  smtpPassword: ""
+  redisConnectionString: ""
+  litellmMasterKey: ""
+
+# Networks whose callers may set X-Forwarded-* on the API: the pod network (web pods) and the ingress controller.
+# Entries are addresses or CIDR networks. Restrict who can reach the API with networkPolicy below.
+trustedProxies:
+  - 10.0.0.0/8
+
+email:
+  from: noreply@example.com
+  smtp: { host: "", port: 587, security: starttls, username: "" }
+
+# Optional shared store: with more than one API replica, rate limits and caches must be shared (docs/operations.md).
+redis:
+  enabled: false
+
+# Optional AI Gateway over a LiteLLM proxy you run (docs/features/gateway.md).
+gateway:
+  enabled: false
+  litellm: { baseUrl: "http://litellm:4000", publicUrl: "" }
+
+# Extra environment for the API (any Section__Key setting from the README).
+extraEnv: []
+
+api:
+  replicas: 2
+  resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 1Gi } }
+web:
+  # Blazor Server keeps each person's circuit in one process: more than one replica needs sticky sessions at the ingress.
+  replicas: 1
+  resources: { requests: { cpu: 100m, memory: 256Mi }, limits: { memory: 1Gi } }
+
+# Runs `--migrate` as a pre-install/pre-upgrade hook; instances start with Database__AutoMigrate=false.
+migration:
+  enabled: true
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  webHost: openwork.example.com
+  apiHost: api.openwork.example.com
+  tls: []
+
+# Only the web pods and the ingress controller's namespace may reach the API pods.
+networkPolicy:
+  enabled: true
+  ingressNamespaceLabels: { kubernetes.io/metadata.name: ingress-nginx }

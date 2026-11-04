@@ -1,0 +1,6 @@
+apiVersion: v2
+name: workai360
+description: 360WorkAI (the .NET rewrite of OpenWork Den) - API, web host, database migration job, optional LiteLLM wiring
+type: application
+version: 0.1.0
+appVersion: "dev"
