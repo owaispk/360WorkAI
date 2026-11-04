@@ -4,13 +4,19 @@ A rewrite of the OpenWork Den API (`ee/apps/den-api`, TypeScript, Hono + Better 
 (`ee/apps/den-web`, Next.js) as ASP.NET Core 10 and Blazor. It keeps the **wire contract** the existing clients
 depend on (routes, JSON shapes, cookie name, bearer = session token) and replaces the internals.
 
-Status: **a working core of Den, not all of Den.** Built and tested: sign-in, sessions, email verification and password reset, organizations,
-members, roles and invitations, teams and permissions, desktop handoff, device login, the OAuth provider for MCP clients (with `/mcp/agent`),
-and five larger areas: the **library** (plugins, skills, marketplaces, sharing), **org administration** (API keys, audit log, settings, web origins,
-brand), **connections** (external MCP servers, tool policy, OAuth sign-in), **SSO and SCIM**, and **policy** (desktop policies, agent permissions,
-prompts, default model), plus platform admin, onboarding, automations and analytics, OpenID Connect (userinfo, introspection, end-session, ID tokens), social sign-in (Google, GitHub) and sign-in/forget-password/change-email codes. It runs on SQLite or MySQL. About 40% of the reference's route registrations and a corresponding share of its web
-pages exist; what is missing is listed honestly in [Not built yet](#not-built-yet), mostly features that need outside services (billing,
-hosted model gateways, cloud sandboxes, Google/Microsoft integrations). Each area has a page under [docs/features](docs/features).
+Status: **most of Den that does not depend on outside services.** Built and tested: sign-in, sessions, email verification and password reset, organizations,
+members, roles and invitations, teams and permissions, desktop handoff, device login, the OAuth provider for MCP clients (with `/mcp/agent`, client
+management, JWT-bearer, DPoP), OpenID Connect, social sign-in (Google, GitHub) and sign-in codes; the **library** (plugins, skills, marketplaces, sharing),
+**org administration** (API keys, audit log with retention, settings, web origins, brand, dashboard activity), **connections** (external MCP servers, tool
+policy, OAuth sign-in), **SSO** (OIDC and SAML, including single logout and encrypted assertions) and **SCIM**, **policy** (desktop policies, agent
+permissions, prompts, default model), **model providers** and the **AI Gateway over LiteLLM**, platform admin (first-administrator setup, feature flags,
+Control Center, request log), onboarding and the Get set up checklist, automations (with Workflow actions and the runner event stream) and analytics.
+It runs on SQLite or MySQL, with optional Redis for running several instances, and ships Docker images, a compose stack and a Helm chart.
+
+A mechanical count finds 265 of the reference's 507 API route registrations (52%) here; it undercounts, since routes registered in loops or groups do
+not match its pattern. What is missing is listed in [Not built yet](#not-built-yet): mostly features that need outside services (Google Workspace and
+Microsoft 365 alone are about 60 routes; billing, the parts of the gateway that need OpenWork's own gateway app, Workbot, Slack, cloud sandboxes).
+Each area has a page under [docs/features](docs/features).
 
 ## Layout
 
@@ -23,7 +29,7 @@ hosted model gateways, cloud sandboxes, Google/Microsoft integrations). Each are
 | `scripts/dev.sh` | Start / stop the API (`:5080`) and web (`:5081`) |
 | `docs/operations.md` | Running several instances: the shared store (Redis), migrations, background jobs |
 | `docs/` | `AREA_GUIDE.md` (how to build an area), `database.md`, and `features/*.md` (what each area implements and how it differs from the reference) |
-| `deploy/` | Dockerfiles and a compose stack (MySQL + migrate + API + web); CI is `.github/workflows/ci.yml` |
+| `deploy/` | Dockerfiles, a compose stack (MySQL + migrate + API + web + optional LiteLLM) and a Helm chart (`deploy/helm/workai360`); CI is `.github/workflows/ci.yml`. Running several instances, Redis and Kubernetes: [docs/operations.md](docs/operations.md) |
 
 ## Run
 
@@ -41,7 +47,7 @@ Open `http://localhost:5081`. The API needs `Auth__Secret` (32+ characters). Dev
 ## Test
 
 ```bash
-dotnet test                                                    # 1300 in-process API tests (~2 min)
+dotnet test                                                    # 1423 in-process API tests (~2.5 min; set WORKAI_TEST_REDIS to include the Redis ones)
 WORKAI_TEST_MYSQL="Server=127.0.0.1;User=root;Password=..." dotnet test   # the same tests on MySQL (a throwaway database per test class)
 
 # Contract tests against the running rewrite (web is W, API is A):
@@ -175,7 +181,7 @@ Set with environment variables (`Auth__Secret`) or `appsettings`.
 
 ## Not built yet
 
-The reference has about 400 distinct `/v1` paths and 129 web pages; this covers the core and the five areas above. What is **not** built, and why:
+The reference has about 470 `/v1` route registrations and 129 web pages. What is **not** built, and why:
 
 **Needs outside services that were not available (so it was not faked):**
 - **Billing and plans** (Stripe checkout, plan limits, free seats), the parts of the **AI Gateway** that need OpenWork's own gateway app (gateway-side accounting and usage limits, non-LiteLLM gateway providers, cloud OAuth sign-ins for providers, the free hosted tier `inference*`, the Auto Router; see [gateway.md](docs/features/gateway.md)), **managed deployments** in customers' clouds, and **cloud sandboxes** (sandbox join, headless/remote sessions, session runners, workers).
@@ -185,7 +191,7 @@ The reference has about 400 distinct `/v1` paths and 129 web pages; this covers 
 - Calendar triggers and cloud execution of agent Automations (it needs a cloud runner); Workflow Automations run in Den.
 - The rest of platform admin (per-user inference usage, opportunities, which rank workspaces by desktop telemetry this build does not have, sandbox organization actions) and "my agent" (see [docs/features/platform-admin.md](docs/features/platform-admin.md) and [onboarding.md](docs/features/onboarding.md)).
 - **OAuth**: EdDSA-signed tokens (EdDSA is accepted from clients; tokens stay ES256). **SAML**: ECDSA service provider keys, group mapping. **OAuth-provider browser sign-in** connect (start and callback) and GitHub import bindings; and from the workspace area ([docs](docs/features/workspace.md)): direct uploads (they need Google or Microsoft), the app builder and each App's own MCP server.
-- **Operations**: Helm packaging. Rate limits, lockouts and the origin cache are shared through Redis when `Cache__Redis__ConnectionString` is set ([docs/operations.md](docs/operations.md)). CI (`.github/workflows/ci.yml`) runs the tests on SQLite and MySQL, the migration check and the image build on every pull request.
+- **Email unsubscribe** (`/v1/email/unsubscribe`): this build sends no lifecycle reminder emails, so there is nothing to unsubscribe from ([gaps.md](docs/features/gaps.md)). The reference's single-organization mode (`/v1/orgs/sso/singleton` answers as it does with that mode off).
 
 Each area's page in [docs/features](docs/features) lists its own gaps and its differences from the reference.
 
