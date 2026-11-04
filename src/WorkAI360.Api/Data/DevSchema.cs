@@ -15,11 +15,12 @@ public static class DevSchema
             .Replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ")
             .Replace("CREATE UNIQUE INDEX ", "CREATE UNIQUE INDEX IF NOT EXISTS ")
             .Replace("CREATE INDEX ", "CREATE INDEX IF NOT EXISTS ");
-        foreach (var statement in script.Split(";\n", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            if (statement.Length > 0) db.Database.ExecuteSqlRaw(statement.Replace("{", "{{").Replace("}", "}}"));
-        }
+        var statements = script.Split(";\n", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(s => s.Length > 0).ToList();
+        // Tables first, then the columns a newer build added to existing tables, then indexes: an index may cover one of those new columns.
+        static bool IsIndex(string s) => s.StartsWith("CREATE UNIQUE INDEX", StringComparison.Ordinal) || s.StartsWith("CREATE INDEX", StringComparison.Ordinal);
+        foreach (var statement in statements.Where(s => !IsIndex(s))) db.Database.ExecuteSqlRaw(statement.Replace("{", "{{").Replace("}", "}}"));
         AddMissingColumns(db);
+        foreach (var statement in statements.Where(IsIndex)) db.Database.ExecuteSqlRaw(statement.Replace("{", "{{").Replace("}", "}}"));
     }
 
     /// <summary>Adds columns that a newer build introduced to tables that already exist. Only nullable ones can be added safely.</summary>
