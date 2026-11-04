@@ -1,5 +1,6 @@
 ﻿using System;
 using Microsoft.EntityFrameworkCore.Migrations;
+using MySql.EntityFrameworkCore.Metadata;
 
 #nullable disable
 
@@ -44,6 +45,39 @@ namespace WorkAI360.Api.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_AdminAllowlistEntry", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "AdminMetricRefreshLease",
+                columns: table => new
+                {
+                    MetricKey = table.Column<string>(type: "varchar(32)", maxLength: 32, nullable: false),
+                    Owner = table.Column<string>(type: "varchar(96)", maxLength: 96, nullable: true),
+                    LeaseUntil = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    RequestedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_AdminMetricRefreshLease", x => x.MetricKey);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "AdminMetricSnapshot",
+                columns: table => new
+                {
+                    MetricKey = table.Column<string>(type: "varchar(32)", maxLength: 32, nullable: false),
+                    RangeKey = table.Column<string>(type: "varchar(8)", maxLength: 8, nullable: false),
+                    PayloadJson = table.Column<string>(type: "longtext", nullable: true),
+                    ComputedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    DurationMs = table.Column<int>(type: "int", nullable: true),
+                    Error = table.Column<string>(type: "varchar(500)", maxLength: 500, nullable: true),
+                    AttemptedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_AdminMetricSnapshot", x => new { x.MetricKey, x.RangeKey });
                 })
                 .Annotation("MySQL:Charset", "utf8mb4");
 
@@ -229,6 +263,24 @@ namespace WorkAI360.Api.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_AuthorizationCodes", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "AutomationRunnerNotification",
+                columns: table => new
+                {
+                    Id = table.Column<long>(type: "bigint", nullable: false)
+                        .Annotation("MySQL:ValueGenerationStrategy", MySQLValueGenerationStrategy.IdentityColumn),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OwnerMemberId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    EventType = table.Column<string>(type: "varchar(32)", maxLength: 32, nullable: false),
+                    RunId = table.Column<string>(type: "longtext", nullable: false),
+                    CreatedAt = table.Column<long>(type: "bigint", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_AutomationRunnerNotification", x => x.Id);
                 })
                 .Annotation("MySQL:Charset", "utf8mb4");
 
@@ -593,6 +645,118 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "GatewayAccessGrant",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    GatewayProviderId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ModelGroupId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    AudienceKey = table.Column<string>(type: "varchar(80)", maxLength: 80, nullable: false),
+                    MemberId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: true),
+                    TeamId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_GatewayAccessGrant", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "GatewayIssuedKey",
+                columns: table => new
+                {
+                    GatewayProviderId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    MemberId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    UserId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    KeyEnc = table.Column<string>(type: "longtext", nullable: false),
+                    TokenHash = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    KeyPrefix = table.Column<string>(type: "varchar(32)", maxLength: 32, nullable: false),
+                    ModelsJson = table.Column<string>(type: "longtext", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_GatewayIssuedKey", x => new { x.GatewayProviderId, x.MemberId });
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "GatewayModelGroup",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    GatewayProviderId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Name = table.Column<string>(type: "longtext", nullable: false),
+                    Description = table.Column<string>(type: "longtext", nullable: true),
+                    Status = table.Column<string>(type: "longtext", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_GatewayModelGroup", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "GatewayModelGroupModel",
+                columns: table => new
+                {
+                    ModelGroupId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    GatewayProviderModelId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_GatewayModelGroupModel", x => new { x.ModelGroupId, x.GatewayProviderModelId });
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "GatewayProvider",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    CreatedByMemberId = table.Column<string>(type: "longtext", nullable: false),
+                    ProviderId = table.Column<string>(type: "longtext", nullable: false),
+                    Name = table.Column<string>(type: "longtext", nullable: false),
+                    Status = table.Column<string>(type: "longtext", nullable: false),
+                    UsesDeploymentProxy = table.Column<bool>(type: "tinyint(1)", nullable: false),
+                    AdminBaseUrl = table.Column<string>(type: "varchar(2048)", maxLength: 2048, nullable: true),
+                    AdminKeyEnc = table.Column<string>(type: "longtext", nullable: true),
+                    LiteLlmTeamId = table.Column<string>(type: "longtext", nullable: true),
+                    LastSyncedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true),
+                    LastSyncError = table.Column<string>(type: "varchar(1024)", maxLength: 1024, nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_GatewayProvider", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "GatewayProviderModel",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    GatewayProviderId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ModelId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Name = table.Column<string>(type: "longtext", nullable: false),
+                    ConfigJson = table.Column<string>(type: "longtext", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_GatewayProviderModel", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "HandoffGrants",
                 columns: table => new
                 {
@@ -670,6 +834,85 @@ namespace WorkAI360.Api.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_LibraryUsageEvent", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "LlmProvider",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ExternalKey = table.Column<string>(type: "varchar(128)", maxLength: 128, nullable: true),
+                    CreatedByMemberId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Source = table.Column<string>(type: "varchar(16)", maxLength: 16, nullable: false),
+                    ProviderId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Name = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ProviderConfigJson = table.Column<string>(type: "longtext", nullable: false),
+                    CredentialMode = table.Column<string>(type: "varchar(16)", maxLength: 16, nullable: false),
+                    ApiKeyEnc = table.Column<string>(type: "longtext", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_LlmProvider", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "LlmProviderAccess",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    LlmProviderId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    MemberId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: true),
+                    TeamId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_LlmProviderAccess", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "LlmProviderMemberCredential",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    LlmProviderId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    MemberId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    SecretEnc = table.Column<string>(type: "longtext", nullable: false),
+                    ExternalPrincipalId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: true),
+                    ExternalCredentialId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: true),
+                    State = table.Column<string>(type: "varchar(16)", maxLength: 16, nullable: false),
+                    Version = table.Column<int>(type: "int", nullable: false),
+                    CreatedBy = table.Column<string>(type: "varchar(16)", maxLength: 16, nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_LlmProviderMemberCredential", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "LlmProviderModel",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    LlmProviderId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ModelId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    Name = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ModelConfigJson = table.Column<string>(type: "longtext", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_LlmProviderModel", x => x.Id);
                 })
                 .Annotation("MySQL:Charset", "utf8mb4");
 
@@ -759,7 +1002,10 @@ namespace WorkAI360.Api.Migrations
                     JwksJson = table.Column<string>(type: "longtext", nullable: true),
                     JwksUri = table.Column<string>(type: "varchar(2048)", maxLength: 2048, nullable: true),
                     DpopBoundAccessTokens = table.Column<bool>(type: "tinyint(1)", nullable: false),
-                    ClientCredentialsScope = table.Column<string>(type: "longtext", nullable: true)
+                    ClientCredentialsScope = table.Column<string>(type: "longtext", nullable: true),
+                    OwnerUserId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: true),
+                    MetadataJson = table.Column<string>(type: "longtext", nullable: true),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: true)
                 },
                 constraints: table =>
                 {
@@ -1109,6 +1355,22 @@ namespace WorkAI360.Api.Migrations
                 .Annotation("MySQL:Charset", "utf8mb4");
 
             migrationBuilder.CreateTable(
+                name: "PlatformRequestEvent",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    OccurredAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    Action = table.Column<string>(type: "varchar(128)", maxLength: 128, nullable: false),
+                    Outcome = table.Column<string>(type: "varchar(16)", maxLength: 16, nullable: false),
+                    Status = table.Column<int>(type: "int", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_PlatformRequestEvent", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
                 name: "Plugin",
                 columns: table => new
                 {
@@ -1233,6 +1495,54 @@ namespace WorkAI360.Api.Migrations
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_SamlAuthRequest", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "SamlLogoutRequest",
+                columns: table => new
+                {
+                    Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ProviderId = table.Column<string>(type: "longtext", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    ExpiresAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
+                    AnsweredAt = table.Column<DateTime>(type: "datetime(6)", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_SamlLogoutRequest", x => x.Id);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "SamlSessionLink",
+                columns: table => new
+                {
+                    SessionId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ProviderId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    NameId = table.Column<string>(type: "varchar(512)", maxLength: 512, nullable: false),
+                    NameIdFormat = table.Column<string>(type: "longtext", nullable: true),
+                    SessionIndex = table.Column<string>(type: "varchar(512)", maxLength: 512, nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_SamlSessionLink", x => x.SessionId);
+                })
+                .Annotation("MySQL:Charset", "utf8mb4");
+
+            migrationBuilder.CreateTable(
+                name: "SamlSpKey",
+                columns: table => new
+                {
+                    ProviderId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    CertificateDer = table.Column<string>(type: "longtext", nullable: false),
+                    ProtectedPrivateKey = table.Column<string>(type: "longtext", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_SamlSpKey", x => x.ProviderId);
                 })
                 .Annotation("MySQL:Charset", "utf8mb4");
 
@@ -1478,6 +1788,7 @@ namespace WorkAI360.Api.Migrations
                     Id = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
                     OrganizationId = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
                     Name = table.Column<string>(type: "varchar(255)", maxLength: 255, nullable: false),
+                    ExternalKey = table.Column<string>(type: "varchar(128)", maxLength: 128, nullable: true),
                     GrantsOrganizationAdmin = table.Column<bool>(type: "tinyint(1)", nullable: false),
                     CreatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false),
                     UpdatedAt = table.Column<DateTime>(type: "datetime(6)", nullable: false)
@@ -1654,6 +1965,8 @@ namespace WorkAI360.Api.Migrations
                     AppVersion = table.Column<string>(type: "longtext", nullable: false),
                     Platform = table.Column<string>(type: "longtext", nullable: false),
                     Concurrency = table.Column<int>(type: "int", nullable: false),
+                    InventoryJson = table.Column<string>(type: "longtext", nullable: true),
+                    InventoryUpdatedAt = table.Column<long>(type: "bigint", nullable: true),
                     LastSeenAt = table.Column<long>(type: "bigint", nullable: false),
                     CreatedAt = table.Column<long>(type: "bigint", nullable: false),
                     UpdatedAt = table.Column<long>(type: "bigint", nullable: false)
@@ -2063,6 +2376,16 @@ namespace WorkAI360.Api.Migrations
                 columns: new[] { "OrganizationId", "OwnerMemberId", "LastSeenAt" });
 
             migrationBuilder.CreateIndex(
+                name: "IX_AutomationRunnerNotification_CreatedAt",
+                table: "AutomationRunnerNotification",
+                column: "CreatedAt");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_AutomationRunnerNotification_OrganizationId_OwnerMemberId_Id",
+                table: "AutomationRunnerNotification",
+                columns: new[] { "OrganizationId", "OwnerMemberId", "Id" });
+
+            migrationBuilder.CreateIndex(
                 name: "IX_BrandAsset_OrganizationId_Kind_Version_Extension",
                 table: "BrandAsset",
                 columns: new[] { "OrganizationId", "Kind", "Version", "Extension" },
@@ -2231,6 +2554,59 @@ namespace WorkAI360.Api.Migrations
                 columns: new[] { "OrganizationId", "FeatureKey" });
 
             migrationBuilder.CreateIndex(
+                name: "IX_GatewayAccessGrant_GatewayProviderId_AudienceKey_ModelGroupId",
+                table: "GatewayAccessGrant",
+                columns: new[] { "GatewayProviderId", "AudienceKey", "ModelGroupId" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_GatewayAccessGrant_MemberId",
+                table: "GatewayAccessGrant",
+                column: "MemberId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_GatewayAccessGrant_ModelGroupId",
+                table: "GatewayAccessGrant",
+                column: "ModelGroupId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_GatewayAccessGrant_TeamId",
+                table: "GatewayAccessGrant",
+                column: "TeamId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_GatewayIssuedKey_OrganizationId_UserId",
+                table: "GatewayIssuedKey",
+                columns: new[] { "OrganizationId", "UserId" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_GatewayIssuedKey_TokenHash",
+                table: "GatewayIssuedKey",
+                column: "TokenHash",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_GatewayModelGroup_GatewayProviderId",
+                table: "GatewayModelGroup",
+                column: "GatewayProviderId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_GatewayModelGroupModel_GatewayProviderModelId",
+                table: "GatewayModelGroupModel",
+                column: "GatewayProviderModelId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_GatewayProvider_OrganizationId",
+                table: "GatewayProvider",
+                column: "OrganizationId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_GatewayProviderModel_GatewayProviderId_ModelId",
+                table: "GatewayProviderModel",
+                columns: new[] { "GatewayProviderId", "ModelId" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
                 name: "IX_Invitations_InviteToken",
                 table: "Invitations",
                 column: "InviteToken",
@@ -2269,6 +2645,56 @@ namespace WorkAI360.Api.Migrations
                 columns: new[] { "OrganizationId", "CreatedAt" });
 
             migrationBuilder.CreateIndex(
+                name: "IX_LlmProvider_CreatedByMemberId",
+                table: "LlmProvider",
+                column: "CreatedByMemberId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_LlmProvider_OrganizationId_ExternalKey",
+                table: "LlmProvider",
+                columns: new[] { "OrganizationId", "ExternalKey" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_LlmProviderAccess_LlmProviderId_MemberId",
+                table: "LlmProviderAccess",
+                columns: new[] { "LlmProviderId", "MemberId" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_LlmProviderAccess_LlmProviderId_TeamId",
+                table: "LlmProviderAccess",
+                columns: new[] { "LlmProviderId", "TeamId" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_LlmProviderAccess_MemberId",
+                table: "LlmProviderAccess",
+                column: "MemberId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_LlmProviderAccess_TeamId",
+                table: "LlmProviderAccess",
+                column: "TeamId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_LlmProviderMemberCredential_MemberId_LlmProviderId",
+                table: "LlmProviderMemberCredential",
+                columns: new[] { "MemberId", "LlmProviderId" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_LlmProviderMemberCredential_OrganizationId",
+                table: "LlmProviderMemberCredential",
+                column: "OrganizationId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_LlmProviderModel_LlmProviderId_ModelId",
+                table: "LlmProviderModel",
+                columns: new[] { "LlmProviderId", "ModelId" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
                 name: "IX_Marketplace_OrganizationId",
                 table: "Marketplace",
                 column: "OrganizationId");
@@ -2295,6 +2721,11 @@ namespace WorkAI360.Api.Migrations
                 table: "Members",
                 columns: new[] { "OrganizationId", "UserId" },
                 unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_OAuthClientExtras_OwnerUserId",
+                table: "OAuthClientExtras",
+                column: "OwnerUserId");
 
             migrationBuilder.CreateIndex(
                 name: "IX_OAuthConsents_ClientId_UserId_OrganizationId",
@@ -2401,6 +2832,11 @@ namespace WorkAI360.Api.Migrations
                 column: "OrganizationId");
 
             migrationBuilder.CreateIndex(
+                name: "IX_PlatformRequestEvent_OccurredAt",
+                table: "PlatformRequestEvent",
+                column: "OccurredAt");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_Plugin_ActiveKey",
                 table: "Plugin",
                 column: "ActiveKey",
@@ -2468,6 +2904,16 @@ namespace WorkAI360.Api.Migrations
                 table: "SamlAuthRequest",
                 column: "RelayStateHash",
                 unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_SamlLogoutRequest_ExpiresAt",
+                table: "SamlLogoutRequest",
+                column: "ExpiresAt");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_SamlSessionLink_ProviderId_NameId",
+                table: "SamlSessionLink",
+                columns: new[] { "ProviderId", "NameId" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_ScimGroup_OrganizationId",
@@ -2579,6 +3025,12 @@ namespace WorkAI360.Api.Migrations
                 unique: true);
 
             migrationBuilder.CreateIndex(
+                name: "IX_Teams_OrganizationId_ExternalKey",
+                table: "Teams",
+                columns: new[] { "OrganizationId", "ExternalKey" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
                 name: "IX_Teams_OrganizationId_Name",
                 table: "Teams",
                 columns: new[] { "OrganizationId", "Name" },
@@ -2675,6 +3127,12 @@ namespace WorkAI360.Api.Migrations
                 name: "AdminAllowlistEntry");
 
             migrationBuilder.DropTable(
+                name: "AdminMetricRefreshLease");
+
+            migrationBuilder.DropTable(
+                name: "AdminMetricSnapshot");
+
+            migrationBuilder.DropTable(
                 name: "AgentPermissionPolicy");
 
             migrationBuilder.DropTable(
@@ -2709,6 +3167,9 @@ namespace WorkAI360.Api.Migrations
 
             migrationBuilder.DropTable(
                 name: "AutomationRunner");
+
+            migrationBuilder.DropTable(
+                name: "AutomationRunnerNotification");
 
             migrationBuilder.DropTable(
                 name: "BrandAsset");
@@ -2765,6 +3226,24 @@ namespace WorkAI360.Api.Migrations
                 name: "FeatureUsageDay");
 
             migrationBuilder.DropTable(
+                name: "GatewayAccessGrant");
+
+            migrationBuilder.DropTable(
+                name: "GatewayIssuedKey");
+
+            migrationBuilder.DropTable(
+                name: "GatewayModelGroup");
+
+            migrationBuilder.DropTable(
+                name: "GatewayModelGroupModel");
+
+            migrationBuilder.DropTable(
+                name: "GatewayProvider");
+
+            migrationBuilder.DropTable(
+                name: "GatewayProviderModel");
+
+            migrationBuilder.DropTable(
                 name: "HandoffGrants");
 
             migrationBuilder.DropTable(
@@ -2775,6 +3254,18 @@ namespace WorkAI360.Api.Migrations
 
             migrationBuilder.DropTable(
                 name: "LibraryUsageEvent");
+
+            migrationBuilder.DropTable(
+                name: "LlmProvider");
+
+            migrationBuilder.DropTable(
+                name: "LlmProviderAccess");
+
+            migrationBuilder.DropTable(
+                name: "LlmProviderMemberCredential");
+
+            migrationBuilder.DropTable(
+                name: "LlmProviderModel");
 
             migrationBuilder.DropTable(
                 name: "Marketplace");
@@ -2852,6 +3343,9 @@ namespace WorkAI360.Api.Migrations
                 name: "PlatformOrganizationFeature");
 
             migrationBuilder.DropTable(
+                name: "PlatformRequestEvent");
+
+            migrationBuilder.DropTable(
                 name: "Plugin");
 
             migrationBuilder.DropTable(
@@ -2868,6 +3362,15 @@ namespace WorkAI360.Api.Migrations
 
             migrationBuilder.DropTable(
                 name: "SamlAuthRequest");
+
+            migrationBuilder.DropTable(
+                name: "SamlLogoutRequest");
+
+            migrationBuilder.DropTable(
+                name: "SamlSessionLink");
+
+            migrationBuilder.DropTable(
+                name: "SamlSpKey");
 
             migrationBuilder.DropTable(
                 name: "ScimGroup");

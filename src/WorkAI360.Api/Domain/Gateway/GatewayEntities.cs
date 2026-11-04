@@ -37,7 +37,6 @@ public sealed class GatewayProviderConfiguration : IEntityTypeConfiguration<Gate
     {
         b.HasIndex(p => p.OrganizationId);
         b.Property(p => p.AdminBaseUrl).HasMaxLength(2048);
-        b.Property(p => p.AdminKeyEnc).HasMaxLength(8192);
         b.Property(p => p.LastSyncError).HasMaxLength(1024);
     }
 }
@@ -58,7 +57,6 @@ public sealed class GatewayProviderModelConfiguration : IEntityTypeConfiguration
     public void Configure(EntityTypeBuilder<GatewayProviderModel> b)
     {
         b.HasIndex(m => new { m.GatewayProviderId, m.ModelId }).IsUnique();
-        b.Property(m => m.ConfigJson).HasMaxLength(16384);
     }
 }
 
@@ -80,7 +78,6 @@ public sealed class GatewayModelGroupConfiguration : IEntityTypeConfiguration<Ga
     public void Configure(EntityTypeBuilder<GatewayModelGroup> b)
     {
         b.HasIndex(g => g.GatewayProviderId);
-        b.Property(g => g.Description).HasMaxLength(10000);
     }
 }
 
@@ -151,8 +148,6 @@ public sealed class GatewayIssuedKeyConfiguration : IEntityTypeConfiguration<Gat
         b.HasKey(k => new { k.GatewayProviderId, k.MemberId });
         b.HasIndex(k => k.TokenHash).IsUnique();
         b.HasIndex(k => new { k.OrganizationId, k.UserId });
-        b.Property(k => k.KeyEnc).HasMaxLength(4096);
-        b.Property(k => k.ModelsJson).HasMaxLength(16384);
         b.Property(k => k.KeyPrefix).HasMaxLength(32);
     }
 }
