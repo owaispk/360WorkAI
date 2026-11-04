@@ -225,6 +225,8 @@ public sealed class Team
     public required string Id { get; set; }
     public required string OrganizationId { get; set; }
     public required string Name { get; set; }
+    /// <summary>The stable key declarative provisioning names the team by (<c>/v1/teams/by-key/{key}</c>); unique per workspace, empty for teams made by hand.</summary>
+    public string? ExternalKey { get; set; }
     public bool GrantsOrganizationAdmin { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
 using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
@@ -27,7 +28,7 @@ public static class TeamBody
     public static object Detail(Team team, IReadOnlyList<string> memberIds) => new
     {
         id = team.Id,
-        externalKey = (string?)null,
+        externalKey = team.ExternalKey,
         organizationId = team.OrganizationId,
         name = team.Name,
         memberCount = 0,
@@ -41,7 +42,7 @@ public static class TeamBody
     public static object Created(Team team, IReadOnlyList<string> memberIds) => new
     {
         id = team.Id,
-        externalKey = (string?)null,
+        externalKey = team.ExternalKey,
         organizationId = team.OrganizationId,
         name = team.Name,
         createdAt = Responses.IsoUtc(team.CreatedAt),
@@ -59,8 +60,62 @@ public static class TeamEndpoints
 
     private sealed record TeamInput(string? Name, List<string>? MemberIds, bool? GrantsAdmin);
 
+    /// <summary>The reference's stable key for declarative provisioning: lower-case letters, digits, dot, underscore and dash, starting with a letter or digit, at most 128.</summary>
+    private static readonly System.Text.RegularExpressions.Regex ExternalKeyPattern = new("^[a-z0-9][a-z0-9._-]{0,127}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static IResult? ValidateExternalKey(string externalKey) =>
+        ExternalKeyPattern.IsMatch(externalKey) ? null : MemberEndpoints.InvalidRequest("externalKey", "Invalid string: must match pattern /^[a-z0-9][a-z0-9._-]{0,127}$/", "invalid_format");
+
     public static void MapTeamEndpoints(this WebApplication app)
     {
+        app.MapGet("/v1/teams/by-key/{externalKey}", async (string externalKey, HttpContext ctx, OrgAccess access, DenDbContext db) =>
+        {
+            var (context, failure) = await access.ResolveAsync(ctx);
+            if (failure is not null) return failure;
+            if (access.Require(context!, "teams.view") is { } denied) return denied;
+            if (ValidateExternalKey(externalKey) is { } malformed) return malformed;
+            var team = await db.Teams.AsNoTracking().FirstOrDefaultAsync(t => t.OrganizationId == context!.Organization.Id && t.ExternalKey == externalKey);
+            if (team is null) return Results.Json(new { error = "team_not_found" }, statusCode: 404);
+            return Results.Json(new { team = TeamBody.Detail(team, await MemberIdsAsync(db, team.Id)) });
+        });
+
+        // Declarative provisioning: create or replace the team this key names. Names never identify teams, so an existing team without the key is never
+        // adopted (its name is a conflict); people are replaced; last write wins and conditional headers are refused, as the reference.
+        app.MapPut("/v1/teams/by-key/{externalKey}", async (string externalKey, HttpContext ctx, OrgAccess access, DenDbContext db, TeamRules rules, IAuditLog audit) =>
+        {
+            var (context, failure) = await access.ResolveAsync(ctx);
+            if (failure is not null) return failure;
+            if (access.Require(context!, "teams.manage") is { } denied) return denied;
+            if (ValidateExternalKey(externalKey) is { } malformed) return malformed;
+            var (input, invalid) = await ReadAsync(ctx, creating: true);
+            if (invalid is not null) return invalid;
+            if (ctx.Request.Headers.IfMatch.Count > 0 || ctx.Request.Headers.IfNoneMatch.Count > 0)
+                return Results.Json(new { error = "unsupported_precondition", message = "This endpoint uses last-write-wins. Serialize configuration writers." }, statusCode: 400);
+            var existing = await db.Teams.FirstOrDefaultAsync(t => t.OrganizationId == context!.Organization.Id && t.ExternalKey == externalKey);
+            if (existing is not null) return await UpdateTeamAsync(context!, existing, input!, access, db, rules, audit);
+            var created = await CreateTeamAsync(context!, input!, externalKey, access, db, rules, audit);
+            if (created is not KeyConflict) return created;
+            // Another writer created the key between the lookup and the insert: apply this request to its team instead of making a second one.
+            db.ChangeTracker.Clear();
+            var winner = await db.Teams.FirstOrDefaultAsync(t => t.OrganizationId == context!.Organization.Id && t.ExternalKey == externalKey);
+            return winner is not null
+                ? await UpdateTeamAsync(context!, winner, input!, access, db, rules, audit)
+                : Results.Json(new { error = "resource_conflict", message = "The resource name is already in use by another identity." }, statusCode: 409);
+        });
+
+        // Idempotent: a key that names nothing is reported as already removed.
+        app.MapDelete("/v1/teams/by-key/{externalKey}", async (string externalKey, HttpContext ctx, OrgAccess access, DenDbContext db, TeamRules rules, IAuditLog audit) =>
+        {
+            var (context, failure) = await access.ResolveAsync(ctx);
+            if (failure is not null) return failure;
+            if (access.Require(context!, "teams.manage") is { } denied) return denied;
+            if (ValidateExternalKey(externalKey) is { } malformed) return malformed;
+            var team = await db.Teams.FirstOrDefaultAsync(t => t.OrganizationId == context!.Organization.Id && t.ExternalKey == externalKey);
+            if (team is null) return Results.Json(new { ok = true, deleted = false });
+            var result = await DeleteTeamAsync(context!, team, access, db, rules, audit);
+            return result is NoContent ? Results.Json(new { ok = true, deleted = true }) : result;
+        });
+
         app.MapGet("/v1/teams/{teamId}", async (string teamId, HttpContext ctx, OrgAccess access, DenDbContext db) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
@@ -79,33 +134,8 @@ public static class TeamEndpoints
             if (access.Require(context!, "teams.manage") is { } denied) return denied;
             var (input, invalid) = await ReadAsync(ctx, creating: true);
             if (invalid is not null) return invalid;
-
-            // Even naming the field needs the right to make Admin teams, so a plain team manager cannot probe or flip it.
-            if (input!.GrantsAdmin is not null && access.Require(context!, "teams.manage_admin") is { } adminDenied) return adminDenied;
-            if (input.GrantsAdmin == true)
-            {
-                var change = input.MemberIds!.Count > 0 ? TeamRules.AdminTeamChange.AddsMembers : TeamRules.AdminTeamChange.Makes;
-                if (rules.AdminTeamDenial(context!, TeamRules.AdminTeamChange.Makes) is { } nope) return nope;
-                if (change == TeamRules.AdminTeamChange.AddsMembers && rules.AdminTeamDenial(context!, change) is { } nope2) return nope2;
-                // A new team has no role yet, so it grants only the Admin set.
-                if (await rules.GrantDenialAsync(context!, null, true, false, TeamRules.AdminTeamGrantsForbidden) is { } cannotGrant) return cannotGrant;
-            }
-
-            var memberIds = input.MemberIds!.Distinct().ToList();
-            if (!await AllBelongAsync(db, context!.Organization.Id, memberIds)) return Results.Json(new { error = "member_not_found" }, statusCode: 404);
-
-            var name = input.Name!;
-            if (await db.Teams.AnyAsync(t => t.OrganizationId == context.Organization.Id && t.Name == name)) return Results.Json(new { error = "team_exists", message = TeamExists }, statusCode: 409);
-
-            var now = DateTime.UtcNow;
-            var team = new Team { Id = Ids.New("tem"), OrganizationId = context.Organization.Id, Name = name, GrantsOrganizationAdmin = input.GrantsAdmin ?? false, CreatedAt = now, UpdatedAt = now };
-            db.Teams.Add(team);
-            foreach (var memberId in memberIds) db.TeamMembers.Add(new TeamMember { Id = Ids.New("tmm"), TeamId = team.Id, MemberId = memberId, CreatedAt = now });
-            try { await db.SaveChangesAsync(); }
-            catch (DbUpdateException) { return Results.Json(new { error = "team_exists", message = TeamExists }, statusCode: 409); }
-            await audit.RecordAsync(context, new AuditEntry(AuditActions.TeamCreated, [new("team", team.Id, "target", team.Name), new("organization", context.Organization.Id, "parent")],
-                After: TeamSnapshot(team, memberIds)));
-            return Results.Json(new { team = TeamBody.Created(team, memberIds) }, statusCode: 201);
+            var created = await CreateTeamAsync(context!, input!, null, access, db, rules, audit);
+            return created is KeyConflict ? Results.Json(new { error = "team_exists", message = TeamExists }, statusCode: 409) : created;
         });
 
         app.MapPatch("/v1/teams/{teamId}", async (string teamId, HttpContext ctx, OrgAccess access, DenDbContext db, TeamRules rules, IAuditLog audit) =>
@@ -116,59 +146,9 @@ public static class TeamEndpoints
             if (MemberEndpoints.ValidateTypeId(teamId, "tem", "teamId") is { } malformed) return malformed;
             var (input, invalid) = await ReadAsync(ctx, creating: false);
             if (invalid is not null) return invalid;
-
             var team = await db.Teams.FirstOrDefaultAsync(t => t.Id == teamId && t.OrganizationId == context!.Organization.Id);
             if (team is null) return Results.Json(new { error = "team_not_found" }, statusCode: 404);
-            // A team the identity provider projects (SCIM group mapping) is changed there, not here.
-            if ((input!.Name is not null || input.MemberIds is not null) && await ScimTeams.IsManagedAsync(db, context!.Organization.Id, team.Id))
-                return Results.Json(new { error = "scim_managed_team", message = "Manage this team through the SCIM identity provider." }, statusCode: 409);
-
-            // Anything that changes who is admin through an Admin team needs the right to manage Admin teams.
-            var touchesAdminTeam = input!.GrantsAdmin is not null || (team.GrantsOrganizationAdmin && input.MemberIds is not null);
-            if (touchesAdminTeam && access.Require(context!, "teams.manage_admin") is { } adminDenied) return adminDenied;
-
-            var nextGrantsAdmin = input.GrantsAdmin ?? team.GrantsOrganizationAdmin;
-            if (team.GrantsOrganizationAdmin && !nextGrantsAdmin && rules.AdminTeamDenial(context!, TeamRules.AdminTeamChange.Unmakes) is { } unmake) return unmake;
-            if (nextGrantsAdmin && !team.GrantsOrganizationAdmin)
-            {
-                if (rules.AdminTeamDenial(context!, TeamRules.AdminTeamChange.Makes) is { } makes) return makes;
-                if (await rules.GrantDenialAsync(context!, team.Id, true, true, TeamRules.AdminTeamGrantsForbidden) is { } cannotGrant) return cannotGrant;
-            }
-
-            List<string>? memberIds = null;
-            if (input.MemberIds is not null)
-            {
-                memberIds = input.MemberIds.Distinct().ToList();
-                if (!await AllBelongAsync(db, context!.Organization.Id, memberIds)) return Results.Json(new { error = "member_not_found" }, statusCode: 404);
-                var current = await MemberIdsAsync(db, team.Id);
-                if (team.GrantsOrganizationAdmin && current.Any(id => !memberIds.Contains(id)) && rules.AdminTeamDenial(context, TeamRules.AdminTeamChange.RemovesMembers) is { } removes) return removes;
-                if (memberIds.Any(id => !current.Contains(id)))
-                {
-                    if (nextGrantsAdmin && rules.AdminTeamDenial(context, TeamRules.AdminTeamChange.AddsMembers) is { } adds) return adds;
-                    if (await rules.GrantDenialAsync(context, team.Id, nextGrantsAdmin, false, TeamRules.TeamGrantsForbidden) is { } cannotGrant) return cannotGrant;
-                }
-            }
-
-            var nextName = input.Name ?? team.Name;
-            if (await db.Teams.AnyAsync(t => t.OrganizationId == context!.Organization.Id && t.Name == nextName && t.Id != team.Id)) return Results.Json(new { error = "team_exists", message = TeamExists }, statusCode: 409);
-
-            var now = DateTime.UtcNow;
-            var beforeMembers = await MemberIdsAsync(db, team.Id);
-            var before = TeamSnapshot(team, beforeMembers);
-            team.Name = nextName;
-            team.GrantsOrganizationAdmin = nextGrantsAdmin;
-            team.UpdatedAt = now;
-            if (memberIds is not null)
-            {
-                db.TeamMembers.RemoveRange(await db.TeamMembers.Where(tm => tm.TeamId == team.Id).ToListAsync());
-                foreach (var memberId in memberIds) db.TeamMembers.Add(new TeamMember { Id = Ids.New("tmm"), TeamId = team.Id, MemberId = memberId, CreatedAt = now });
-            }
-            try { await db.SaveChangesAsync(); }
-            catch (DbUpdateException) { return Results.Json(new { error = "team_exists", message = TeamExists }, statusCode: 409); }
-            var afterMembers = memberIds ?? beforeMembers;
-            await audit.RecordAsync(context!, new AuditEntry(AuditActions.TeamUpdated, [new("team", team.Id, "target", team.Name), new("organization", context!.Organization.Id, "parent")],
-                Before: before, After: TeamSnapshot(team, afterMembers)));
-            return Results.Json(new { team = TeamBody.Detail(team, afterMembers) });
+            return await UpdateTeamAsync(context!, team, input!, access, db, rules, audit);
         });
 
         app.MapDelete("/v1/teams/{teamId}", async (string teamId, HttpContext ctx, OrgAccess access, DenDbContext db, TeamRules rules, IAuditLog audit) =>
@@ -179,27 +159,122 @@ public static class TeamEndpoints
             if (MemberEndpoints.ValidateTypeId(teamId, "tem", "teamId") is { } malformed) return malformed;
             var team = await db.Teams.FirstOrDefaultAsync(t => t.Id == teamId && t.OrganizationId == context!.Organization.Id);
             if (team is null) return Results.Json(new { error = "team_not_found" }, statusCode: 404);
-            if (await ScimTeams.IsManagedAsync(db, context!.Organization.Id, team.Id))
-                return Results.Json(new { error = "scim_managed_team", message = "Disable SCIM team mapping before deleting this team." }, statusCode: 409);
-            if (team.GrantsOrganizationAdmin)
-            {
-                if (access.Require(context!, "teams.manage_admin") is { } adminDenied) return adminDenied;
-                if (rules.AdminTeamDenial(context!, TeamRules.AdminTeamChange.Deletes) is { } nope) return nope;
-            }
-
-            // A team's role outlives it (it can be given to another team); it just stops applying here.
-            var now = DateTime.UtcNow;
-            foreach (var link in await db.PermissionSetTeams.Where(l => l.TeamId == team.Id && l.RemovedAt == null).ToListAsync()) link.RemovedAt = now;
-            var deletedMembers = await MemberIdsAsync(db, team.Id);
-            db.TeamMembers.RemoveRange(await db.TeamMembers.Where(tm => tm.TeamId == team.Id).ToListAsync());
-            // Pending invitations that named this team keep going without one.
-            await db.Invitations.Where(i => i.TeamId == team.Id).ExecuteUpdateAsync(s => s.SetProperty(i => i.TeamId, (string?)null));
-            db.Teams.Remove(team);
-            await db.SaveChangesAsync();
-            await audit.RecordAsync(context!, new AuditEntry(AuditActions.TeamDeleted, [new("team", team.Id, "target", team.Name), new("organization", context!.Organization.Id, "parent")],
-                Before: TeamSnapshot(team, deletedMembers)));
-            return Results.NoContent();
+            return await DeleteTeamAsync(context!, team, access, db, rules, audit);
         });
+    }
+
+    /// <summary>Marks a create that lost to a unique index (the name, or the key): the caller decides what that means.</summary>
+    private sealed class KeyConflict : IResult
+    {
+        public Task ExecuteAsync(HttpContext httpContext) => Results.Json(new { error = "team_exists", message = TeamExists }, statusCode: 409).ExecuteAsync(httpContext);
+    }
+
+    private static async Task<IResult> CreateTeamAsync(OrgContext context, TeamInput input, string? externalKey, OrgAccess access, DenDbContext db, TeamRules rules, IAuditLog audit)
+    {
+        // Even naming the field needs the right to make Admin teams, so a plain team manager cannot probe or flip it.
+        if (input.GrantsAdmin is not null && access.Require(context, "teams.manage_admin") is { } adminDenied) return adminDenied;
+        if (input.GrantsAdmin == true)
+        {
+            var change = input.MemberIds!.Count > 0 ? TeamRules.AdminTeamChange.AddsMembers : TeamRules.AdminTeamChange.Makes;
+            if (rules.AdminTeamDenial(context, TeamRules.AdminTeamChange.Makes) is { } nope) return nope;
+            if (change == TeamRules.AdminTeamChange.AddsMembers && rules.AdminTeamDenial(context, change) is { } nope2) return nope2;
+            // A new team has no role yet, so it grants only the Admin set.
+            if (await rules.GrantDenialAsync(context, null, true, false, TeamRules.AdminTeamGrantsForbidden) is { } cannotGrant) return cannotGrant;
+        }
+
+        var memberIds = input.MemberIds!.Distinct().ToList();
+        if (!await AllBelongAsync(db, context.Organization.Id, memberIds)) return Results.Json(new { error = "member_not_found" }, statusCode: 404);
+
+        var name = input.Name!;
+        if (await db.Teams.AnyAsync(t => t.OrganizationId == context.Organization.Id && t.Name == name)) return Results.Json(new { error = "team_exists", message = TeamExists }, statusCode: 409);
+
+        var now = DateTime.UtcNow;
+        var team = new Team { Id = Ids.New("tem"), OrganizationId = context.Organization.Id, Name = name, ExternalKey = externalKey, GrantsOrganizationAdmin = input.GrantsAdmin ?? false, CreatedAt = now, UpdatedAt = now };
+        db.Teams.Add(team);
+        foreach (var memberId in memberIds) db.TeamMembers.Add(new TeamMember { Id = Ids.New("tmm"), TeamId = team.Id, MemberId = memberId, CreatedAt = now });
+        try { await db.SaveChangesAsync(); }
+        catch (DbUpdateException) { return new KeyConflict(); }
+        await audit.RecordAsync(context, new AuditEntry(AuditActions.TeamCreated, [new("team", team.Id, "target", team.Name), new("organization", context.Organization.Id, "parent")],
+            After: TeamSnapshot(team, memberIds)));
+        return Results.Json(new { team = TeamBody.Created(team, memberIds) }, statusCode: 201);
+    }
+
+    private static async Task<IResult> UpdateTeamAsync(OrgContext context, Team team, TeamInput input, OrgAccess access, DenDbContext db, TeamRules rules, IAuditLog audit)
+    {
+        // A team the identity provider projects (SCIM group mapping) is changed there, not here.
+        if ((input.Name is not null || input.MemberIds is not null) && await ScimTeams.IsManagedAsync(db, context.Organization.Id, team.Id))
+            return Results.Json(new { error = "scim_managed_team", message = "Manage this team through the SCIM identity provider." }, statusCode: 409);
+
+        // Anything that changes who is admin through an Admin team needs the right to manage Admin teams.
+        var touchesAdminTeam = input.GrantsAdmin is not null || (team.GrantsOrganizationAdmin && input.MemberIds is not null);
+        if (touchesAdminTeam && access.Require(context, "teams.manage_admin") is { } adminDenied) return adminDenied;
+
+        var nextGrantsAdmin = input.GrantsAdmin ?? team.GrantsOrganizationAdmin;
+        if (team.GrantsOrganizationAdmin && !nextGrantsAdmin && rules.AdminTeamDenial(context, TeamRules.AdminTeamChange.Unmakes) is { } unmake) return unmake;
+        if (nextGrantsAdmin && !team.GrantsOrganizationAdmin)
+        {
+            if (rules.AdminTeamDenial(context, TeamRules.AdminTeamChange.Makes) is { } makes) return makes;
+            if (await rules.GrantDenialAsync(context, team.Id, true, true, TeamRules.AdminTeamGrantsForbidden) is { } cannotGrant) return cannotGrant;
+        }
+
+        List<string>? memberIds = null;
+        if (input.MemberIds is not null)
+        {
+            memberIds = input.MemberIds.Distinct().ToList();
+            if (!await AllBelongAsync(db, context.Organization.Id, memberIds)) return Results.Json(new { error = "member_not_found" }, statusCode: 404);
+            var current = await MemberIdsAsync(db, team.Id);
+            if (team.GrantsOrganizationAdmin && current.Any(id => !memberIds.Contains(id)) && rules.AdminTeamDenial(context, TeamRules.AdminTeamChange.RemovesMembers) is { } removes) return removes;
+            if (memberIds.Any(id => !current.Contains(id)))
+            {
+                if (nextGrantsAdmin && rules.AdminTeamDenial(context, TeamRules.AdminTeamChange.AddsMembers) is { } adds) return adds;
+                if (await rules.GrantDenialAsync(context, team.Id, nextGrantsAdmin, false, TeamRules.TeamGrantsForbidden) is { } cannotGrant) return cannotGrant;
+            }
+        }
+
+        var nextName = input.Name ?? team.Name;
+        if (await db.Teams.AnyAsync(t => t.OrganizationId == context.Organization.Id && t.Name == nextName && t.Id != team.Id)) return Results.Json(new { error = "team_exists", message = TeamExists }, statusCode: 409);
+
+        var now = DateTime.UtcNow;
+        var beforeMembers = await MemberIdsAsync(db, team.Id);
+        var before = TeamSnapshot(team, beforeMembers);
+        team.Name = nextName;
+        team.GrantsOrganizationAdmin = nextGrantsAdmin;
+        team.UpdatedAt = now;
+        if (memberIds is not null)
+        {
+            db.TeamMembers.RemoveRange(await db.TeamMembers.Where(tm => tm.TeamId == team.Id).ToListAsync());
+            foreach (var memberId in memberIds) db.TeamMembers.Add(new TeamMember { Id = Ids.New("tmm"), TeamId = team.Id, MemberId = memberId, CreatedAt = now });
+        }
+        try { await db.SaveChangesAsync(); }
+        catch (DbUpdateException) { return Results.Json(new { error = "team_exists", message = TeamExists }, statusCode: 409); }
+        var afterMembers = memberIds ?? beforeMembers;
+        await audit.RecordAsync(context, new AuditEntry(AuditActions.TeamUpdated, [new("team", team.Id, "target", team.Name), new("organization", context.Organization.Id, "parent")],
+            Before: before, After: TeamSnapshot(team, afterMembers)));
+        return Results.Json(new { team = TeamBody.Detail(team, afterMembers) });
+    }
+
+    private static async Task<IResult> DeleteTeamAsync(OrgContext context, Team team, OrgAccess access, DenDbContext db, TeamRules rules, IAuditLog audit)
+    {
+        if (await ScimTeams.IsManagedAsync(db, context.Organization.Id, team.Id))
+            return Results.Json(new { error = "scim_managed_team", message = "Disable SCIM team mapping before deleting this team." }, statusCode: 409);
+        if (team.GrantsOrganizationAdmin)
+        {
+            if (access.Require(context, "teams.manage_admin") is { } adminDenied) return adminDenied;
+            if (rules.AdminTeamDenial(context, TeamRules.AdminTeamChange.Deletes) is { } nope) return nope;
+        }
+
+        // A team's role outlives it (it can be given to another team); it just stops applying here.
+        var now = DateTime.UtcNow;
+        foreach (var link in await db.PermissionSetTeams.Where(l => l.TeamId == team.Id && l.RemovedAt == null).ToListAsync()) link.RemovedAt = now;
+        var deletedMembers = await MemberIdsAsync(db, team.Id);
+        db.TeamMembers.RemoveRange(await db.TeamMembers.Where(tm => tm.TeamId == team.Id).ToListAsync());
+        // Pending invitations that named this team keep going without one.
+        await db.Invitations.Where(i => i.TeamId == team.Id).ExecuteUpdateAsync(s => s.SetProperty(i => i.TeamId, (string?)null));
+        db.Teams.Remove(team);
+        await db.SaveChangesAsync();
+        await audit.RecordAsync(context, new AuditEntry(AuditActions.TeamDeleted, [new("team", team.Id, "target", team.Name), new("organization", context.Organization.Id, "parent")],
+            Before: TeamSnapshot(team, deletedMembers)));
+        return Results.NoContent();
     }
 
     private static System.Text.Json.Nodes.JsonObject TeamSnapshot(Team team, IReadOnlyList<string> memberIds) => new()

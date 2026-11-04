@@ -17,6 +17,7 @@ public sealed class OnboardingFeature : IFeature
         services.Configure<OnboardingOptions>(configuration.GetSection(OnboardingOptions.Section));
         services.AddScoped<WindowLimiter>();
         services.AddScoped<BootstrapService>();
+        services.AddSingleton<EgressProbe>();
     }
 
     public void MapEndpoints(WebApplication app)

@@ -152,6 +152,8 @@ public sealed class GuardedHttp : IDisposable
     public sealed record Reply(HttpStatusCode Status, HttpResponseHeaders Headers, string ContentType, byte[] Body, long ElapsedMs)
     {
         public string Text => Encoding.UTF8.GetString(Body);
+        /// <summary>The content headers (.NET keeps Allow, Content-Type and the like there rather than with the response headers).</summary>
+        public HttpContentHeaders? ContentHeaders { get; init; }
     }
 
     /// <summary>Sends one request with a deadline and a body size limit. Redirects are returned as they are (never followed).</summary>
@@ -173,7 +175,7 @@ public sealed class GuardedHttp : IDisposable
             buffer.Write(chunk, 0, read);
             if (buffer.Length > limit) throw new ResponseTooLargeException(limit);
         }
-        return new Reply(response.StatusCode, response.Headers, response.Content.Headers.ContentType?.MediaType ?? "", buffer.ToArray(), Environment.TickCount64 - started);
+        return new Reply(response.StatusCode, response.Headers, response.Content.Headers.ContentType?.MediaType ?? "", buffer.ToArray(), Environment.TickCount64 - started) { ContentHeaders = response.Content.Headers };
     }
 
     public void Dispose() => _client.Dispose();

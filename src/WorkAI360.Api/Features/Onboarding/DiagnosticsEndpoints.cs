@@ -254,15 +254,23 @@ public static partial class DiagnosticsEndpoints
             return Results.NoContent();
         });
 
-        // The fixed probes (HTTP, redirect, OAuth-shaped, MCP) are not built: with no target this is the reference's 503, and with one it says so.
-        app.MapPost("/v1/diagnostics/egress", async (HttpContext ctx, OrgAccess access, DenDbContext db, IOptions<OnboardingOptions> options) =>
+        // The fixed probes (HTTP, redirect, OAuth-shaped, MCP) to the operator's Diagnostics origin; the target can never come from the request.
+        app.MapPost("/v1/diagnostics/egress", async (HttpContext ctx, OrgAccess access, DenDbContext db, SecretBox box, EgressProbe probe, IOptions<OnboardingOptions> options, ILoggerFactory logs) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
             if (access.Require(context!, "egress_diagnostics.manage") is { } denied) return denied;
-            var configuration = await ConfigurationAsync(db, context!.Organization.Id, options.Value);
-            if (!configuration.Available) return Results.Json(new { error = "egress_diagnostics_not_configured", missingConfiguration = configuration.Missing }, statusCode: 503);
-            return Results.Json(new { error = "not_implemented", message = "The network probes are not built in this deployment." }, statusCode: 501);
+            var orgId = context!.Organization.Id;
+            var configuration = await ConfigurationAsync(db, orgId, options.Value);
+            // The workspace's own token wins over the deployment's.
+            var cipher = await db.Set<EgressDiagnosticCredential>().AsNoTracking().Where(c => c.OrganizationId == orgId).Select(c => c.TokenCipher).FirstOrDefaultAsync();
+            var token = cipher is null ? options.Value.DiagnosticsBearerToken : box.Decrypt(cipher) ?? "";
+            if (!configuration.Available || token.Length == 0) return Results.Json(new { error = "egress_diagnostics_not_configured", missingConfiguration = configuration.Missing }, statusCode: 503);
+            var log = logs.CreateLogger("EgressDiagnostics");
+            log.LogInformation("den_egress_diagnostic_started {OrganizationId}", orgId);
+            var result = await probe.RunAsync(options.Value.DiagnosticsOrigin, token, ct: ctx.RequestAborted);
+            log.LogInformation("den_egress_diagnostic_completed {OrganizationId} {RunId} {OverallStatus} {FailedStep}", orgId, result["runId"]?.ToString(), result["overallStatus"]?.ToString(), result["failedStep"]?.ToString());
+            return Results.Json(result);
         });
     }
 
