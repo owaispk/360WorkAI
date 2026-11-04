@@ -87,10 +87,18 @@ var app = builder.Build();
 // Believe X-Forwarded-* only from the configured proxies (the web host), so the client address and origin cannot be spoofed.
 // The framework's middleware only checks the caller against its proxy list when X-Forwarded-For is present, so a spoofed
 // X-Forwarded-Host sent alone would slip through. This strips every forwarding header from callers that are not trusted proxies first.
+// An entry is an address (10.0.0.5) or, for proxies without a fixed address such as pods in a cluster, a network (10.42.0.0/16).
 var trustedProxies = new List<System.Net.IPAddress>();
+var trustedNetworks = new List<System.Net.IPNetwork>();
 var configuredProxies = app.Services.GetRequiredService<IOptions<AuthOptions>>().Value.TrustedProxies;
 foreach (var proxy in configuredProxies.Length > 0 ? configuredProxies : [AuthOptions.LoopbackV4, AuthOptions.LoopbackV6])
 {
+    if (proxy.Contains('/'))
+    {
+        if (!System.Net.IPNetwork.TryParse(proxy, out var network)) throw new InvalidOperationException($"Auth:TrustedProxies has an invalid network: {proxy}");
+        trustedNetworks.Add(network);
+        continue;
+    }
     if (!System.Net.IPAddress.TryParse(proxy, out var ip)) throw new InvalidOperationException($"Auth:TrustedProxies has an invalid address: {proxy}");
     trustedProxies.Add(ip);
 }
@@ -98,7 +106,7 @@ app.Use(async (context, next) =>
 {
     var remote = context.Connection.RemoteIpAddress;
     if (remote is { IsIPv4MappedToIPv6: true }) remote = remote.MapToIPv4();
-    if (remote is null || !trustedProxies.Contains(remote))
+    if (remote is null || !(trustedProxies.Contains(remote) || trustedNetworks.Any(n => n.Contains(remote))))
     {
         foreach (var header in new[] { "X-Forwarded-For", "X-Forwarded-Proto", "X-Forwarded-Host", "X-Forwarded-Prefix", "Forwarded" })
             context.Request.Headers.Remove(header);
@@ -109,6 +117,7 @@ var forwarded = new ForwardedHeadersOptions { ForwardedHeaders = ForwardedHeader
 forwarded.KnownProxies.Clear();
 forwarded.KnownIPNetworks.Clear();
 foreach (var proxy in trustedProxies) forwarded.KnownProxies.Add(proxy);
+foreach (var network in trustedNetworks) forwarded.KnownIPNetworks.Add(network);
 app.UseForwardedHeaders(forwarded);
 
 var secret = app.Configuration[$"{AuthOptions.Section}:Secret"];

@@ -498,6 +498,62 @@ public sealed class UntrustedCallerFactory : ApiFactory
     }
 }
 
+/// <summary>The proxy has no fixed address (a pod): it calls from 10.42.7.9, and the whole 10.42.0.0/16 network is trusted.</summary>
+public sealed class TrustedNetworkFactory : ApiFactory
+{
+    protected override IEnumerable<KeyValuePair<string, string>> Settings => [new("Auth:TrustedProxies:0", "10.42.0.0/16")];
+
+    protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
+    {
+        base.ConfigureWebHost(builder);
+        builder.ConfigureServices(s => s.AddTransient<Microsoft.AspNetCore.Hosting.IStartupFilter>(_ => new RemoteIpFilter("10.42.7.9")));
+    }
+}
+
+/// <summary>A caller just outside the trusted network (10.43.0.1 against 10.42.0.0/16) is not a proxy.</summary>
+public sealed class OutsideNetworkFactory : ApiFactory
+{
+    protected override IEnumerable<KeyValuePair<string, string>> Settings => [new("Auth:TrustedProxies:0", "10.42.0.0/16")];
+
+    protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
+    {
+        base.ConfigureWebHost(builder);
+        builder.ConfigureServices(s => s.AddTransient<Microsoft.AspNetCore.Hosting.IStartupFilter>(_ => new RemoteIpFilter("10.43.0.1")));
+    }
+}
+
+public sealed class TrustedNetworkTests(TrustedNetworkFactory inside, OutsideNetworkFactory outside) : IClassFixture<TrustedNetworkFactory>, IClassFixture<OutsideNetworkFactory>
+{
+    private static async Task<string> VerificationUriAsync(ApiFactory factory)
+    {
+        var device = new HttpRequestMessage(HttpMethod.Post, "/api/auth/device/code") { Content = JsonContent.Create(new { client_id = "openwork-cli" }) };
+        device.Headers.Add("X-Forwarded-Host", "app.example.com");
+        device.Headers.Add("X-Forwarded-Proto", "https");
+        device.Headers.Add("X-Forwarded-For", "203.0.113.7");
+        return (await ReadJsonAsync(await factory.Plain().SendAsync(device))).GetProperty("verification_uri").GetString()!;
+    }
+
+    [Fact]
+    public async Task A_proxy_inside_a_trusted_network_is_believed_and_one_just_outside_is_not()
+    {
+        Assert.Equal("https://app.example.com/device", await VerificationUriAsync(inside));
+        Assert.Equal("http://localhost/device", await VerificationUriAsync(outside));
+    }
+
+    [Fact]
+    public void An_invalid_network_stops_startup()
+    {
+        using var bad = new InvalidNetworkFactory();
+        var error = Assert.ThrowsAny<Exception>(() => bad.Plain());
+        Assert.Contains("Auth:TrustedProxies has an invalid network: 10.0.0.0/33", error.ToString());
+    }
+}
+
+public sealed class InvalidNetworkFactory : ApiFactory
+{
+    protected override IEnumerable<KeyValuePair<string, string>> Settings => [new("Auth:TrustedProxies:0", "10.0.0.0/33")];
+}
+
 public sealed class ForwardedHeaderTests : IClassFixture<UntrustedCallerFactory>, IClassFixture<TrustedCallerFactory>, IClassFixture<ApiFactory>
 {
     private readonly UntrustedCallerFactory _untrusted;
