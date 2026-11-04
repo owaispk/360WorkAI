@@ -124,7 +124,7 @@ public static class OrgSettingsEndpoints
             return Results.Json(new { ok = true, organization = new { id = organizationId, name } });
         });
 
-        app.MapGet("/v1/org/activity", async (HttpContext ctx, OrgAccess access) =>
+        app.MapGet("/v1/org/activity", async (HttpContext ctx, OrgAccess access, DashboardActivity activity) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -134,8 +134,7 @@ public static class OrgSettingsEndpoints
                 return access.Forbidden("Only workspace owners and admins can do this. Ask one of them, or have them change your role.");
             }
             ctx.Response.Headers.CacheControl = "no-store";
-            // The reference lists the newest connections, providers, plugins and skills; none of those exist in this build yet.
-            return Results.Json(new { activity = Array.Empty<object>() });
+            return Results.Json(new { activity = (await activity.ReadAsync(context)).Select(DashboardActivity.Json) });
         });
 
         app.MapGet("/v1/org/inventory-revision", async (HttpContext ctx, OrgAccess access, DenDbContext db, IOptions<AuthOptions> auth) =>

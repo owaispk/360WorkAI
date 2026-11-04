@@ -13,6 +13,7 @@ public sealed class OrgAdminFeature : IFeature
         services.Configure<OrgAdminOptions>(configuration.GetSection(OrgAdminOptions.Section));
         services.AddSingleton<ApiKeyLimiter>();
         services.AddScoped<ApiKeyAuthenticator>();
+        services.AddScoped<DashboardActivity>();
         services.AddScoped<AuditPolicies>();
         services.AddScoped<IAuditLog, AuditLog>();
         services.AddScoped<OrgEnvelope>();

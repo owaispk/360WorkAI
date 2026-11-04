@@ -105,13 +105,21 @@ Tests: `tests/WorkAI360.Api.Tests/AuditCoverageTests.cs` (19). Mutation checks (
 Tests: `tests/WorkAI360.Api.Tests/HousekeepingTests.cs` (3). Mutation checks (6 of 6 killed): no grace period, retention ignoring its window, deleting with
 no retention set, resource rows left behind, events deleted by their own date instead of their operation's, live rows deleted.
 
+## Dashboard activity (`GET /v1/org/activity`)
+
+The admin dashboard's Activity panel (the reference's `dashboard-activity.ts`): the workspace's five newest additions, newest first (ties by entry id),
+owners and admins only, `Cache-Control: no-store`. Sources, each following its own admin list's permission: connections (`connections.view`; a connection
+a plugin set up for itself counts only while that plugin is active), model providers (all with `llm_providers.view`, else the ones the caller added),
+AI Gateway providers (`gateway_providers.view` with `Gateway__Enabled`), plugins added to an active marketplace (not the built-in catalog), and published
+versions of active skills in active plugins (each naming its most recently updated parent). Plugins and marketplaces are all of them with Manage everything
+shared, otherwise what is shared with the caller. Only stored creation dates count, so archiving a plugin removes what it contributed. Titles and details
+are the reference's ("Writing Kit was added to the Shelf marketplace", "Plugin with 1 skill", "A new version of tone-guide was published"). Tests:
+`DashboardActivityTests` (2); mutation checks 3 of 3 (another workspace's providers, archived plugins contributing, no overall limit).
+
+Elsewhere in this documentation: install links, `/v1/me/*` and the activation checklist are in [onboarding.md](onboarding.md); `/v1/resources*` too.
+
 ## Not built
 
-* `GET /v1/org/resources`, `/v1/resources/marketplace-capabilities` (they list library resources: plugins, marketplaces, connections; those areas are separate).
-* `/v1/orgs/{id}/install-links`, `/v1/me/install-config`, `/v1/install-config`, `/v1/install/{platform}`, `/v1/me/install/{platform}` (installer downloads; need release hosting).
-* `/v1/me/activation` (+ events), `/v1/me/agent` (+ checks): the first needs gateway, connection and provider facts; the second is behind the `workbotProactive` feature.
-* `/v1/me/profile`, `/v1/me/invitations`, `/v1/me/send-download-link`, `/v1/me/desktop-config`, `/v1/me/prompts`: not part of org admin as built here.
-* `GET /v1/org/activity` returns an empty list: the reference reads connections, providers, plugins and skills, which do not exist yet.
 * The den-web `web` page (OpenWork Web billing, Stripe) and `advanced` (a redirect to marketplaces).
 * The reference's `.requested` intent events (written before a handler runs), request evidence for reads (`tenant_read`, off by default in the reference),
   platform-store events (OAuth client management, sign-in routes without a workspace) and change snapshots for library, connections, providers and gateway
