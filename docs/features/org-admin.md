@@ -54,7 +54,8 @@ The policy is created on first use, ON, when the workspace is entitled (`OrgAdmi
 * **A key cannot delete a workspace** (`403`). The reference lets an owner's key do it. Ownership transfer by key is allowed, as in the reference (the key dies with it).
 * **A key over its limit is `429` with `Retry-After`;** the reference answers 401. The limit is in memory per instance.
 * **Audit usage totals are live;** the reference recomputes them on a schedule and reports `measuredAt`. Here `measuredAt` is the read time.
-* **The event-type catalog lists the 40-odd actions this build records,** not the reference's 1,864 (most belong to areas not built here).
+* **The event-type catalog lists what this build records** (about 370 names), not the reference's 1,864 (most belong to areas not built here): the change
+  events below, the audit-read pairs, and the request events of every change route this build serves (see "Request evidence").
 * **Audit writes are best effort:** if recording fails, the change stands and the failure is logged. The reference refuses the request when it cannot record (`503`).
   Operations are one per request (reads: one operation with two events); the reference groups events by an attachment window.
 * **Brand images are checked, not re-encoded.** The reference runs them through sharp (which also strips metadata); there is no image library here. The checks are
@@ -68,6 +69,27 @@ The policy is created on first use, ON, when the workspace is entitled (`OrgAdmi
 * **Allowed email domains are enforced** on invitation create (`409 invite_email_domain_not_allowed`) and accept (`409 account_email_domain_not_allowed`), as in the reference.
   The invitation preview shows the limit and the brand name and images.
 
+## Request evidence and change events for newer areas
+
+**Request evidence** (`Features/OrgAdmin/AuditRoutes.cs`): the reference declares every route's audit action (`ee/apps/den-api/src/audit/routes/*.ts`);
+`scripts/gen-audit-routes.mjs` turns its 237 change and outside-call declarations into `AuditRoutes.g.cs`, and the table is matched to this build's
+endpoints by method and path shape (parameter names may differ; the target id is taken by position). When such a route finishes inside a workspace, one event
+is written as the reference's request capture does: `<action>.succeeded` (`.confirmed` for a call to an outside system), `<action>.attempted` with outcome
+`denied` and category `security` for 401/403, `.attempted` with `failed` and a reason (`validation_failed`, `resource_not_found`, `request_conflict`,
+`request_rejected`, `request_failed`) for other errors, and `.unknown` when an outside call failed. Category `request`, the target resource and the workspace
+as parent, method and route. No body and no response is read. A request whose handler wrote its own change events is not recorded twice. The workspace
+comes from the resolved member context; SCIM provisioning is attributed to the token's workspace with the actor `service scim:<providerId>`. 144 route
+stems are live (library, connections, providers, gateway, policy, prompts, default model, SSO/SCIM admin, SCIM provisioning, workspace claims and more).
+
+**Change events** (`Features/OrgAdmin/DomainAuditEvents.cs`), with the reference's names and allowlisted snapshots (never secrets, tokens, certificates,
+configuration hashes or identity-provider text; replaced secret material is the opaque `configuration` / `credentialMaterial` marker):
+`sso_connection.registered` / `.enabled` / `.disabled` / `.deleted`, `scim_connection.token_rotated` / `.deleted` / `.reconciled` (category `execution`),
+`scim_group_mapping.updated`, `agent_permission_policy.updated` / `.removed`, and `account.profile_updated` (recorded in every workspace of the person).
+A change that changes nothing records nothing.
+
+Tests: `tests/WorkAI360.Api.Tests/AuditCoverageTests.cs` (19). Mutation checks (7 of 7 killed): request events on top of change events, refusals outside
+`security`, the target id dropped, the workspace not remembered, SCIM attribution ignored, a re-registration without its marker, an unchanged mapping recorded.
+
 ## Not built
 
 * `GET /v1/org/resources`, `/v1/resources/marketplace-capabilities` (they list library resources: plugins, marketplaces, connections; those areas are separate).
@@ -76,4 +98,6 @@ The policy is created on first use, ON, when the workspace is entitled (`OrgAdmi
 * `/v1/me/profile`, `/v1/me/invitations`, `/v1/me/send-download-link`, `/v1/me/desktop-config`, `/v1/me/prompts`: not part of org admin as built here.
 * `GET /v1/org/activity` returns an empty list: the reference reads connections, providers, plugins and skills, which do not exist yet.
 * The den-web `web` page (OpenWork Web billing, Stripe) and `advanced` (a redirect to marketplaces).
-* Audit capture for routes of areas not yet built (they call `IAuditLog` when they are), SCIM/SSO events, retention and cleanup jobs, the platform-admin view of feature usage.
+* The reference's `.requested` intent events (written before a handler runs), request evidence for reads (`tenant_read`, off by default in the reference),
+  platform-store events (OAuth client management, sign-in routes without a workspace) and change snapshots for library, connections, providers and gateway
+  objects (they get request evidence only). Automation, workflow and workspace-document runs record their own history.

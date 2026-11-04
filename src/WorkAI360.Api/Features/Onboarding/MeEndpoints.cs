@@ -23,7 +23,7 @@ public static partial class MeEndpoints
     public static void MapMeEndpoints(this WebApplication app)
     {
         // The reference's schema: both names are required strings (trimmed, 120 at most) and at least one must say something.
-        app.MapPatch("/v1/me/profile", async (HttpContext ctx, OrgAccess access, DenDbContext db) =>
+        app.MapPatch("/v1/me/profile", async (HttpContext ctx, OrgAccess access, DenDbContext db, WorkAI360.Api.Features.OrgAdmin.IAuditLog audit) =>
         {
             var (current, failure) = await access.ResolveUserAsync(ctx);
             if (current is null) return failure!;
@@ -38,9 +38,13 @@ public static partial class MeEndpoints
             var name = string.Join(' ', new[] { Whitespace().Replace(first, " ").Trim(), Whitespace().Replace(last!, " ").Trim() }.Where(p => p.Length > 0));
             var now = DateTime.UtcNow;
             var user = await db.Users.FirstAsync(u => u.Id == current.User.Id);
+            var previousName = user.Name;
             user.Name = name;
             user.UpdatedAt = now;
             await db.SaveChangesAsync();
+            // Recorded in every workspace the person belongs to, as the reference's account fan-out.
+            if (WorkAI360.Api.Features.OrgAdmin.DomainAuditEvents.ProfileUpdatedEntry(user.Id, previousName, name, imageChanged: false) is { } entry)
+                await audit.RecordForUserAsync(user.Id, entry);
             return Results.Json(new { user = Responses.UserJson(user) });
         });
 

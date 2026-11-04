@@ -40,6 +40,9 @@ public static partial class ScimProtocolEndpoints
             if (limiter.Hit(BadTokenLimit, null, AuthEndpoints.ClientIp(ctx)) is { } w2) return (null, AuthEndpoints.TooManyRequests(ctx, w2));
             return (null, Error(401, "Invalid SCIM token"));
         }
+        // Provisioning requests are recorded in the token's workspace, acted by the SCIM connection (Features/OrgAdmin/AuditRoutes.cs).
+        ctx.Items[WorkAI360.Api.Features.OrgAdmin.AuditRoutes.AttributionItem] =
+            new WorkAI360.Api.Features.OrgAdmin.AuditAttribution(provider.OrganizationId, new WorkAI360.Api.Features.OrgAdmin.AuditActor("service", $"scim:{provider.ProviderId}"));
         return (provider, null);
     }
 

@@ -3,6 +3,8 @@ using Microsoft.EntityFrameworkCore;
 using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
 using WorkAI360.Api.OAuth;
+using WorkAI360.Api.Features.OrgAdmin;
+using WorkAI360.Api.Domain.Sso;
 
 namespace WorkAI360.Api.Features.Sso;
 
@@ -100,7 +102,7 @@ public static class SsoAdminEndpoints
             return Results.Json(new { connection = connection is null ? null : sso.Payload(connection) });
         });
 
-        app.MapPost("/v1/sso/oidc", async (HttpContext ctx, OrgAccess access, SsoService sso) =>
+        app.MapPost("/v1/sso/oidc", async (HttpContext ctx, OrgAccess access, SsoService sso, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -119,15 +121,18 @@ public static class SsoAdminEndpoints
             var method = body.Enum("tokenEndpointAuthentication", "client_secret_basic", "client_secret_post");
             if (body.Failure is { } invalid) return invalid;
 
+            var previous = await sso.ForOrganizationAsync(context!.Organization.Id);
+            var before = previous is null ? null : DomainAuditEvents.Sso(previous);
             var (connection, error) = await sso.RegisterOidcAsync(context!.Organization,
                 new OidcRegistration(issuer!, domain!, clientId!, clientSecret!, scopes, skipDiscovery ?? false, authorization, token, jwks, userInfo, method), ctx.RequestAborted);
             if (connection is null) return Invalid(error!);
+            await audit.RecordAsync(context, DomainAuditEvents.SsoRegisteredEntry(context.Organization.Id, before, connection));
             // Like the reference, the response carries the DNS token to publish (unless the domain is already proven).
             var domainToken = connection.DomainVerified ? null : await sso.RequestDomainTokenAsync(connection, ctx.RequestAborted);
             return Results.Json(new { connection = sso.Payload(connection), domainVerificationToken = domainToken }, statusCode: 201);
         });
 
-        app.MapPost("/v1/sso/saml", async (HttpContext ctx, OrgAccess access, SsoService sso) =>
+        app.MapPost("/v1/sso/saml", async (HttpContext ctx, OrgAccess access, SsoService sso, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -154,19 +159,27 @@ public static class SsoAdminEndpoints
             if (body.Failure is { } invalid) return invalid;
 
             var registration = new SamlRegistration(issuer!, domain!, entryPoint!, cert!, audience, binding, signRequests, sloUrl);
+            var previous = await sso.ForOrganizationAsync(context!.Organization.Id);
+            var before = previous is null ? null : DomainAuditEvents.Sso(previous);
             var (connection, error) = await sso.RegisterSamlAsync(context!.Organization, registration, ctx.RequestAborted);
             if (connection is null) return Invalid(error!);
+            await audit.RecordAsync(context, DomainAuditEvents.SsoRegisteredEntry(context.Organization.Id, before, connection));
             var domainToken = connection.DomainVerified ? null : await sso.RequestDomainTokenAsync(connection, ctx.RequestAborted);
             return Results.Json(new { connection = sso.Payload(connection), domainVerificationToken = domainToken }, statusCode: 201);
         });
 
-        app.MapDelete("/v1/sso", async (HttpContext ctx, OrgAccess access, SsoService sso) =>
+        app.MapDelete("/v1/sso", async (HttpContext ctx, OrgAccess access, SsoService sso, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
             if (access.Require(context!, "sso.manage") is { } denied) return denied;
             var connection = await sso.ForOrganizationAsync(context!.Organization.Id);
-            if (connection is not null) await sso.DeleteAsync(connection, ctx.RequestAborted);
+            if (connection is not null)
+            {
+                var before = DomainAuditEvents.Sso(connection);
+                await sso.DeleteAsync(connection, ctx.RequestAborted);
+                await audit.RecordAsync(context, DomainAuditEvents.SsoDeletedEntry(context.Organization.Id, before, connection.Id));
+            }
             return Results.NoContent();
         });
 
@@ -214,21 +227,26 @@ public static class SsoAdminEndpoints
             return Results.NoContent();
         });
 
-        app.MapPost("/v1/sso/enable", async (HttpContext ctx, OrgAccess access, SsoService sso) =>
+        app.MapPost("/v1/sso/enable", async (HttpContext ctx, OrgAccess access, SsoService sso, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
             if (access.Require(context!, "sso.manage") is { } denied) return denied;
+            var previous = await sso.ForOrganizationAsync(context!.Organization.Id) is { } p ? DomainAuditEvents.Sso(p) : null;
             var result = await sso.EnableAsync(context!.Organization.Id, ctx.RequestAborted);
+            if (result.Ok) await RecordStatusAsync(audit, sso, context, previous);
             return result.Ok ? Results.NoContent() : Lifecycle(result.Message);
         });
 
-        app.MapPost("/v1/sso/disable", async (HttpContext ctx, OrgAccess access, SsoService sso) =>
+        app.MapPost("/v1/sso/disable", async (HttpContext ctx, OrgAccess access, SsoService sso, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
             if (access.Require(context!, "sso.manage") is { } denied) return denied;
-            return await sso.DisableAsync(context!.Organization.Id, ctx.RequestAborted) ? Results.NoContent() : OrgNotFound();
+            var previous = await sso.ForOrganizationAsync(context!.Organization.Id) is { } p ? DomainAuditEvents.Sso(p) : null;
+            if (!await sso.DisableAsync(context!.Organization.Id, ctx.RequestAborted)) return OrgNotFound();
+            await RecordStatusAsync(audit, sso, context, previous);
+            return Results.NoContent();
         });
 
         // Only SAML connections have service provider metadata. As in the reference, `format` is validated and the answer is always the XML document.
@@ -265,5 +283,13 @@ public static class SsoAdminEndpoints
             var failed = await sso.VerifyDomainAsync(connection, ctx.RequestAborted);
             return failed is { } f ? Invalid(f.Message) : Results.NoContent();
         });
+    }
+
+    /// <summary>enable/disable: <paramref name="before"/> is the snapshot taken before the change. A status that did not change records nothing.</summary>
+    private static async Task RecordStatusAsync(IAuditLog audit, SsoService sso, OrgContext context, System.Text.Json.Nodes.JsonObject? before)
+    {
+        if (before is null) return;
+        var after = await sso.ForOrganizationAsync(context.Organization.Id);
+        if (after is not null && DomainAuditEvents.SsoStatusEntry(context.Organization.Id, before, after) is { } entry) await audit.RecordAsync(context, entry);
     }
 }

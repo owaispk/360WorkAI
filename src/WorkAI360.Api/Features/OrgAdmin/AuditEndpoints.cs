@@ -38,12 +38,12 @@ public static partial class AuditEndpoints
 
     public static void MapAuditEndpoints(this WebApplication app)
     {
-        app.MapGet("/v1/audit/event-types", (HttpContext ctx, OrgAccess access, AuditPolicies policies, IAuditLog audit) =>
+        app.MapGet("/v1/audit/event-types", (HttpContext ctx, OrgAccess access, AuditPolicies policies, IAuditLog audit, EndpointDataSource endpoints) =>
             Serve(ctx, access, "audit.view", policies, audit, "event_types", null, async context =>
             {
                 Query(ctx, [], []);
                 await Task.CompletedTask;
-                return Results.Json(new { eventTypes = AuditActions.EventTypes });
+                return Results.Json(new { eventTypes = AuditRoutes.EventTypes(endpoints) });
             }));
 
         app.MapGet("/v1/audit/operations", (HttpContext ctx, OrgAccess access, DenDbContext db, AuditPolicies policies, IAuditLog audit, IOptions<AuthOptions> auth) =>

@@ -47,7 +47,10 @@ public sealed class OrgAccess(DenDbContext db, SessionService sessions, Permissi
         if (principal is not null && principal.Key.MemberId != member.Id)
             return (null, Results.Json(new { error = "forbidden", message = "This API key is no longer valid for the current organization member." }, statusCode: 403));
         var org = await db.Organizations.AsNoTracking().FirstAsync(o => o.Id == orgId);
-        return (new OrgContext(auth, org, member, await permissions.ResolveAsync(orgId, member), principal?.Key.Id), null);
+        var context = new OrgContext(auth, org, member, await permissions.ResolveAsync(orgId, member), principal?.Key.Id);
+        // Request evidence for audited change routes is attributed to this workspace (Features/OrgAdmin/AuditRoutes.cs).
+        ctx.Items[WorkAI360.Api.Features.OrgAdmin.AuditRoutes.OrgContextItem] = context;
+        return (context, null);
     }
 
     /// <summary>A key has no web session: this stand-in is never stored, and counts as freshly signed in (keys skip the recent-sign-in rule, as in the reference).</summary>

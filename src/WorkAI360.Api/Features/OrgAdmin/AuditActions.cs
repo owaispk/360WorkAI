@@ -53,5 +53,6 @@ public static class AuditActions
         .Where(f => f is { IsLiteral: true } && f.FieldType == typeof(string))
         .Select(f => (string)f.GetRawConstantValue()!)
         .Concat(Reads.SelectMany(r => new[] { Requested(r), Served(r) }))
+        .Concat(DomainAuditEvents.All)
         .Distinct().Order(StringComparer.Ordinal).ToList();
 }

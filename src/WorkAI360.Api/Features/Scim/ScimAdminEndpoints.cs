@@ -1,3 +1,4 @@
+using WorkAI360.Api.Features.OrgAdmin;
 using Microsoft.EntityFrameworkCore;
 using WorkAI360.Api.Auth;
 using WorkAI360.Api.Data;
@@ -38,7 +39,7 @@ public static class ScimAdminEndpoints
         });
 
         // Creates the connection when there is none and always hands out a fresh token; the token is shown here once and kept only as a hash.
-        app.MapPost("/v1/scim/token", async (HttpContext ctx, OrgAccess access, DenDbContext db, ScimService scim, OAuthUrls urls) =>
+        app.MapPost("/v1/scim/token", async (HttpContext ctx, OrgAccess access, DenDbContext db, ScimService scim, OAuthUrls urls, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -46,11 +47,14 @@ public static class ScimAdminEndpoints
             var org = context!.Organization.Id;
             if (!await SsoReadyAsync(db, org))
                 return Results.Json(new { error = "sso_required", message = "Configure an enabled SSO connection before creating or rotating a SCIM token." }, statusCode: 409);
+            var existing = await db.Set<ScimProvider>().AsNoTracking().FirstOrDefaultAsync(p => p.OrganizationId == org);
+            var before = existing is null ? null : DomainAuditEvents.Scim(existing);
             var (provider, token) = await scim.RotateTokenAsync(org, context.Auth.User.Id);
+            await audit.RecordAsync(context, DomainAuditEvents.ScimTokenRotatedEntry(org, before, provider));
             return Results.Json(new { baseUrl = BaseUrl(urls), ssoReady = true, connection = Connection(provider), scimToken = token, health = await scim.HealthAsync(org) }, statusCode: 201);
         });
 
-        app.MapPatch("/v1/scim", async (HttpContext ctx, OrgAccess access, DenDbContext db, ScimService scim, OAuthUrls urls) =>
+        app.MapPatch("/v1/scim", async (HttpContext ctx, OrgAccess access, DenDbContext db, ScimService scim, OAuthUrls urls, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
@@ -62,26 +66,34 @@ public static class ScimAdminEndpoints
             var org = context!.Organization.Id;
             var connection = await db.Set<ScimProvider>().AsNoTracking().FirstOrDefaultAsync(p => p.OrganizationId == org);
             if (connection is null) return Results.Json(new { error = "not_found", message = "Create the SCIM connector before enabling group mapping." }, statusCode: 404);
+            var mappingEntry = DomainAuditEvents.ScimGroupMappingEntry(org, connection, mode!);
             await scim.SetMappingModeAsync(connection, mode!);
+            if (mappingEntry is not null) await audit.RecordAsync(context, mappingEntry);
             return Results.Json(await StateAsync(db, scim, urls, org, await db.Set<ScimProvider>().AsNoTracking().FirstAsync(p => p.OrganizationId == org)));
         });
 
-        app.MapPost("/v1/scim/reconcile", async (HttpContext ctx, OrgAccess access, ScimService scim) =>
+        app.MapPost("/v1/scim/reconcile", async (HttpContext ctx, OrgAccess access, ScimService scim, DenDbContext db, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
             if (access.Require(context!, "scim.manage") is { } denied) return denied;
             var (checkedCount, repaired, failures) = await scim.ReconcileAsync(context!.Organization.Id);
+            var connectionId = await db.Set<ScimProvider>().AsNoTracking().Where(p => p.OrganizationId == context.Organization.Id).Select(p => p.Id).FirstOrDefaultAsync();
+            await audit.RecordAsync(context, DomainAuditEvents.ScimReconciledEntry(context.Organization.Id, connectionId, checkedCount, repaired, failures));
             return Results.Json(new { @checked = checkedCount, repaired, failures });
         });
 
-        app.MapDelete("/v1/scim", async (HttpContext ctx, OrgAccess access, DenDbContext db, ScimService scim) =>
+        app.MapDelete("/v1/scim", async (HttpContext ctx, OrgAccess access, DenDbContext db, ScimService scim, IAuditLog audit) =>
         {
             var (context, failure) = await access.ResolveAsync(ctx);
             if (failure is not null) return failure;
             if (access.Require(context!, "scim.manage") is { } denied) return denied;
             var connection = await db.Set<ScimProvider>().AsNoTracking().FirstOrDefaultAsync(p => p.OrganizationId == context!.Organization.Id);
-            if (connection is not null) await scim.DeleteConnectionAsync(connection);
+            if (connection is not null)
+            {
+                await scim.DeleteConnectionAsync(connection);
+                await audit.RecordAsync(context!, DomainAuditEvents.ScimDeletedEntry(context!.Organization.Id, connection));
+            }
             return Results.NoContent();
         });
     }

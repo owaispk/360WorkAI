@@ -1,3 +1,5 @@
+using IAuditLog = WorkAI360.Api.Features.OrgAdmin.IAuditLog;
+using DomainAuditEvents = WorkAI360.Api.Features.OrgAdmin.DomainAuditEvents;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using WorkAI360.Api.Auth;
@@ -141,39 +143,46 @@ public static class AgentPermissionEndpoints
                 });
             }));
 
-        app.MapPut("/v1/agent-permissions/everyone", (HttpContext ctx, PolicyRunner run, PolicyStore store, DenDbContext db) =>
+        app.MapPut("/v1/agent-permissions/everyone", (HttpContext ctx, PolicyRunner run, PolicyStore store, DenDbContext db, IAuditLog audit) =>
             run.RunAsync(ctx, "agent_permissions.manage", async c =>
             {
                 var settings = AgentSettingsJson.ParseWrite(await Zod.BodyAsync(ctx));
-                return await SaveAsync(db, c, null, settings);
+                return await SaveAsync(db, audit, c, null, settings);
             }));
 
-        app.MapPut("/v1/agent-permissions/teams/{teamId}", (string teamId, HttpContext ctx, PolicyRunner run, PolicyStore store, DenDbContext db) =>
+        app.MapPut("/v1/agent-permissions/teams/{teamId}", (string teamId, HttpContext ctx, PolicyRunner run, PolicyStore store, DenDbContext db, IAuditLog audit) =>
             run.RunAsync(ctx, "agent_permissions.manage", async c =>
             {
                 Zod.TypeId(teamId, "tem", "teamId");
                 var settings = AgentSettingsJson.ParseWrite(await Zod.BodyAsync(ctx));
                 var team = await store.FindTeamAsync(c.Organization.Id, teamId);
-                return team is null ? NotFound("team_not_found") : await SaveAsync(db, c, team, settings);
+                return team is null ? NotFound("team_not_found") : await SaveAsync(db, audit, c, team, settings);
             }));
 
-        app.MapDelete("/v1/agent-permissions/teams/{teamId}", (string teamId, HttpContext ctx, PolicyRunner run, PolicyStore store, DenDbContext db) =>
+        app.MapDelete("/v1/agent-permissions/teams/{teamId}", (string teamId, HttpContext ctx, PolicyRunner run, PolicyStore store, DenDbContext db, IAuditLog audit) =>
             run.RunAsync(ctx, "agent_permissions.manage", async c =>
             {
                 Zod.TypeId(teamId, "tem", "teamId");
                 var team = await store.FindTeamAsync(c.Organization.Id, teamId);
                 if (team is null) return NotFound("team_not_found");
+                var existing = await db.Set<AgentPermissionPolicy>().AsNoTracking().Where(p => p.OrganizationId == c.Organization.Id && p.ScopeKey == team.Id).Select(p => p.SettingsJson).FirstOrDefaultAsync();
                 await db.Set<AgentPermissionPolicy>().Where(p => p.OrganizationId == c.Organization.Id && p.ScopeKey == team.Id).ExecuteDeleteAsync();
+                if (existing is not null)
+                    await audit.RecordAsync(c, DomainAuditEvents.AgentPermissionPolicyEntry(c.Organization.Id, "team", team.Id, SettingsNode(existing), null));
                 return Results.NoContent();
             }));
     }
 
     /// <summary>Replaces one scope's settings; nothing left to set removes the row. A racing first save retries against the row the winner made.</summary>
-    private static async Task<IResult> SaveAsync(DenDbContext db, OrgContext c, TeamInfo? team, Dictionary<string, AgentSetting> settings)
+    private static System.Text.Json.Nodes.JsonObject? SettingsNode(string? json) =>
+        json is null ? null : System.Text.Json.Nodes.JsonNode.Parse(AgentSettingsJson.Serialize(AgentSettingsJson.Read(json))) as System.Text.Json.Nodes.JsonObject is { } o ? new() { ["settings"] = o } : null;
+
+    private static async Task<IResult> SaveAsync(DenDbContext db, IAuditLog audit, OrgContext c, TeamInfo? team, Dictionary<string, AgentSetting> settings)
     {
         var scope = team?.Id ?? "everyone";
         var orgId = c.Organization.Id;
         DateTime? updatedAt = null;
+        var before = SettingsNode(await db.Set<AgentPermissionPolicy>().AsNoTracking().Where(p => p.OrganizationId == orgId && p.ScopeKey == scope).Select(p => p.SettingsJson).FirstOrDefaultAsync());
         for (var attempt = 0; ; attempt++)
         {
             db.ChangeTracker.Clear();
@@ -208,6 +217,10 @@ public static class AgentPermissionEndpoints
                 return Json(new { error = "resource_conflict", message = "These permissions are being changed by someone else. Try again." }, 409);
             }
         }
+        var after = settings.Count == 0 ? null : SettingsNode(AgentSettingsJson.Serialize(settings));
+        if (before is not null || after is not null)
+            if (before?.ToJsonString() != after?.ToJsonString())
+                await audit.RecordAsync(c, DomainAuditEvents.AgentPermissionPolicyEntry(orgId, team is null ? "everyone" : "team", team?.Id, before, after));
         var count = team is null ? (int?)null : (await new PolicyStore(db).MemberCountsAsync([team.Id])).GetValueOrDefault(team.Id);
         return Json(new { policy = Policy(team?.Id, team?.Name ?? AgentPermissionRules.Everyone, count, settings, updatedAt) });
     }

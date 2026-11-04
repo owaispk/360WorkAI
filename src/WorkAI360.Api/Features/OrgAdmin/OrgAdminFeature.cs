@@ -25,5 +25,6 @@ public sealed class OrgAdminFeature : IFeature
         app.MapOrgSettingsEndpoints();
         app.MapWebOriginEndpoints();
         app.MapBrandAssetEndpoints();
+        AuditRoutes.UseAuditRequestCapture(app);
     }
 }

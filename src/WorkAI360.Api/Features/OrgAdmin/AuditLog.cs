@@ -148,6 +148,8 @@ public sealed class AuditLog(DbContextOptions<DenDbContext> dbOptions, AuditPoli
         var captured = entries.Where(e => e.Force || (policy.Enabled && categories.Contains(e.Category))).ToArray();
         if (captured.Length == 0) return;
         var http = accessor.HttpContext;
+        // The request wrote its own change events: request capture does not record it again.
+        if (http is not null) http.Items[AuditRoutes.RecordedItem] = true;
         var requestId = http is null ? null : RequestId(http);
         var route = http?.GetEndpoint() is RouteEndpoint endpoint ? endpoint.RoutePattern.RawText : null;
         await WriteCoreAsync(db, organizationId, actor, captured, requestId, http is null || route is null ? null : (http.Request.Method, route));
