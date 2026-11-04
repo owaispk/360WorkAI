@@ -55,8 +55,8 @@ public sealed partial class McpOAuth(GuardedHttp http)
     private static string[] Strings(JsonNode? node) => node is JsonArray a ? a.Where(n => n?.GetValueKind() == JsonValueKind.String).Select(n => n!.GetValue<string>()).ToArray() : [];
     private static string? Str(JsonObject o, string key) => o[key]?.GetValueKind() == JsonValueKind.String ? o[key]!.GetValue<string>() : null;
 
-    /// <summary>Finds the sign-in service for an MCP server. <paramref name="pinnedIssuer"/> picks one when several are advertised.</summary>
-    public async Task<AuthServer> DiscoverAsync(string serverUrl, string? pinnedIssuer, CancellationToken ct = default)
+    /// <summary>The MCP server's protected-resource metadata (RFC 9728): from its own 401 challenge when it names one, else the well-known addresses.</summary>
+    private async Task<JsonObject> ResourceMetadataAsync(string serverUrl, CancellationToken ct)
     {
         var server = new Uri(serverUrl);
         var origin = server.GetLeftPart(UriPartial.Authority);
@@ -86,11 +86,26 @@ public sealed partial class McpOAuth(GuardedHttp http)
         }
 
         // No guessing at the server's own origin when it publishes no protected-resource metadata (as the reference does).
-        if (resourceMetadata is null) throw new OAuthException("discovery_failed", "The MCP server does not publish OAuth protected-resource metadata.");
+        return resourceMetadata ?? throw new OAuthException("discovery_failed", "The MCP server does not publish OAuth protected-resource metadata.");
+    }
+
+    /// <summary>The issuers the MCP server advertises right now (each once, in its order), for the issuer review. Nothing is registered or stored.</summary>
+    public async Task<string[]> AdvertisedIssuersAsync(string serverUrl, CancellationToken ct = default)
+    {
+        var resourceMetadata = await ResourceMetadataAsync(serverUrl, ct);
+        var resource = Str(resourceMetadata, "resource") is { Length: > 0 } declared ? declared : serverUrl;
+        if (!ResourceMatches(serverUrl, resource)) throw new OAuthException("discovery_failed", "The MCP server's metadata describes a different resource than the address given.");
+        return Strings(resourceMetadata["authorization_servers"]).Distinct(StringComparer.Ordinal).ToArray();
+    }
+
+    /// <summary>Finds the sign-in service for an MCP server. <paramref name="pinnedIssuer"/> picks one when several are advertised.</summary>
+    public async Task<AuthServer> DiscoverAsync(string serverUrl, string? pinnedIssuer, CancellationToken ct = default)
+    {
+        var resourceMetadata = await ResourceMetadataAsync(serverUrl, ct);
         var advertised = Strings(resourceMetadata["authorization_servers"]);
         if (advertised.Length == 0) throw new OAuthException("discovery_failed", "The MCP server does not advertise a sign-in service.");
         var issuer = pinnedIssuer is not null ? advertised.FirstOrDefault(a => a.TrimEnd('/') == pinnedIssuer.TrimEnd('/')) ?? throw new OAuthException("issuer_mismatch", "The selected sign-in service is no longer advertised by this MCP server.") : advertised[0];
-        var resource = resourceMetadata is not null && Str(resourceMetadata, "resource") is { Length: > 0 } declared ? declared : serverUrl;
+        var resource = Str(resourceMetadata, "resource") is { Length: > 0 } declared ? declared : serverUrl;
         if (!ResourceMatches(serverUrl, resource)) throw new OAuthException("discovery_failed", "The MCP server's metadata describes a different resource than the address given.");
 
         var issuerUri = new Uri(issuer);
@@ -115,7 +130,7 @@ public sealed partial class McpOAuth(GuardedHttp http)
             try { await http.AssertPublicAsync(endpoint!, ct); }
             catch (UrlRefusedException e) { throw new OAuthException("discovery_failed", e.Message); }
         }
-        var scopes = resourceMetadata is null ? Strings(meta["scopes_supported"]) : Strings(resourceMetadata["scopes_supported"]);
+        var scopes = Strings(resourceMetadata["scopes_supported"]);
         return new AuthServer(issuer, authorize, token, registration, resource, scopes, advertised, meta["client_id_metadata_document_supported"]?.GetValueKind() == JsonValueKind.True);
     }
 

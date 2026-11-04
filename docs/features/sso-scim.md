@@ -64,6 +64,13 @@ plugins as configured in `auth.ts`. Code: `Features/Sso/`, `Features/Scim/`, `Do
 | SCIM `POST /Users` with `active:false` and the admin-plugin wording | Same `400` and wording | (kept) |
 | `managedByScim` is shown on teams | The team API still reports `managedByScim: false` (the shared team payload is untouched); the lock itself (`409 scim_managed_team`) is enforced | Minimal edit to a shared file |
 
+## Single-organization status (`GET /v1/orgs/sso/singleton`)
+
+Public. The reference uses it in its single-organization mode, which this build does not have (every deployment here holds many workspaces), so
+it answers what the reference answers with that mode off: `{configured: false, organizationSlug: "default", signInPath: "/sso/default",
+signInUrl: "<web origin>/sso/default"}` ("default" is the reference's default single-organization slug). Nothing about any workspace is read.
+Code: `Features/Sso/SingletonSsoStatus.cs`; test: `SingletonSsoStatusTests.cs`.
+
 ## Not built
 
 * **SAML** is built, including single logout, encrypted assertions, signed requests and IdP metadata import: see [saml.md](saml.md).

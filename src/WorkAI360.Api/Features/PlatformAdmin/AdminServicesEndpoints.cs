@@ -18,20 +18,25 @@ public static class AdminServicesEndpoints
 {
     private static readonly DateTime Started = Process.GetCurrentProcess().StartTime.ToUniversalTime();
     private static readonly TimeSpan Coalesce = TimeSpan.FromSeconds(30);
-    private static readonly SemaphoreSlim Gate = new(1, 1);
-    private static Snapshot? _last;
 
-    private sealed record Status(string Id, bool Required, bool Configured, string State, string Reason, string[] MissingSettings, string[] Dependencies, string[] Notes, int? DurationMs, DateTime? CheckedAt, DateTime? LastSuccessAt);
-    private sealed record Snapshot(DateTime CheckedAt, List<Status> Services);
+    /// <summary>The last check, held per running API (one per test host), shared by the operator's page and the member projection.</summary>
+    public sealed class Cache
+    {
+        internal readonly SemaphoreSlim Gate = new(1, 1);
+        internal Snapshot? Last;
+    }
 
-    private static async Task<Snapshot> CheckAsync(DenDbContext db, IOptions<EmailOptions> email, IHostEnvironment env)
+    internal sealed record Status(string Id, bool Required, bool Configured, string State, string Reason, string[] MissingSettings, string[] Dependencies, string[] Notes, int? DurationMs, DateTime? CheckedAt, DateTime? LastSuccessAt);
+    internal sealed record Snapshot(DateTime CheckedAt, List<Status> Services);
+
+    private static async Task<Snapshot> CheckAsync(DenDbContext db, IOptions<EmailOptions> email, IHostEnvironment env, Snapshot? previous)
     {
         var now = DateTime.UtcNow;
         var watch = Stopwatch.StartNew();
         string state, reason;
         try { await db.Database.ExecuteSqlRawAsync("SELECT 1"); state = "ready"; reason = "database_verified"; }
         catch (Exception e) when (e is DbUpdateException or InvalidOperationException or Microsoft.Data.Sqlite.SqliteException or MySql.Data.MySqlClient.MySqlException or TimeoutException) { state = "unreachable"; reason = "request_failed"; }
-        var database = new Status("database", true, true, state, reason, [], [], [], (int)watch.ElapsedMilliseconds, now, state == "ready" ? now : _last?.Services.First(s => s.Id == "database").LastSuccessAt);
+        var database = new Status("database", true, true, state, reason, [], [], [], (int)watch.ElapsedMilliseconds, now, state == "ready" ? now : previous?.Services.First(s => s.Id == "database").LastSuccessAt);
 
         var provider = email.Value.Provider ?? "dev";
         var smtpHost = !string.IsNullOrWhiteSpace(email.Value.Smtp.Host);
@@ -60,39 +65,73 @@ public static class AdminServicesEndpoints
         {
             id = s.Id, required = s.Required, configured = s.Configured, state = s.State, reason = s.Reason, missingSettings = s.MissingSettings, dependencies = s.Dependencies, notes = s.Notes,
             durationMs = s.DurationMs, checkedAt = s.CheckedAt is { } c ? Responses.IsoUtc(c) : null, lastSuccessAt = s.LastSuccessAt is { } l ? Responses.IsoUtc(l) : null,
-            stale = s.CheckedAt is null || DateTime.UtcNow - s.CheckedAt > TimeSpan.FromMinutes(5),
+            stale = Stale(s),
         }),
     };
 
+    private static bool Stale(Status s) => s.CheckedAt is null || DateTime.UtcNow - s.CheckedAt > TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// The member-safe projection of the cached snapshot (the reference's <c>OrganizationServiceReadiness</c>): no required flag, missing settings,
+    /// notes, durations or server facts. Null when no check has run yet. Never starts a check.
+    /// </summary>
+    public static object? MemberProjection(Cache cache)
+    {
+        var snapshot = cache.Last;
+        if (snapshot is null) return null;
+        return new
+        {
+            version = 2,
+            checkedAt = Responses.IsoUtc(snapshot.CheckedAt),
+            checking = false,
+            services = snapshot.Services.Select(s => new
+            {
+                id = s.Id, configured = s.Configured, state = s.State, reason = s.Reason, dependencies = s.Dependencies,
+                checkedAt = s.CheckedAt is { } c ? Responses.IsoUtc(c) : null, lastSuccessAt = s.LastSuccessAt is { } l ? Responses.IsoUtc(l) : null,
+                stale = Stale(s),
+            }),
+        };
+    }
+
     public static void MapAdminServicesEndpoints(this WebApplication app)
     {
-        app.MapGet("/v1/admin/services", async (HttpContext ctx, PlatformAdminGuard guard, DenDbContext db, IOptions<EmailOptions> email, IHostEnvironment env) =>
+        // Any member may read the cached, member-safe facts (the reference's GET /v1/org/service-readiness). It never runs a check: until an
+        // operator has opened the services page (or asked for a check) there is no snapshot, and the answer is 503 with no detail.
+        app.MapGet("/v1/org/service-readiness", async (HttpContext ctx, OrgAccess access, Cache cache) =>
+        {
+            var (_, failure) = await access.ResolveAsync(ctx);
+            if (failure is not null) return failure;
+            ctx.Response.Headers.CacheControl = "no-store";
+            return MemberProjection(cache) is { } projection ? Results.Json(projection) : Results.Json(new { error = "service_readiness_unavailable" }, statusCode: 503);
+        });
+
+        app.MapGet("/v1/admin/services", async (HttpContext ctx, PlatformAdminGuard guard, DenDbContext db, IOptions<EmailOptions> email, IHostEnvironment env, Cache cache) =>
         {
             var (_, failure) = await guard.RequireAsync(ctx);
             if (failure is not null) return failure;
             ctx.Response.Headers.CacheControl = "no-store";
             // Never waits on an outside service: the first read runs the (local) checks, later reads answer from the snapshot.
-            if (_last is null || DateTime.UtcNow - _last.CheckedAt > TimeSpan.FromMinutes(5))
+            if (cache.Last is null || DateTime.UtcNow - cache.Last.CheckedAt > TimeSpan.FromMinutes(5))
             {
-                await Gate.WaitAsync();
-                try { _last = await CheckAsync(db, email, env); } finally { Gate.Release(); }
+                await cache.Gate.WaitAsync();
+                try { cache.Last = await CheckAsync(db, email, env, cache.Last); } finally { cache.Gate.Release(); }
             }
-            return Results.Json(Json(_last, checking: false));
+            return Results.Json(Json(cache.Last, checking: false));
         });
 
-        app.MapPost("/v1/admin/services/check", async (HttpContext ctx, PlatformAdminGuard guard, DenDbContext db, IOptions<EmailOptions> email, IHostEnvironment env) =>
+        app.MapPost("/v1/admin/services/check", async (HttpContext ctx, PlatformAdminGuard guard, DenDbContext db, IOptions<EmailOptions> email, IHostEnvironment env, Cache cache) =>
         {
             var (_, failure) = await guard.RequireAsync(ctx);
             if (failure is not null) return failure;
             ctx.Response.Headers.CacheControl = "no-store";
-            await Gate.WaitAsync();
+            await cache.Gate.WaitAsync();
             try
             {
                 // Recent results with the same settings are answered again, so repeated clicks cost nothing.
-                if (_last is null || DateTime.UtcNow - _last.CheckedAt > Coalesce) _last = await CheckAsync(db, email, env);
+                if (cache.Last is null || DateTime.UtcNow - cache.Last.CheckedAt > Coalesce) cache.Last = await CheckAsync(db, email, env, cache.Last);
             }
-            finally { Gate.Release(); }
-            return Results.Json(Json(_last, checking: false), statusCode: 202);
+            finally { cache.Gate.Release(); }
+            return Results.Json(Json(cache.Last, checking: false), statusCode: 202);
         });
 
         // Sandbox organizations are a cloud feature ("sandboxOrgs"): on a self-hosted deployment the reference answers that they are off.

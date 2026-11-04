@@ -24,6 +24,7 @@ public sealed class PlatformAdminFeature : IFeature
         services.AddScoped<OrganizationPlans>();
         services.AddScoped<FeatureUsageStore>();
         services.AddScoped<InitialAdminSetup>();
+        services.AddSingleton<AdminServicesEndpoints.Cache>();
         services.Configure<ControlCenterOptions>(configuration.GetSection(ControlCenterOptions.Section));
         services.AddScoped<ControlCenterMetrics>();
         services.AddScoped<ControlCenterStore>();

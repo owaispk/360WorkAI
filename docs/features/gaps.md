@@ -76,6 +76,9 @@ One difference from before the change: an accepted member's id is now the pendin
 
 ## Not built (and why)
 
+* `GET`/`POST /v1/email/unsubscribe` (the reference's opt-out from lifecycle reminder emails, an HMAC of the address checked and then recorded in its
+  `lifecycle_email` ledger). This build sends no lifecycle reminders, so there is nothing to opt out of and no link that would carry a token, and no
+  existing table can hold the opt-out without a schema change. It should be built together with the reminders.
 * Part 4 small routes (memory, artifact views, direct uploads, MCP apps, webhooks) and part 5 workflows were built afterwards as their own area:
   see [workspace.md](workspace.md). Still not built: `routes/dev` (the development email outbox answers at `GET /dev/outbox` here instead).
 * `connect/start`, `connect/callback` for OAuth providers (above).

@@ -4,7 +4,7 @@ Code: `src/WorkAI360.Api/Features/Connections/` (routes, MCP client, OAuth, SSRF
 `Domain/Connections/ConnectionEntities.cs`, pages in `src/WorkAI360.Web/Components/Pages/` (`Connections`, `ConnectionNew`, `ConnectionDetail`,
 `YourConnections`, `ConnectMcp`) with `Components/ConnectionsPageBase.cs`, `Components/Shared/ConnectionStyles.razor`, `wwwroot/connections.css`.
 Tests: `tests/WorkAI360.Api.Tests/ConnectionTests.cs` (76, with a real fake MCP server and OAuth provider in `FakeMcpServer.cs`),
-`tests/parity/area-connections.mjs` (79; runs on the reference and the rewrite, with `tests/parity/fake-mcp.mjs`), `tests/parity/ui-connections.js` (24, browser).
+`tests/WorkAI360.Api.Tests/IssuerReviewTests.cs` (7, OAuth issuer review), `tests/parity/area-connections.mjs` (79; runs on the reference and the rewrite, with `tests/parity/fake-mcp.mjs`), `tests/parity/ui-connections.js` (24, browser).
 
 ## What it is
 
@@ -33,7 +33,7 @@ they may use through `search_capabilities` and `execute_capability` on `/mcp/age
 `POST …/{id}/disconnect`, `POST …/{id}/disconnect-my-account`, `POST …/{id}/removal-request`, `PUT …/{id}/my-credential`, `PUT …/{id}/shared-credential`,
 `POST …/{id}/credential-prompt`, `PUT`/`DELETE /v1/mcp-connections/by-key/{externalKey}`, `GET …/{id}/connect/start`, `GET /v1/mcp-connections/oauth/callback`,
 `GET …/{id}/connect/callback`, `GET /oauth/client-metadata.json`, `POST …/discover`, `POST …/discover/stream` (server-sent events), `POST …/resolve`,
-`GET …/presets` (the catalog: the 11 core presets; the 16 extra reviewed ones show with `Connections:ExpandedPresets=true`, the reference's `expandedMcpPresets`).
+`POST …/{id}/oauth/issuer-review` (below), `GET …/presets` (the catalog: the 11 core presets; the 16 extra reviewed ones show with `Connections:ExpandedPresets=true`, the reference's `expandedMcpPresets`).
 Wire shapes, status codes, error codes and messages follow the reference (the parity script is the check). Pages: `/dashboard/mcp-connections` (list),
 `/new` (catalog, check the server, add), `/{id}` (sign-in, tools and policy, sharing, settings, remove; `?remove=1` opens the confirmation),
 `/dashboard/your-connections` (sign in, personal key, disconnect), `/connect/mcp` (the sign-in link an agent hands out).
@@ -57,6 +57,23 @@ authorization-server metadata (RFC 8414 / OpenID), dynamic client registration (
 on a `401`; refreshes of one credential run one at a time, so a refresh token that rotates is not spent twice. A refresh the provider rejects signs the
 person out (`needsReconnect`).
 
+## OAuth issuer review (`POST /v1/mcp-connections/{id}/oauth/issuer-review`)
+
+`connections.manage`, then the body: `{action: "preview"}` or `{action: "confirm", expectedUpdatedAt, authorizationServerIssuer}` (zod wording:
+`action: Invalid input`, `Invalid ISO datetime`, `Invalid URL`). Confirming also needs a recent sign-in (`403 reauth`) and is refused to API keys
+(`403 forbidden`, "Confirm an issuer from the dashboard; API keys can't do this."). Then: another workspace's or an unknown id `404
+connection_not_found`; not OAuth `400` ("Issuer review is only available for OAuth MCP connections."); live discovery of the server's
+protected-resource metadata, failing as `502 requirements_discovery_failed`, and `409 connection_conflict` when it advertises no issuer. Preview
+answers `{currentIssuer, advertisedIssuers, reviewRequired}`. Confirm refuses an issuer that is not advertised now and a stale `expectedUpdatedAt`
+(`409 connection_conflict`, the reference's messages), stores the issuer and answers `{…, issuerChanged, reconnectionRequired, updatedAt}`. A
+different issuer drops everything bound to the old one: the shared tokens, every member's account, the OAuth client (registered or entered by an
+admin, as the reference), unfinished sign-ins and the learned token endpoint, so people sign in again.
+
+Differences: the reference marks a connection as needing review (`oauthIssuerReviewRequiredAt`) when its server starts advertising another issuer
+while sign-ins exist; this build has no such column (no schema change was allowed), never marks one, and so always answers `reviewRequired: false`.
+The advertised issuers are read from the protected-resource metadata (`authorization_servers`, each once) without fetching each authorization
+server's own metadata; signing in still checks that metadata names the same issuer.
+
 ## Security
 
 * **SSRF**: outbound calls to addresses people type in go through `GuardedHttp`. By default only `https` to public addresses: loopback, private
@@ -75,7 +92,7 @@ person out (`needsReconnect`).
 
 * **Not built**: Google Workspace, Microsoft 365 and Gmail integrations and every `native_provider` connection (create answers a 400 saying so),
   the browser sign-in of native providers (`/v1/oauth-providers/*/connect/*`; saving an organization's own OAuth app is built, see `gaps.md`), GitHub **connector instances** (`/v1/connector-instances/*`), the per-connection MCP
-  server (`exposeDirectly` is stored and returned but there is no `/mcp/connections/{id}`), OAuth issuer review (`…/oauth/issuer-review`), Client ID Metadata Document registration with
+  server (`exposeDirectly` is stored and returned but there is no `/mcp/connections/{id}`), Client ID Metadata Document registration with
   outside servers (only dynamic registration and admin-entered clients; `/oauth/client-metadata.json` is served), the Slack assistant routes, Workbot hand-off,
   readiness fingerprints (a check is reset when settings change instead), MCP App rendering in the host (the `mcp-apps` list is built).
 * Agent search keeps this server's existing shape (`capabilities[]` with `id`, `description`, `requiredScope`, `inputSchema`) rather than the

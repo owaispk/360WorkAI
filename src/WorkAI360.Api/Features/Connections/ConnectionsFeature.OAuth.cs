@@ -1,5 +1,11 @@
 using System.Net;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore;
 using WorkAI360.Api.Auth;
+using WorkAI360.Api.Data;
+using WorkAI360.Api.Domain.Connections;
 using WorkAI360.Api.Features.Library;
 
 namespace WorkAI360.Api.Features.Connections;
@@ -34,8 +40,99 @@ public sealed partial class ConnectionsFeature
         return result.BadRequest ? Results.Json(new { error = "invalid_request", message = result.Message }, statusCode: 400) : CallbackPage(result, service.WebUrl);
     }
 
+    private sealed record IssuerReviewInput(string Action, DateTime? ExpectedUpdatedAt, string? Issuer);
+
+    /// <summary>The reference's body: <c>{action: "preview"}</c> or <c>{action: "confirm", expectedUpdatedAt, authorizationServerIssuer}</c>, with zod's wording.</summary>
+    private static IssuerReviewInput ReadIssuerReview(JsonElement body)
+    {
+        var action = body.TryGetProperty("action", out var a) && a.ValueKind == JsonValueKind.String ? a.GetString() : null;
+        if (action is not ("preview" or "confirm")) throw new Invalid([(["action"], "invalid_union", "Invalid input")]);
+        if (action == "preview") return new IssuerReviewInput(action, null, null);
+        var issues = new List<(string[] Path, string Code, string Message)>();
+        DateTime? expected = null;
+        string? issuer = null;
+        try
+        {
+            var raw = Zod.Str(body, "expectedUpdatedAt", trim: false, min: 0)!;
+            if (!DateTimeOffset.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal, out var at) || !Regex.IsMatch(raw, @"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$"))
+                issues.Add((["expectedUpdatedAt"], "invalid_format", "Invalid ISO datetime"));
+            else expected = at.UtcDateTime;
+        }
+        catch (Invalid invalid) { issues.AddRange(invalid.Issues); }
+        try
+        {
+            issuer = Zod.Str(body, "authorizationServerIssuer", min: 0)!;
+            if (!Uri.TryCreate(issuer, UriKind.Absolute, out _)) issues.Add((["authorizationServerIssuer"], "invalid_format", "Invalid URL"));
+        }
+        catch (Invalid invalid) { issues.AddRange(invalid.Issues); }
+        if (issues.Count > 0) throw new Invalid(issues);
+        return new IssuerReviewInput(action, expected, issuer);
+    }
+
+    /// <summary>
+    /// The reference's issuer review: repeat live discovery and either preview the issuers the MCP resource advertises now, or confirm one of them.
+    /// Confirming a different issuer drops everything bound to the old one (the shared sign-in, every member's account, OAuth clients and
+    /// unfinished sign-ins) so people reconnect cleanly. This build never marks a connection as needing review, so reviewRequired is false.
+    /// </summary>
+    private static async Task<IResult> IssuerReviewAsync(HttpContext ctx, Caller caller, ConnectionService service, string connectionId)
+    {
+        if (Need(ctx, caller, "connections.manage") is { } denied) return denied;
+        Zod.TypeId(connectionId, "emc", "connectionId");
+        var input = ReadIssuerReview(await Zod.BodyAsync(ctx));
+        if (input.Action == "confirm")
+        {
+            // Keys count as freshly signed in, so they are refused outright: re-trusting an issuer needs a person at the dashboard.
+            if (caller.Context.ApiKeyId is not null) return Forbidden("Confirm an issuer from the dashboard; API keys can't do this.");
+            if (!Fresh(ctx, caller)) return Reauth();
+        }
+        var c = await service.FindAsync(caller.OrgId, connectionId);
+        if (c is null) return NotFound();
+        if (c.AuthType != "oauth") return Bad("Issuer review is only available for OAuth MCP connections.");
+
+        string[] advertised;
+        try { advertised = await ctx.RequestServices.GetRequiredService<McpOAuth>().AdvertisedIssuersAsync(c.Url, ctx.RequestAborted); }
+        catch (OAuthException e) { return Ok(new { error = "requirements_discovery_failed", message = e.Message }, 502); }
+        catch (UrlRefusedException e) { return Ok(new { error = "requirements_discovery_failed", message = e.Message }, 502); }
+        if (advertised.Length == 0) return Conflict("The MCP resource does not currently advertise an OAuth authorization server.");
+
+        var config = service.OAuthConfig(c);
+        var current = config["authorizationServerIssuer"]?.GetValueKind() == JsonValueKind.String ? config["authorizationServerIssuer"]!.GetValue<string>() : null;
+        if (input.Action == "preview") return Ok(new { currentIssuer = current, advertisedIssuers = advertised, reviewRequired = false });
+        if (!advertised.Contains(input.Issuer!, StringComparer.Ordinal))
+            return Conflict("The selected issuer is not currently advertised by this MCP resource. Refresh the review before confirming.");
+
+        const string changed = "This connection changed while the issuer was being reviewed. Reload and review the current provider metadata again.";
+        if (!SameMillisecond(c.UpdatedAt, input.ExpectedUpdatedAt!.Value)) return Conflict(changed);
+        var db = ctx.RequestServices.GetRequiredService<DenDbContext>();
+        var issuerChanged = current != input.Issuer;
+        await using var tx = await db.Database.BeginTransactionAsync();
+        if (issuerChanged)
+        {
+            await db.Set<ConnectedAccount>().Where(x => x.OrganizationId == caller.OrgId && x.ConnectionId == c.Id).ExecuteDeleteAsync();
+            await db.Set<ConnectionOAuthClient>().Where(x => x.OrganizationId == caller.OrgId && x.ConnectionId == c.Id).ExecuteDeleteAsync();
+            await db.Set<ConnectionOAuthTransaction>().Where(x => x.OrganizationId == caller.OrgId && x.ConnectionId == c.Id).ExecuteDeleteAsync();
+            c.AccessTokenEnc = null; c.RefreshTokenEnc = null; c.TokenType = null; c.Scope = null; c.ExpiresAt = null; c.ConnectedAt = null; c.CredentialHealthJson = null; c.ReadinessJson = null;
+            // Addresses learned from the old sign-in service are not reused for the new one.
+            config.Remove("tokenEndpoint"); config.Remove("resource");
+        }
+        config["authorizationServerIssuer"] = input.Issuer;
+        c.OAuthConfigJson = config.ToJsonString();
+        var now = Now();
+        c.UpdatedAt = now > c.UpdatedAt ? now : c.UpdatedAt.AddMilliseconds(1);
+        try { await db.SaveChangesAsync(); }
+        catch (DbUpdateConcurrencyException) { return Conflict(changed); }
+        await tx.CommitAsync();
+        return Ok(new
+        {
+            currentIssuer = input.Issuer, advertisedIssuers = advertised, reviewRequired = false, issuerChanged, reconnectionRequired = issuerChanged,
+            updatedAt = Responses.IsoUtc(c.UpdatedAt),
+        });
+    }
+
     private static void MapOAuthRoutes(WebApplication app)
     {
+        app.MapPost("/v1/mcp-connections/{connectionId}/oauth/issuer-review", (string connectionId, HttpContext ctx) => Run(ctx, (caller, service) => IssuerReviewAsync(ctx, caller, service, connectionId)));
+
         app.MapGet("/oauth/client-metadata.json", (HttpContext ctx, ConnectionService _) =>
         {
             var service = ctx.RequestServices.GetRequiredService<ConnectionService>();
